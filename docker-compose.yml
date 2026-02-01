@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  # ===================
+  # Backend API
+  # ===================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: snapai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4096}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./prompts:/app/prompts:ro
+      - uploads_data:/app/uploads
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - snapai-network
+    restart: unless-stopped
+
+  # ===================
+  # Celery Worker
+  # ===================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: snapai-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4096}
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./prompts:/app/prompts:ro
+      - uploads_data:/app/uploads
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - snapai-network
+    restart: unless-stopped
+
+  # ===================
+  # PostgreSQL Database
+  # ===================
+  postgres:
+    image: postgres:15-alpine
+    container_name: snapai-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Redis Message Broker
+  # ===================
+  redis:
+    image: redis:7-alpine
+    container_name: snapai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Frontend
+  # ===================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: snapai-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - snapai-network
+    restart: unless-stopped
+
+networks:
+  snapai-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

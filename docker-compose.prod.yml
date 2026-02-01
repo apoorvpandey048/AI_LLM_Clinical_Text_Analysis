@@ -1,0 +1,63 @@
+# Production overrides for 48GB GPU
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # ===================
+  # vLLM Service (Production)
+  # ===================
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: snapai-vllm
+    ports:
+      - "8080:8000"
+    volumes:
+      - vllm_cache:/root/.cache/huggingface
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command: >
+      --model Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq --dtype auto --max-model-len 8192 --gpu-memory-utilization 0.90 --tensor-parallel-size 1 --trust-remote-code --enable-prefix-caching
+
+  # Override backend for production
+  backend:
+    environment:
+      - ENVIRONMENT=production
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ
+      - LLM_BACKEND=vllm
+      - LOG_LEVEL=INFO
+      - API_WORKERS=4
+    depends_on:
+      - vllm
+
+  # Override worker for production
+  worker:
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      - ENVIRONMENT=production
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ
+      - LLM_BACKEND=vllm
+      - LOG_LEVEL=INFO
+    depends_on:
+      - vllm
+
+  # Production frontend with caching
+  frontend:
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  vllm_cache:

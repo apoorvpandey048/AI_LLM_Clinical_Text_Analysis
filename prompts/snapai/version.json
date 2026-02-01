@@ -1,0 +1,33 @@
+{
+    "current_version": "1.3",
+    "layers": {
+        "layer1_ctp": {
+            "version": "1.3",
+            "file": "layer1_ctp_v1.3.md",
+            "description": "Clinical Text Pre-Processor"
+        },
+        "layer2_cie": {
+            "version": "1.3",
+            "file": "layer2_cie_v1.3.md",
+            "description": "Complication Inference Engine"
+        },
+        "layer3_ccc": {
+            "version": "1.3",
+            "file": "layer3_ccc_v1.3.md",
+            "description": "Clinical Consistency Challenger"
+        }
+    },
+    "changelog": [
+        {
+            "version": "1.3",
+            "date": "2026-01-31",
+            "changes": [
+                "Initial versioned prompts",
+                "Episode-aware extraction with severity guards",
+                "CD-I sweep for under-recognized complications",
+                "CCI self-check with explicit intermediate values",
+                "Specificity-first audit posture for Layer 3"
+            ]
+        }
+    ]
+}

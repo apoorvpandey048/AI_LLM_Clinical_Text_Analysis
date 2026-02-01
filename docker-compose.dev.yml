@@ -1,0 +1,62 @@
+# Development overrides for 6GB GPU (RTX 3060)
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+version: '3.8'
+
+services:
+  # ===================
+  # Ollama LLM Service (Development)
+  # ===================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: snapai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+        limits:
+          memory: 12G
+    environment:
+      - OLLAMA_NUM_GPU=1
+      - OLLAMA_GPU_MEMORY=5500 # Leave room for system
+
+  # Override backend for development
+  backend:
+    environment:
+      - ENVIRONMENT=development
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
+      - LLM_BACKEND=ollama
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./backend/app:/app/app # Hot reload (remove :ro)
+      - ./prompts:/app/prompts
+    depends_on:
+      - ollama
+
+  # Override worker for development
+  worker:
+    environment:
+      - ENVIRONMENT=development
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
+      - LLM_BACKEND=ollama
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./backend/app:/app/app
+      - ./prompts:/app/prompts
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_data:
