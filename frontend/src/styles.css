@@ -52,6 +52,21 @@
   --transition-base: 250ms ease;
 }
 
+/* Icon Animations */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
 /* ==========================================
    Base Styles
    ========================================== */
@@ -128,7 +143,14 @@ p {
 }
 
 .logo-icon {
-  font-size: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-icon svg {
+  width: 40px;
+  height: 40px;
 }
 
 .logo h1 {
@@ -350,7 +372,36 @@ p {
 }
 
 .btn-icon {
-  font-size: 1.2em;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.btn-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-sm {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.btn-sm .btn-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.section-icon {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-right: var(--space-xs);
+}
+
+.section-icon svg {
+  width: 24px;
+  height: 24px;
 }
 
 /* ==========================================
