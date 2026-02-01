@@ -1,38 +1,37 @@
 # SNAP-AI Backend Dependencies
+# Using tested compatible versions
 
 # Core Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
 
 # Async
-celery==5.3.6
-redis==5.0.1
+celery==5.4.0
+redis==5.2.0
 
 # Database
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-alembic==1.13.1
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.0
 
 # Validation
-pydantic==2.5.3
-pydantic-settings==2.1.0
-jsonschema==4.21.1
+pydantic==2.9.2
+pydantic-settings==2.6.1
+jsonschema==4.23.0
 
-# LLM Clients
-httpx==0.26.0
-ollama==0.1.6
+# LLM Clients - httpx version must be compatible with ollama
+httpx==0.27.2
+ollama==0.4.4
 
 # Document Processing
-python-docx==1.1.0
+python-docx==1.1.2
 
 # Utilities
-python-dotenv==1.0.0
-structlog==24.1.0
+python-dotenv==1.0.1
+structlog==24.4.0
 
 # Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
-httpx==0.26.0
-
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0

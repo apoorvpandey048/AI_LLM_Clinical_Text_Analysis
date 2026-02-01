@@ -1,0 +1,663 @@
+﻿docker : #0 building 
+with "desktop-linux" 
+instance using 
+docker driver
+At line:1 char:1
++ docker build -t 
+test-backend . 2>&1 
+| Out-File -FilePath 
+build_log.tx ...
++ ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (#0 buil   
+ ding wit...g doc    
+ker driver:Strin    
+g) [], RemoteExc    
+eption
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 
+
+#1 [internal] load 
+build definition 
+from Dockerfile
+#1 transferring 
+dockerfile: 726B 
+0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load 
+metadata for docker.i
+o/library/python:3.11
+-slim
+#2 DONE 1.3s
+
+#3 [internal] load 
+.dockerignore
+#3 transferring 
+context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load 
+build context
+#4 transferring 
+context: 1.33kB 0.0s 
+done
+#4 DONE 0.0s
+
+#5 [1/6] FROM docker.
+io/library/python:3.1
+1-slim@sha256:5be45db
+ade29bebd6886af6b438f
+d7e0b4eb7b611f39ba62b
+430263f82de36d2
+#5 resolve docker.io/
+library/python:3.11-s
+lim@sha256:5be45dbade
+29bebd6886af6b438fd7e
+0b4eb7b611f39ba62b430
+263f82de36d2 0.0s 
+done
+#5 DONE 0.0s
+
+#6 [2/6] WORKDIR /app
+#6 CACHED
+
+#7 [3/6] RUN apt-get 
+update && apt-get 
+install -y     gcc   
+  libpq-dev     && 
+rm -rf 
+/var/lib/apt/lists/*
+#7 CACHED
+
+#8 [4/6] COPY 
+requirements.txt .
+#8 CACHED
+
+#9 [5/6] RUN pip 
+install 
+--no-cache-dir -r 
+requirements.txt
+#9 2.884 Collecting 
+fastapi==0.109.0 
+(from -r 
+requirements.txt 
+(line 4))
+#9 3.183   
+Downloading fastapi-0
+.109.0-py3-none-any.w
+hl.metadata (24 kB)
+#9 3.346 Collecting 
+uvicorn==0.27.0 
+(from uvicorn[standar
+d]==0.27.0->-r 
+requirements.txt 
+(line 5))
+#9 3.507   
+Downloading uvicorn-0
+.27.0-py3-none-any.wh
+l.metadata (6.4 kB)
+#9 3.607 Collecting p
+ython-multipart==0.0.
+6 (from -r 
+requirements.txt 
+(line 6))
+#9 3.695   
+Downloading python_mu
+ltipart-0.0.6-py3-non
+e-any.whl.metadata 
+(2.5 kB)
+#9 3.818 Collecting 
+celery==5.3.6 (from 
+-r requirements.txt 
+(line 9))
+#9 3.897   
+Downloading celery-5.
+3.6-py3-none-any.whl.
+metadata (21 kB)
+#9 4.046 Collecting 
+redis==5.0.1 (from 
+-r requirements.txt 
+(line 10))
+#9 4.088   
+Downloading redis-5.0
+.1-py3-none-any.whl.m
+etadata (8.9 kB)
+#9 5.116 Collecting 
+sqlalchemy==2.0.25 
+(from -r 
+requirements.txt 
+(line 13))
+#9 5.158   
+Downloading SQLAlchem
+y-2.0.25-cp311-cp311-
+manylinux_2_17_x86_64
+.manylinux2014_x86_64
+.whl.metadata (9.6 
+kB)
+#9 5.285 Collecting p
+sycopg2-binary==2.9.9
+ (from -r 
+requirements.txt 
+(line 14))
+#9 5.334   
+Downloading psycopg2_
+binary-2.9.9-cp311-cp
+311-manylinux_2_17_x8
+6_64.manylinux2014_x8
+6_64.whl.metadata 
+(4.4 kB)
+#9 5.424 Collecting 
+alembic==1.13.1 
+(from -r 
+requirements.txt 
+(line 15))
+#9 5.464   
+Downloading alembic-1
+.13.1-py3-none-any.wh
+l.metadata (7.4 kB)
+#9 5.693 Collecting 
+pydantic==2.5.3 
+(from -r 
+requirements.txt 
+(line 18))
+#9 5.744   
+Downloading pydantic-
+2.5.3-py3-none-any.wh
+l.metadata (65 kB)
+#9 5.782      ΓöüΓöüΓ
+öüΓöüΓöüΓöüΓöüΓöüΓöüΓ
+öüΓöüΓöüΓöüΓöüΓöüΓöüΓ
+öüΓöüΓöüΓöüΓöüΓöüΓöüΓ
+öüΓöüΓöüΓöüΓöüΓöüΓöüΓ
+öüΓöüΓöüΓöüΓöüΓöüΓöüΓ
+öüΓöüΓöü 65.6/65.6 
+kB 1.6 MB/s eta 
+0:00:00
+#9 5.840 Collecting p
+ydantic-settings==2.1
+.0 (from -r 
+requirements.txt 
+(line 19))
+#9 5.879   
+Downloading pydantic_
+settings-2.1.0-py3-no
+ne-any.whl.metadata 
+(2.9 kB)
+#9 5.950 Collecting 
+jsonschema==4.21.1 
+(from -r 
+requirements.txt 
+(line 20))
+#9 5.989   
+Downloading jsonschem
+a-4.21.1-py3-none-any
+.whl.metadata (7.8 
+kB)
+#9 6.058 Collecting 
+httpx==0.28.0 (from 
+-r requirements.txt 
+(line 23))
+#9 6.101   
+Downloading httpx-0.2
+8.0-py3-none-any.whl.
+metadata (7.1 kB)
+#9 6.175 Collecting 
+ollama==0.6.1 (from 
+-r requirements.txt 
+(line 24))
+#9 6.214   
+Downloading ollama-0.
+6.1-py3-none-any.whl.
+metadata (4.3 kB)
+#9 6.275 Collecting 
+python-docx==1.1.0 
+(from -r 
+requirements.txt 
+(line 27))
+#9 6.319   
+Downloading python_do
+cx-1.1.0-py3-none-any
+.whl.metadata (2.0 
+kB)
+#9 6.384 Collecting 
+python-dotenv==1.0.0 
+(from -r 
+requirements.txt 
+(line 30))
+#9 6.432   
+Downloading python_do
+tenv-1.0.0-py3-none-a
+ny.whl.metadata (21 
+kB)
+#9 6.496 Collecting 
+structlog==24.1.0 
+(from -r 
+requirements.txt 
+(line 31))
+#9 6.537   
+Downloading structlog
+-24.1.0-py3-none-any.
+whl.metadata (6.9 kB)
+#9 6.636 Collecting 
+pytest==7.4.4 (from 
+-r requirements.txt 
+(line 34))
+#9 6.679   
+Downloading pytest-7.
+4.4-py3-none-any.whl.
+metadata (7.9 kB)
+#9 6.763 Collecting p
+ytest-asyncio==0.23.3
+ (from -r 
+requirements.txt 
+(line 35))
+#9 6.802   
+Downloading pytest_as
+yncio-0.23.3-py3-none
+-any.whl.metadata 
+(3.9 kB)
+#9 6.866 Collecting 
+pytest-cov==4.1.0 
+(from -r 
+requirements.txt 
+(line 36))
+#9 6.906   
+Downloading pytest_co
+v-4.1.0-py3-none-any.
+whl.metadata (26 kB)
+#9 7.106 Collecting s
+tarlette<0.36.0,>=0.3
+5.0 (from 
+fastapi==0.109.0->-r 
+requirements.txt 
+(line 4))
+#9 7.147   
+Downloading starlette
+-0.35.1-py3-none-any.
+whl.metadata (5.8 kB)
+#9 7.221 Collecting t
+yping-extensions>=4.8
+.0 (from 
+fastapi==0.109.0->-r 
+requirements.txt 
+(line 4))
+#9 7.271   
+Downloading typing_ex
+tensions-4.15.0-py3-n
+one-any.whl.metadata 
+(3.3 kB)
+#9 7.357 Collecting 
+click>=7.0 (from uvic
+orn==0.27.0->uvicorn[
+standard]==0.27.0->-r
+ requirements.txt 
+(line 5))
+#9 7.399   
+Downloading click-8.3
+.1-py3-none-any.whl.m
+etadata (2.6 kB)
+#9 7.457 Collecting 
+h11>=0.8 (from uvicor
+n==0.27.0->uvicorn[st
+andard]==0.27.0->-r 
+requirements.txt 
+(line 5))
+#9 7.497   
+Downloading h11-0.16.
+0-py3-none-any.whl.me
+tadata (8.3 kB)
+#9 7.625 Collecting 
+billiard<5.0,>=4.2.0 
+(from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 7.666   
+Downloading billiard-
+4.2.4-py3-none-any.wh
+l.metadata (4.8 kB)
+#9 7.720 Collecting c
+lick-didyoumean>=0.3.
+0 (from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 7.760   
+Downloading click_did
+youmean-0.3.1-py3-non
+e-any.whl.metadata 
+(3.9 kB)
+#9 7.815 Collecting 
+click-plugins>=1.1.1 
+(from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 7.856   
+Downloading click_plu
+gins-1.1.1.2-py2.py3-
+none-any.whl.metadata
+ (6.5 kB)
+#9 7.920 Collecting 
+click-repl>=0.2.0 
+(from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 7.960   
+Downloading click_rep
+l-0.3.0-py3-none-any.
+whl.metadata (3.6 kB)
+#9 8.083 Collecting 
+kombu<6.0,>=5.3.4 
+(from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 8.133   
+Downloading kombu-5.6
+.2-py3-none-any.whl.m
+etadata (3.5 kB)
+#9 8.210 Collecting p
+ython-dateutil>=2.8.2
+ (from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 8.253   
+Downloading python_da
+teutil-2.9.0.post0-py
+2.py3-none-any.whl.me
+tadata (8.4 kB)
+#9 8.309 Collecting 
+tzdata>=2022.7 (from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 8.358   
+Downloading tzdata-20
+25.3-py2.py3-none-any
+.whl.metadata (1.4 
+kB)
+#9 8.421 Collecting 
+vine<6.0,>=5.1.0 
+(from 
+celery==5.3.6->-r 
+requirements.txt 
+(line 9))
+#9 8.475   
+Downloading vine-5.1.
+0-py3-none-any.whl.me
+tadata (2.7 kB)
+#9 8.743 Collecting 
+greenlet!=0.4.17 
+(from sqlalchemy==2.0
+.25->-r 
+requirements.txt 
+(line 13))
+#9 8.784   
+Downloading greenlet-
+3.3.1-cp311-cp311-man
+ylinux_2_24_x86_64.ma
+nylinux_2_28_x86_64.w
+hl.metadata (3.7 kB)
+#9 8.875 Collecting 
+Mako (from 
+alembic==1.13.1->-r 
+requirements.txt 
+(line 15))
+#9 8.914   
+Downloading mako-1.3.
+10-py3-none-any.whl.m
+etadata (2.9 kB)
+#9 8.999 Collecting a
+nnotated-types>=0.4.0
+ (from 
+pydantic==2.5.3->-r 
+requirements.txt 
+(line 18))
+#9 9.058   
+Downloading annotated
+_types-0.7.0-py3-none
+-any.whl.metadata 
+(15 kB)
+#9 10.15 Collecting p
+ydantic-core==2.14.6 
+(from 
+pydantic==2.5.3->-r 
+requirements.txt 
+(line 18))
+#9 10.19   
+Downloading pydantic_
+core-2.14.6-cp311-cp3
+11-manylinux_2_17_x86
+_64.manylinux2014_x86
+_64.whl.metadata 
+(6.5 kB)
+#9 10.31 Collecting 
+attrs>=22.2.0 (from j
+sonschema==4.21.1->-r
+ requirements.txt 
+(line 20))
+#9 10.35   
+Downloading attrs-25.
+4.0-py3-none-any.whl.
+metadata (10 kB)
+#9 10.42 Collecting j
+sonschema-specificati
+ons>=2023.03.6 (from 
+jsonschema==4.21.1->-
+r requirements.txt 
+(line 20))
+#9 10.46   
+Downloading jsonschem
+a_specifications-2025
+.9.1-py3-none-any.whl
+.metadata (2.9 kB)
+#9 10.54 Collecting 
+referencing>=0.28.4 
+(from jsonschema==4.2
+1.1->-r 
+requirements.txt 
+(line 20))
+#9 10.58   
+Downloading referenci
+ng-0.37.0-py3-none-an
+y.whl.metadata (2.8 
+kB)
+#9 11.08 Collecting 
+rpds-py>=0.7.1 (from 
+jsonschema==4.21.1->-
+r requirements.txt 
+(line 20))
+#9 11.13   
+Downloading rpds_py-0
+.30.0-cp311-cp311-man
+ylinux_2_17_x86_64.ma
+nylinux2014_x86_64.wh
+l.metadata (4.1 kB)
+#9 11.25 Collecting 
+anyio (from 
+httpx==0.28.0->-r 
+requirements.txt 
+(line 23))
+#9 11.29   
+Downloading anyio-4.1
+2.1-py3-none-any.whl.
+metadata (4.3 kB)
+#9 11.36 Collecting 
+certifi (from 
+httpx==0.28.0->-r 
+requirements.txt 
+(line 23))
+#9 11.40   
+Downloading certifi-2
+026.1.4-py3-none-any.
+whl.metadata (2.5 kB)
+#9 11.48 Collecting 
+httpcore==1.* (from 
+httpx==0.28.0->-r 
+requirements.txt 
+(line 23))
+#9 11.54   
+Downloading httpcore-
+1.0.9-py3-none-any.wh
+l.metadata (21 kB)
+#9 11.63 Collecting 
+idna (from 
+httpx==0.28.0->-r 
+requirements.txt 
+(line 23))
+#9 11.67   
+Downloading idna-3.11
+-py3-none-any.whl.met
+adata (8.4 kB)
+#9 11.71 INFO: pip 
+is looking at 
+multiple versions of 
+ollama to determine 
+which version is 
+compatible with 
+other requirements. 
+This could take a 
+while.
+#9 11.83 ERROR: 
+Cannot install -r 
+requirements.txt 
+(line 19), -r 
+requirements.txt 
+(line 24), -r 
+requirements.txt 
+(line 4) and 
+pydantic==2.5.3 
+because these 
+package versions 
+have conflicting 
+dependencies.
+#9 11.83 ERROR: Resol
+utionImpossible: for 
+help visit https://pi
+p.pypa.io/en/latest/t
+opics/dependency-reso
+lution/#dealing-with-
+dependency-conflicts
+#9 11.83 
+#9 11.83 The 
+conflict is caused 
+by:
+#9 11.83     The 
+user requested 
+pydantic==2.5.3
+#9 11.83     fastapi 
+0.109.0 depends on 
+pydantic!=1.8, 
+!=1.8.1, !=2.0.0, 
+!=2.0.1, !=2.1.0, 
+<3.0.0 and >=1.7.4
+#9 11.83     
+pydantic-settings 
+2.1.0 depends on 
+pydantic>=2.3.0
+#9 11.83     ollama 
+0.6.1 depends on 
+pydantic>=2.9
+#9 11.83 
+#9 11.83 To fix this 
+you could try to:
+#9 11.83 1. loosen 
+the range of package 
+versions you've 
+specified
+#9 11.83 2. remove 
+package versions to 
+allow pip attempt to 
+solve the dependency 
+conflict
+#9 11.83 
+#9 12.07 
+#9 12.07 [notice] A 
+new release of pip 
+is available: 24.0 
+-> 26.0
+#9 12.07 [notice] To 
+update, run: pip 
+install --upgrade pip
+#9 ERROR: process 
+"/bin/sh -c pip 
+install 
+--no-cache-dir -r 
+requirements.txt" 
+did not complete 
+successfully: exit 
+code: 1
+------
+ > [5/6] RUN pip 
+install 
+--no-cache-dir -r 
+requirements.txt:
+11.83     
+pydantic-settings 
+2.1.0 depends on 
+pydantic>=2.3.0
+11.83     ollama 
+0.6.1 depends on 
+pydantic>=2.9
+11.83 
+11.83 To fix this 
+you could try to:
+11.83 1. loosen the 
+range of package 
+versions you've 
+specified
+11.83 2. remove 
+package versions to 
+allow pip attempt to 
+solve the dependency 
+conflict
+11.83 
+12.07 
+12.07 [notice] A new 
+release of pip is 
+available: 24.0 -> 
+26.0
+12.07 [notice] To 
+update, run: pip 
+install --upgrade pip
+------
+Dockerfile:13
+--------------------
+  11 |     # Copy 
+requirements first 
+for layer caching
+  12 |     COPY 
+requirements.txt .
+  13 | >>> RUN pip 
+install 
+--no-cache-dir -r 
+requirements.txt
+  14 |     
+  15 |     # Copy 
+application code
+--------------------
+ERROR: failed to 
+build: failed to 
+solve: process 
+"/bin/sh -c pip 
+install 
+--no-cache-dir -r 
+requirements.txt" 
+did not complete 
+successfully: exit 
+code: 1
+
+View build details: d
+ocker-desktop://dashb
+oard/build/desktop-li
+nux/desktop-linux/pxw
+hrfv7oo6zkqb1v1n24c4g
+v
