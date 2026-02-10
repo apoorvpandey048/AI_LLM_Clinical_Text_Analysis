@@ -6,7 +6,7 @@ Defines the contract for LLM clients (Ollama, vLLM).
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncGenerator, Callable, Awaitable
 
 
 @dataclass
@@ -68,6 +68,41 @@ class LLMClient(ABC):
             No exceptions - errors are captured in LLMResponse
         """
         pass
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        timeout: int = 600,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
+        """
+        Generate a response with streaming tokens.
+
+        Default implementation falls back to non-streaming generate().
+        Subclasses can override for true streaming support.
+
+        Args:
+            prompt: The user prompt to send
+            system_prompt: Optional system prompt for context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            timeout: Request timeout in seconds
+            on_token: Async callback invoked with each token chunk
+
+        Returns:
+            LLMResponse with the complete result
+        """
+        # Default: fall back to non-streaming
+        return await self.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
 
     @abstractmethod
     async def health_check(self) -> bool:

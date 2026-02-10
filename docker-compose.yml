@@ -87,7 +87,7 @@ services:
       - snapai-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapai}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapai}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -106,10 +106,32 @@ services:
       - snapai-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ===================
+  # Ollama (LLM Backend)
+  # ===================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: snapai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    # Note: For GPU support, uncomment deploy section below on NVIDIA systems
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # ===================
   # Frontend
@@ -120,7 +142,7 @@ services:
       dockerfile: Dockerfile
     container_name: snapai-frontend
     ports:
-      - "3000:80"
+      - "8080:80"
     depends_on:
       - backend
     networks:
@@ -135,3 +157,4 @@ volumes:
   postgres_data:
   redis_data:
   uploads_data:
+  ollama_data:

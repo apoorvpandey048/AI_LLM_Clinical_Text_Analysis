@@ -49,10 +49,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware (restricted to localhost by default)
+# CORS middleware (allow all origins for remote access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,10 +170,18 @@ def create_response(
 from app.api.routes.upload import router as upload_router
 from app.api.routes.jobs import router as jobs_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.stream import router as stream_router
+from app.api.routes.prompts import router as prompts_router
+from app.api.routes.models import router as models_router
+from app.api.routes.system import router as system_router
 
 app.include_router(upload_router)
 app.include_router(jobs_router)
 app.include_router(settings_router)
+app.include_router(stream_router)
+app.include_router(prompts_router)
+app.include_router(models_router)
+app.include_router(system_router)
 
 
 # ============================================

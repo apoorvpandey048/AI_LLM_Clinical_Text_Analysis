@@ -7,7 +7,7 @@ All layers inherit from this base class.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from app.config import get_settings
 from app.llm import LLMClient, LLMResponse
@@ -81,9 +81,12 @@ class BaseLayer(ABC):
         base_path = Path("/app/prompts/snapai")
         return base_path / self.prompt_filename
 
-    def load_prompt(self) -> str:
+    def load_prompt(self, custom_prompt: str | None = None) -> str:
         """
-        Load the prompt from file.
+        Load the prompt, preferring custom prompt if provided.
+
+        Args:
+            custom_prompt: Optional custom prompt from user/DB
 
         Returns:
             The prompt text
@@ -91,6 +94,11 @@ class BaseLayer(ABC):
         Raises:
             FileNotFoundError: If prompt file doesn't exist
         """
+        # Use custom prompt if provided
+        if custom_prompt:
+            logger.info("using_custom_prompt", layer=self.layer_name)
+            return custom_prompt
+
         if self._prompt_cache is not None:
             return self._prompt_cache
 
@@ -107,6 +115,10 @@ class BaseLayer(ABC):
         self._prompt_cache = prompt_path.read_text(encoding="utf-8")
         logger.debug("prompt_loaded", layer=self.layer_name, path=str(prompt_path))
         return self._prompt_cache
+
+    def clear_prompt_cache(self) -> None:
+        """Clear the cached prompt to force reload."""
+        self._prompt_cache = None
 
     @abstractmethod
     def build_user_prompt(self, **kwargs) -> str:
@@ -134,33 +146,50 @@ class BaseLayer(ABC):
         """
         pass
 
-    async def execute(self, **kwargs) -> LayerResult:
+    async def execute(
+        self,
+        custom_prompt: str | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+        **kwargs,
+    ) -> LayerResult:
         """
-        Execute the layer.
+        Execute the layer with optional streaming.
 
         Args:
+            custom_prompt: Optional custom prompt to use instead of file
+            on_token: Optional async callback for each generated token
             **kwargs: Layer-specific input data
 
         Returns:
             LayerResult with the execution result
         """
-        logger.info("layer_execution_start", layer=self.layer_name)
+        logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None)
 
         try:
-            # Load system prompt
-            system_prompt = self.load_prompt()
+            # Load system prompt (custom or file)
+            system_prompt = self.load_prompt(custom_prompt=custom_prompt)
 
             # Build user prompt
             user_prompt = self.build_user_prompt(**kwargs)
 
-            # Execute LLM
-            response: LLMResponse = await self.llm_client.generate(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                temperature=self.settings.llm_temperature,
-                max_tokens=self.settings.llm_max_tokens,
-                timeout=self.settings.llm_timeout,
-            )
+            # Execute LLM (streaming or non-streaming)
+            if on_token is not None:
+                response: LLMResponse = await self.llm_client.generate_stream(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    temperature=self.settings.llm_temperature,
+                    max_tokens=self.settings.llm_max_tokens,
+                    timeout=self.settings.llm_timeout,
+                    on_token=on_token,
+                )
+            else:
+                response: LLMResponse = await self.llm_client.generate(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    temperature=self.settings.llm_temperature,
+                    max_tokens=self.settings.llm_max_tokens,
+                    timeout=self.settings.llm_timeout,
+                )
 
             # Check for LLM errors
             if not response.success:

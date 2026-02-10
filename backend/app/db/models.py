@@ -259,3 +259,48 @@ class AuditLog(Base):
             "duration_ms": self.duration_ms,
             "timestamp": self.timestamp.isoformat() + "Z" if self.timestamp else None,
         }
+
+
+class PromptTemplate(Base):
+    """
+    PromptTemplate model - stores custom prompt templates per layer.
+
+    Allows doctors to customize the prompts used for each pipeline layer.
+    """
+
+    __tablename__ = "prompt_templates"
+
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Layer identification
+    layer_name = Column(String(50), nullable=False, index=True)  # e.g. 'layer1_ctp'
+    label = Column(String(200), nullable=True)  # Human-friendly label
+
+    # Prompt content
+    content = Column(Text, nullable=False)
+
+    # Versioning
+    version = Column(String(20), default="custom")
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_prompt_templates_layer_active", "layer_name", "is_active"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "id": str(self.id),
+            "layer_name": self.layer_name,
+            "label": self.label,
+            "content": self.content,
+            "version": self.version,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
+        }

@@ -1,164 +1,419 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="SNAP-AI Clinical NLP Pipeline for German Discharge Summaries">
-    <title>SNAP-AI | Clinical NLP Pipeline</title>
+    <meta name="description" content="SNAP-AI Clinical NLP Pipeline — Research Platform for Complication Analysis">
+    <title>SNAP-AI | Clinical Research Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="/src/styles.css">
 </head>
+
 <body>
     <div id="app">
         <!-- Header -->
         <header class="header">
             <div class="header-content">
-                <div class="logo">
-                    <span class="logo-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M11 2a2 2 0 0 0-2 2v5H4a2 2 0 0 0-2 2v2c0 1.1.9 2 2 2h5v5c0 1.1.9 2 2 2h2a2 2 0 0 0 2-2v-5h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5V4a2 2 0 0 0-2-2h-2z"/>
-                        </svg>
-                    </span>
-                    <h1>SNAP-AI</h1>
+                <div class="header-left">
+                    <div class="logo">
+                        <span class="logo-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path
+                                    d="M11 2a2 2 0 0 0-2 2v5H4a2 2 0 0 0-2 2v2c0 1.1.9 2 2 2h5v5c0 1.1.9 2 2 2h2a2 2 0 0 0 2-2v-5h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5V4a2 2 0 0 0-2-2h-2z" />
+                            </svg>
+                        </span>
+                        <h1>SNAP-AI</h1>
+                    </div>
                 </div>
-                <p class="tagline">Clinical NLP Pipeline for Complication Analysis</p>
+                <div class="header-right">
+                    <!-- Model Selector -->
+                    <div class="model-selector" id="model-selector">
+                        <label class="model-label">Model:</label>
+                        <select id="model-dropdown" class="model-dropdown">
+                            <option value="">Loading...</option>
+                        </select>
+                        <button id="manage-models-btn" class="btn btn-sm btn-ghost" title="Manage Models">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3" />
+                                <path
+                                    d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Navigation -->
+                    <nav class="header-nav">
+                        <button class="nav-btn active" data-page="pipeline" onclick="switchPage('pipeline')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <polygon points="5 3 19 12 5 21 5 3" />
+                            </svg>
+                            Pipeline
+                        </button>
+                        <button class="nav-btn" data-page="prompts" onclick="switchPage('prompts')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                                <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            Prompts
+                        </button>
+                    </nav>
+                </div>
             </div>
         </header>
 
+        <!-- System Info Bar -->
+        <div class="system-info-bar hidden" id="system-info-bar">
+            <!-- Populated by loadSystemInfo() -->
+        </div>
+
         <!-- Main Content -->
         <main class="main-content">
-            <!-- Upload Section -->
-            <section id="upload-section" class="card">
-                <h2>
-                    <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                        <line x1="16" x2="8" y1="13" y2="13"/>
-                        <line x1="16" x2="8" y1="17" y2="17"/>
-                        <line x1="10" x2="8" y1="9" y2="9"/>
-                    </svg>
-                    Upload Clinical Cases
-                </h2>
-                <p class="section-description">Upload a DOCX file or paste clinical text directly.</p>
-                
-                <!-- Tab Navigation -->
-                <div class="tab-nav">
-                    <button class="tab-btn active" data-tab="file">File Upload</button>
-                    <button class="tab-btn" data-tab="text">Direct Text</button>
-                </div>
 
-                <!-- File Upload Tab -->
-                <div id="file-tab" class="tab-content active">
-                    <div class="dropzone" id="dropzone">
-                        <div class="dropzone-content">
-                            <span class="dropzone-icon">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                    <polyline points="17 8 12 3 7 8"/>
-                                    <line x1="12" x2="12" y1="3" y2="15"/>
-                                </svg>
-                            </span>
-                            <p>Drag & drop DOCX file here</p>
-                            <p class="dropzone-hint">or click to browse</p>
-                            <input type="file" id="file-input" accept=".docx" hidden>
+            <!-- ===================== PIPELINE PAGE ===================== -->
+            <div id="page-pipeline" class="page active">
+
+                <!-- Upload Section -->
+                <section id="upload-section" class="card">
+                    <h2>
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="16" x2="8" y1="13" y2="13" />
+                            <line x1="16" x2="8" y1="17" y2="17" />
+                            <line x1="10" x2="8" y1="9" y2="9" />
+                        </svg>
+                        Upload Clinical Cases
+                    </h2>
+                    <p class="section-description">Upload a DOCX file or paste clinical text directly.</p>
+
+                    <!-- Tab Navigation -->
+                    <div class="tab-nav">
+                        <button class="tab-btn active" data-tab="file">File Upload</button>
+                        <button class="tab-btn" data-tab="text">Direct Text</button>
+                    </div>
+
+                    <!-- File Upload Tab -->
+                    <div id="file-tab" class="tab-content active">
+                        <div class="dropzone" id="dropzone">
+                            <div class="dropzone-content">
+                                <span class="dropzone-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                        <polyline points="17 8 12 3 7 8" />
+                                        <line x1="12" x2="12" y1="3" y2="15" />
+                                    </svg>
+                                </span>
+                                <p>Drag & drop DOCX file here</p>
+                                <p class="dropzone-hint">or click to browse</p>
+                                <input type="file" id="file-input" accept=".docx" hidden>
+                            </div>
+                        </div>
+                        <div id="file-info" class="file-info hidden"></div>
+                    </div>
+
+                    <!-- Text Input Tab -->
+                    <div id="text-tab" class="tab-content">
+                        <textarea id="text-input" class="text-input" placeholder="Paste clinical text here...
+
+Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12"></textarea>
+                    </div>
+
+                    <!-- Process Button -->
+                    <button id="process-btn" class="btn btn-primary btn-large" disabled>
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                        </svg>
+                        Process Cases
+                    </button>
+                </section>
+
+                <!-- Progress Section (Hidden by default) -->
+                <section id="progress-section" class="card hidden">
+                    <h2>
+                        <svg class="section-icon spinning" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                        Processing...
+                    </h2>
+
+                    <!-- Streaming Indicator -->
+                    <div class="streaming-indicator" id="streaming-indicator">
+                        <span class="streaming-dot"></span>
+                        <span>Live streaming enabled</span>
+                    </div>
+
+                    <!-- Current Case Info -->
+                    <div class="current-case-info" id="current-case-info">
+                        <div class="current-case-label" id="current-case-label">Initializing...</div>
+                        <div class="current-layer-label" id="current-layer-label">Preparing pipeline</div>
+                    </div>
+
+                    <!-- Layer Progress -->
+                    <div class="layer-progress" id="layer-progress">
+                        <div class="layer-step" data-layer="1" id="layer-step-1">
+                            <div class="layer-step-icon">1</div>
+                            <div class="layer-step-label">Pre-Processing</div>
+                            <div class="layer-step-sublabel">Text extraction</div>
+                        </div>
+                        <div class="layer-step" data-layer="2" id="layer-step-2">
+                            <div class="layer-step-icon">2</div>
+                            <div class="layer-step-label">Extraction</div>
+                            <div class="layer-step-sublabel">Complications</div>
+                        </div>
+                        <div class="layer-step" data-layer="3" id="layer-step-3">
+                            <div class="layer-step-icon">3</div>
+                            <div class="layer-step-label">Verification</div>
+                            <div class="layer-step-sublabel">CCI calculation</div>
                         </div>
                     </div>
-                    <div id="file-info" class="file-info hidden"></div>
-                </div>
 
-                <!-- Text Input Tab -->
-                <div id="text-tab" class="tab-content">
-                    <textarea 
-                        id="text-input" 
-                        class="text-input" 
-                        placeholder="Paste clinical text here...
-
-Cases should be separated by headers like 'Case #1', 'Case #2', etc."
-                        rows="12"
-                    ></textarea>
-                </div>
-
-                <!-- Process Button -->
-                <button id="process-btn" class="btn btn-primary btn-large" disabled>
-                    <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polygon points="5 3 19 12 5 21 5 3"/>
-                    </svg>
-                    Process Cases
-                </button>
-            </section>
-
-            <!-- Progress Section (Hidden by default) -->
-            <section id="progress-section" class="card hidden">
-                <h2>
-                    <svg class="section-icon spinning" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                    </svg>
-                    Processing...
-                </h2>
-                
-                <!-- Overall Progress -->
-                <div class="progress-overall">
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    <!-- Live Output Panel -->
+                    <div class="live-output-panel" id="live-output-panel">
+                        <div class="live-output-header">
+                            <div class="live-output-tabs">
+                                <button class="live-tab active" data-layer="layer1_ctp" id="live-tab-l1">Layer 1:
+                                    CTP</button>
+                                <button class="live-tab" data-layer="layer2_cie" id="live-tab-l2">Layer 2: CIE</button>
+                                <button class="live-tab" data-layer="layer3_ccc" id="live-tab-l3">Layer 3: CCC</button>
+                            </div>
+                            <div class="live-output-status" id="live-output-status">
+                                <span class="live-dot"></span>
+                                Waiting...
+                            </div>
+                        </div>
+                        <div class="live-output-body">
+                            <pre class="live-output-text"
+                                id="live-output-text"><span class="cursor-blink">|</span></pre>
+                        </div>
                     </div>
-                    <p class="progress-text" id="progress-text">0 of 0 cases completed</p>
-                </div>
 
-                <!-- Per-Case Status -->
-                <div class="case-status-list" id="case-status-list">
-                    <!-- Populated dynamically -->
-                </div>
-            </section>
+                    <!-- Overall Progress -->
+                    <div class="progress-overall">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                        </div>
+                        <p class="progress-text" id="progress-text">0 of 0 cases completed</p>
+                    </div>
 
-            <!-- Results Section (Hidden by default) -->
-            <section id="results-section" class="card hidden">
-                <h2>
-                    <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" x2="18" y1="20" y2="10"/>
-                        <line x1="12" x2="12" y1="20" y2="4"/>
-                        <line x1="6" x2="6" y1="20" y2="14"/>
-                    </svg>
-                    Results
-                </h2>
-                
-                <!-- Summary Stats -->
-                <div class="results-summary" id="results-summary">
-                    <!-- Populated dynamically -->
-                </div>
+                    <!-- Per-Case Status -->
+                    <div class="case-status-list" id="case-status-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </section>
 
-                <!-- Case Results List -->
-                <div class="case-results" id="case-results">
-                    <!-- Populated dynamically -->
-                </div>
-
-                <!-- Export Button -->
-                <div class="export-actions">
-                    <button id="export-btn" class="btn btn-secondary">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="7 10 12 15 17 10"/>
-                            <line x1="12" x2="12" y1="15" y2="3"/>
+                <!-- Results Section (Hidden by default) -->
+                <section id="results-section" class="card hidden">
+                    <h2>
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" x2="18" y1="20" y2="10" />
+                            <line x1="12" x2="12" y1="20" y2="4" />
+                            <line x1="6" x2="6" y1="20" y2="14" />
                         </svg>
-                        Export JSON
-                    </button>
-                    <button id="new-analysis-btn" class="btn btn-outline">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                            <path d="M21 3v5h-5"/>
-                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                            <path d="M8 16H3v5"/>
+                        Results
+                    </h2>
+
+                    <!-- Summary Stats -->
+                    <div class="results-summary" id="results-summary">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- View Toggle -->
+                    <div class="view-toggle">
+                        <button class="view-toggle-btn active" data-view="table" onclick="switchView('table')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                <line x1="3" x2="21" y1="9" y2="9" />
+                                <line x1="3" x2="21" y1="15" y2="15" />
+                                <line x1="9" x2="9" y1="3" y2="21" />
+                            </svg>
+                            Table View
+                        </button>
+                        <button class="view-toggle-btn" data-view="cards" onclick="switchView('cards')">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect width="7" height="7" x="3" y="3" rx="1" />
+                                <rect width="7" height="7" x="14" y="3" rx="1" />
+                                <rect width="7" height="7" x="3" y="14" rx="1" />
+                                <rect width="7" height="7" x="14" y="14" rx="1" />
+                            </svg>
+                            Card View
+                        </button>
+                    </div>
+
+                    <!-- Results Table View -->
+                    <div id="results-table-container">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Case Results List (Card View) -->
+                    <div class="case-results hidden" id="case-results">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Export Button -->
+                    <div class="export-actions">
+                        <button id="export-btn" class="btn btn-secondary">
+                            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" x2="12" y1="15" y2="3" />
+                            </svg>
+                            Export JSON
+                        </button>
+                        <button id="new-analysis-btn" class="btn btn-outline">
+                            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                                <path d="M21 3v5h-5" />
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                                <path d="M8 16H3v5" />
+                            </svg>
+                            New Analysis
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== PROMPTS PAGE ===================== -->
+            <div id="page-prompts" class="page">
+                <section class="card">
+                    <h2>
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                            <polyline points="14 2 14 8 20 8" />
                         </svg>
-                        New Analysis
-                    </button>
-                </div>
-            </section>
+                        Prompt Templates
+                    </h2>
+                    <p class="section-description">
+                        Customize the prompts sent to the LLM for each pipeline layer.
+                        Changes take effect on the next processing run.
+                    </p>
+
+                    <!-- Prompt Layer Tabs -->
+                    <div class="prompt-tabs">
+                        <button class="prompt-tab active" data-layer="layer1_ctp"
+                            onclick="switchPromptTab('layer1_ctp')">
+                            Layer 1: CTP
+                        </button>
+                        <button class="prompt-tab" data-layer="layer2_cie" onclick="switchPromptTab('layer2_cie')">
+                            Layer 2: CIE
+                        </button>
+                        <button class="prompt-tab" data-layer="layer3_ccc" onclick="switchPromptTab('layer3_ccc')">
+                            Layer 3: CCC
+                        </button>
+                    </div>
+
+                    <!-- Prompt Editor -->
+                    <div class="prompt-editor-wrapper">
+                        <div class="prompt-editor-header">
+                            <span class="prompt-source-badge" id="prompt-source-badge">Default</span>
+                            <span class="prompt-layer-name" id="prompt-layer-name">Layer 1 — Clinical Text Pre-Processor
+                                (CTP)</span>
+                        </div>
+                        <textarea id="prompt-editor" class="prompt-editor" placeholder="Loading prompt template..."
+                            rows="20"></textarea>
+                        <div class="prompt-editor-footer">
+                            <div class="prompt-char-count" id="prompt-char-count">0 characters</div>
+                            <div class="prompt-actions">
+                                <button id="prompt-reset-btn" class="btn btn-outline btn-sm" onclick="resetPrompt()">
+                                    <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                                        <path d="M21 3v5h-5" />
+                                        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                                        <path d="M8 16H3v5" />
+                                    </svg>
+                                    Reset to Default
+                                </button>
+                                <button id="prompt-save-btn" class="btn btn-primary btn-sm" onclick="savePrompt()">
+                                    <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                        <polyline points="17 21 17 13 7 13 7 21" />
+                                        <polyline points="7 3 7 8 15 8" />
+                                    </svg>
+                                    Save Prompt
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
         </main>
+
+        <!-- Model Management Modal -->
+        <div class="modal-overlay hidden" id="model-modal-overlay">
+            <div class="modal" id="model-modal">
+                <div class="modal-header">
+                    <h3>Model Management</h3>
+                    <button class="modal-close" onclick="closeModelModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <!-- Pull New Model -->
+                    <div class="model-pull-section">
+                        <label class="section-label">Pull New Model</label>
+                        <div id="model-pull-section-inner">
+                            <!-- Populated by renderModelPullDropdown() -->
+                            <p>Loading available models...</p>
+                        </div>
+                        <div id="model-pull-status" class="model-pull-status hidden"></div>
+                    </div>
+
+                    <!-- Available Models -->
+                    <div class="model-list-section">
+                        <label class="section-label">Installed Models</label>
+                        <div id="model-list" class="model-list">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Container -->
+        <div id="toast-container" class="toast-container"></div>
 
         <!-- Footer -->
         <footer class="footer">
-            <p>SNAP-AI v1.0.0 | Secure On-Premise Clinical NLP</p>
+            <p>SNAP-AI v2.0.0 | Secure On-Premise Clinical Research Platform</p>
         </footer>
     </div>
 
     <script type="module" src="/src/main.js"></script>
 </body>
+
 </html>

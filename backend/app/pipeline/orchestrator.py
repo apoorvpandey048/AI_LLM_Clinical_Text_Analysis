@@ -1,11 +1,11 @@
 """
 Pipeline Orchestrator.
 
-Coordinates the 3-layer pipeline execution.
+Coordinates the 3-layer pipeline execution with optional streaming.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from app.llm import LLMClient
 from app.pipeline.layer1_ctp import Layer1CTP
@@ -52,6 +52,7 @@ class PipelineOrchestrator:
     Orchestrates the 3-layer SNAP-AI pipeline.
 
     Executes layers sequentially, passing outputs between them.
+    Supports streaming token callbacks and custom prompts per layer.
     """
 
     def __init__(self, llm_client: LLMClient):
@@ -66,12 +67,23 @@ class PipelineOrchestrator:
         self.layer2 = Layer2CIE(llm_client)
         self.layer3 = Layer3CCC(llm_client)
 
-    async def execute(self, raw_text: str) -> PipelineResult:
+    async def execute(
+        self,
+        raw_text: str,
+        custom_prompts: dict[str, str] | None = None,
+        on_token: Callable[[str, str], Awaitable[None]] | None = None,
+        on_layer_start: Callable[[str], Awaitable[None]] | None = None,
+        on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
+    ) -> PipelineResult:
         """
         Execute the complete 3-layer pipeline.
 
         Args:
             raw_text: The raw clinical text to process
+            custom_prompts: Optional dict of {layer_name: prompt_text}
+            on_token: Async callback (layer_name, token) for streaming
+            on_layer_start: Async callback (layer_name) when layer begins
+            on_layer_complete: Async callback (layer_name, success, duration_ms)
 
         Returns:
             PipelineResult with all layer outputs
@@ -81,14 +93,33 @@ class PipelineOrchestrator:
         total_duration_ms = 0
         total_tokens_input = 0
         total_tokens_output = 0
+        custom_prompts = custom_prompts or {}
+
+        # Helper to create layer-specific token callback
+        def make_token_cb(layer_name: str):
+            if on_token is None:
+                return None
+            async def cb(token: str):
+                await on_token(layer_name, token)
+            return cb
 
         # ====== Layer 1: CTP ======
+        if on_layer_start:
+            await on_layer_start("layer1_ctp")
         logger.info("pipeline_layer1_start")
-        layer1_result = await self.layer1.execute(raw_text=raw_text)
+
+        layer1_result = await self.layer1.execute(
+            raw_text=raw_text,
+            custom_prompt=custom_prompts.get("layer1_ctp"),
+            on_token=make_token_cb("layer1_ctp"),
+        )
 
         total_duration_ms += layer1_result.duration_ms
         total_tokens_input += layer1_result.tokens_input
         total_tokens_output += layer1_result.tokens_output
+
+        if on_layer_complete:
+            await on_layer_complete("layer1_ctp", layer1_result.success, layer1_result.duration_ms)
 
         if not layer1_result.success:
             logger.error("pipeline_layer1_failed", error=layer1_result.error)
@@ -109,12 +140,22 @@ class PipelineOrchestrator:
         clean_text = layer1_result.output.get("clean_course_text", "")
 
         # ====== Layer 2: CIE ======
+        if on_layer_start:
+            await on_layer_start("layer2_cie")
         logger.info("pipeline_layer2_start")
-        layer2_result = await self.layer2.execute(clean_text=clean_text)
+
+        layer2_result = await self.layer2.execute(
+            clean_text=clean_text,
+            custom_prompt=custom_prompts.get("layer2_cie"),
+            on_token=make_token_cb("layer2_cie"),
+        )
 
         total_duration_ms += layer2_result.duration_ms
         total_tokens_input += layer2_result.tokens_input
         total_tokens_output += layer2_result.tokens_output
+
+        if on_layer_complete:
+            await on_layer_complete("layer2_cie", layer2_result.success, layer2_result.duration_ms)
 
         if not layer2_result.success:
             logger.error("pipeline_layer2_failed", error=layer2_result.error)
@@ -132,15 +173,23 @@ class PipelineOrchestrator:
             )
 
         # ====== Layer 3: CCC ======
+        if on_layer_start:
+            await on_layer_start("layer3_ccc")
         logger.info("pipeline_layer3_start")
+
         layer3_result = await self.layer3.execute(
             clean_text=clean_text,
             layer2_output=layer2_result.output,
+            custom_prompt=custom_prompts.get("layer3_ccc"),
+            on_token=make_token_cb("layer3_ccc"),
         )
 
         total_duration_ms += layer3_result.duration_ms
         total_tokens_input += layer3_result.tokens_input
         total_tokens_output += layer3_result.tokens_output
+
+        if on_layer_complete:
+            await on_layer_complete("layer3_ccc", layer3_result.success, layer3_result.duration_ms)
 
         if not layer3_result.success:
             logger.error("pipeline_layer3_failed", error=layer3_result.error)
