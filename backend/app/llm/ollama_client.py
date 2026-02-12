@@ -308,13 +308,13 @@ class OllamaClient(LLMClient):
             logger.warning("ollama_list_models_failed", error=str(e))
             return []
 
-    async def pull_model(self, model_name: str, on_progress: Callable | None = None) -> bool:
+    async def pull_model(self, model_name: str, on_progress: Callable[..., Awaitable[None]] | None = None) -> bool:
         """
         Pull a model from Ollama registry.
 
         Args:
             model_name: Name of the model to pull (e.g. 'llama3:8b')
-            on_progress: Optional callback for progress updates
+            on_progress: Optional async callback for progress updates
 
         Returns:
             True if pull succeeded
@@ -344,6 +344,39 @@ class OllamaClient(LLMClient):
         except Exception as e:
             logger.error("ollama_pull_failed", model=model_name, error=str(e))
             return False
+
+    async def pull_model_stream(self, model_name: str):
+        """
+        Pull a model from Ollama registry, yielding progress events.
+
+        This is an async generator that yields dicts with progress info
+        suitable for SSE streaming to a frontend.
+
+        Args:
+            model_name: Name of the model to pull (e.g. 'llama3:8b')
+
+        Yields:
+            dict with status, completed, total fields
+        """
+        logger.info("ollama_pull_stream_start", model=model_name)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0, connect=60.0)) as client:
+            async with client.stream(
+                "POST",
+                f"{self.host}/api/pull",
+                json={"name": model_name, "stream": True},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                        if "status" in data:
+                            yield data
+                    except json.JSONDecodeError:
+                        continue
+
+        logger.info("ollama_pull_stream_complete", model=model_name)
 
     async def delete_model(self, model_name: str) -> bool:
         """

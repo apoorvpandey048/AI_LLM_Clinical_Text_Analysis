@@ -52,15 +52,15 @@ class TestUploadEndpoints:
     def test_upload_no_file_or_text(self, client):
         """Uploading with no file or text should fail."""
         response = client.post("/api/v1/upload")
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["success"] is False
-        assert "error" in data
+        assert data["error"]["code"] == "HTTP_400"
 
     def test_upload_text(self, client, sample_clinical_text):
         """Uploading text should create a job."""
         with patch("app.api.routes.upload.process_batch") as mock_task:
-            mock_task.delay = MagicMock()
+            mock_task.delay.return_value.id = "test-task-id"
             
             response = client.post(
                 "/api/v1/upload",
@@ -81,7 +81,7 @@ class TestUploadEndpoints:
             files={"file": ("test.txt", b"Hello", "text/plain")}
         )
         
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["success"] is False
         assert "docx" in data["error"]["message"].lower()
@@ -112,15 +112,15 @@ class TestJobsEndpoints:
     def test_get_job_not_found(self, client):
         """Get non-existent job should return 404-style error."""
         response = client.get("/api/v1/jobs/00000000-0000-0000-0000-000000000000")
-        assert response.status_code == 200
+        assert response.status_code == 404
         data = response.json()
         assert data["success"] is False
-        assert data["error"]["code"] == "NOT_FOUND"
+        assert data["error"]["code"] == "HTTP_404"
 
     def test_get_job_invalid_uuid(self, client):
         """Get job with invalid UUID should fail."""
         response = client.get("/api/v1/jobs/invalid-uuid")
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
         assert data["success"] is False
         assert "invalid" in data["error"]["message"].lower()
@@ -128,9 +128,10 @@ class TestJobsEndpoints:
     def test_delete_job_not_found(self, client):
         """Delete non-existent job should return error."""
         response = client.delete("/api/v1/jobs/00000000-0000-0000-0000-000000000000")
-        assert response.status_code == 200
+        assert response.status_code == 404
         data = response.json()
         assert data["success"] is False
+        assert data["error"]["code"] == "HTTP_404"
 
 
 class TestSettingsEndpoints:
@@ -143,32 +144,32 @@ class TestSettingsEndpoints:
         data = response.json()
         
         assert data["success"] is True
-        assert "auto_delete_enabled" in data["data"]
-        assert "retention_days" in data["data"]
+        assert "enabled" in data["data"]["settings"]
+        assert "days" in data["data"]["settings"]
 
     def test_update_retention_settings(self, client):
         """Update retention settings."""
         response = client.put(
             "/api/v1/settings/retention",
             json={
-                "auto_delete_enabled": True,
-                "retention_days": 30,
+                "enabled": True,
+                "days": 30,
             }
         )
         assert response.status_code == 200
         data = response.json()
         
         assert data["success"] is True
-        assert data["data"]["auto_delete_enabled"] is True
-        assert data["data"]["retention_days"] == 30
+        assert data["data"]["settings"]["enabled"] is True
+        assert data["data"]["settings"]["days"] == 30
 
     def test_update_retention_invalid_days(self, client):
         """Retention days must be positive."""
         response = client.put(
             "/api/v1/settings/retention",
             json={
-                "auto_delete_enabled": True,
-                "retention_days": 0,
+                "enabled": True,
+                "days": 0,
             }
         )
         # This might return 422 for validation error or 200 with error

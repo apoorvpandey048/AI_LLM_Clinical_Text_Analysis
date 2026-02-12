@@ -169,33 +169,16 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                         <div class="current-layer-label" id="current-layer-label">Preparing pipeline</div>
                     </div>
 
-                    <!-- Layer Progress -->
+                    <!-- Layer Progress (populated dynamically by renderDynamicLayerSteps) -->
                     <div class="layer-progress" id="layer-progress">
-                        <div class="layer-step" data-layer="1" id="layer-step-1">
-                            <div class="layer-step-icon">1</div>
-                            <div class="layer-step-label">Pre-Processing</div>
-                            <div class="layer-step-sublabel">Text extraction</div>
-                        </div>
-                        <div class="layer-step" data-layer="2" id="layer-step-2">
-                            <div class="layer-step-icon">2</div>
-                            <div class="layer-step-label">Extraction</div>
-                            <div class="layer-step-sublabel">Complications</div>
-                        </div>
-                        <div class="layer-step" data-layer="3" id="layer-step-3">
-                            <div class="layer-step-icon">3</div>
-                            <div class="layer-step-label">Verification</div>
-                            <div class="layer-step-sublabel">CCI calculation</div>
-                        </div>
+                        <!-- Populated dynamically -->
                     </div>
 
                     <!-- Live Output Panel -->
                     <div class="live-output-panel" id="live-output-panel">
                         <div class="live-output-header">
-                            <div class="live-output-tabs">
-                                <button class="live-tab active" data-layer="layer1_ctp" id="live-tab-l1">Layer 1:
-                                    CTP</button>
-                                <button class="live-tab" data-layer="layer2_cie" id="live-tab-l2">Layer 2: CIE</button>
-                                <button class="live-tab" data-layer="layer3_ccc" id="live-tab-l3">Layer 3: CCC</button>
+                            <div class="live-output-tabs" id="live-output-tabs-container">
+                                <!-- Populated dynamically by renderDynamicLiveOutputTabs -->
                             </div>
                             <div class="live-output-status" id="live-output-status">
                                 <span class="live-dot"></span>
@@ -355,18 +338,9 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                         </button>
                     </div>
 
-                    <!-- Prompt Layer Tabs -->
-                    <div class="prompt-tabs">
-                        <button class="prompt-tab active" data-layer="layer1_ctp"
-                            onclick="switchPromptTab('layer1_ctp')">
-                            Layer 1: CTP
-                        </button>
-                        <button class="prompt-tab" data-layer="layer2_cie" onclick="switchPromptTab('layer2_cie')">
-                            Layer 2: CIE
-                        </button>
-                        <button class="prompt-tab" data-layer="layer3_ccc" onclick="switchPromptTab('layer3_ccc')">
-                            Layer 3: CCC
-                        </button>
+                    <!-- Prompt Layer Tabs (populated dynamically by renderDynamicPromptTabs) -->
+                    <div class="prompt-tabs" id="prompt-tabs-container">
+                        <!-- Populated dynamically -->
                     </div>
 
                     <!-- Prompt Editor -->
@@ -391,6 +365,15 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                                         <path d="M8 16H3v5" />
                                     </svg>
                                     Reset to Default
+                                </button>
+                                <button id="prompt-delete-btn" class="btn btn-cancel btn-sm hidden" onclick="deleteCustomLayer()">
+                                    <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                    </svg>
+                                    Delete Layer
                                 </button>
                                 <button id="prompt-save-btn" class="btn btn-primary btn-sm" onclick="savePrompt()">
                                     <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"

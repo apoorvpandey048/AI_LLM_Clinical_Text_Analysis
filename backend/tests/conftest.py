@@ -24,6 +24,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.db import Base, get_db
+from app.db import session as db_session_module
 from app.llm import LLMClient, LLMResponse
 
 
@@ -34,15 +35,19 @@ from app.llm import LLMClient, LLMResponse
 @pytest.fixture(scope="function")
 def test_db():
     """Create an in-memory SQLite database for testing."""
-    engine = create_engine(
+    test_engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
     
     # Create tables
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=test_engine)
+
+    # Patch the module-level engine so lifespan uses SQLite too
+    original_engine = db_session_module.engine
+    db_session_module.engine = test_engine
     
     def override_get_db():
         db = TestingSessionLocal()
@@ -57,6 +62,7 @@ def test_db():
     
     # Cleanup
     app.dependency_overrides.clear()
+    db_session_module.engine = original_engine
 
 
 @pytest.fixture(scope="function")

@@ -2,9 +2,11 @@
 Pipeline Orchestrator.
 
 Coordinates the 3-layer pipeline execution with optional streaming.
+Supports additional custom layers that run after the built-in pipeline.
 """
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
 from app.llm import LLMClient
@@ -27,6 +29,7 @@ class PipelineResult:
         layer1_result: Layer 1 (CTP) result
         layer2_result: Layer 2 (CIE) result
         layer3_result: Layer 3 (CCC) result
+        extra_layer_results: Dict of {layer_name: LayerResult} for custom layers
         total_duration_ms: Total processing time
         total_tokens_input: Total input tokens across all layers
         total_tokens_output: Total output tokens across all layers
@@ -39,12 +42,13 @@ class PipelineResult:
     layer1_result: LayerResult | None
     layer2_result: LayerResult | None
     layer3_result: LayerResult | None
-    total_duration_ms: int
-    total_tokens_input: int
-    total_tokens_output: int
-    final_verdict: str | None
-    final_cci: float | None
-    error: str | None
+    extra_layer_results: dict[str, LayerResult] = field(default_factory=dict)
+    total_duration_ms: int = 0
+    total_tokens_input: int = 0
+    total_tokens_output: int = 0
+    final_verdict: str | None = None
+    final_cci: float | None = None
+    error: str | None = None
 
 
 class PipelineOrchestrator:
@@ -71,16 +75,18 @@ class PipelineOrchestrator:
         self,
         raw_text: str,
         custom_prompts: dict[str, str] | None = None,
+        extra_layers: list[dict] | None = None,
         on_token: Callable[[str, str], Awaitable[None]] | None = None,
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
     ) -> PipelineResult:
         """
-        Execute the complete 3-layer pipeline.
+        Execute the complete pipeline (3 built-in layers + optional custom layers).
 
         Args:
             raw_text: The raw clinical text to process
-            custom_prompts: Optional dict of {layer_name: prompt_text}
+            custom_prompts: Optional dict of {layer_name: prompt_text} for built-in layers
+            extra_layers: Optional list of dicts [{layer_name, prompt}] for custom layers
             on_token: Async callback (layer_name, token) for streaming
             on_layer_start: Async callback (layer_name) when layer begins
             on_layer_complete: Async callback (layer_name, success, duration_ms)
@@ -211,6 +217,27 @@ class PipelineOrchestrator:
         final_verdict = layer3_result.output.get("verdict", "UNKNOWN")
         final_cci = layer2_result.output.get("cci_total", 0.0)
 
+        # ====== Extra Custom Layers ======
+        extra_layer_results = {}
+        if extra_layers:
+            extra_layer_results = await self._execute_extra_layers(
+                extra_layers=extra_layers,
+                context={
+                    "raw_text": raw_text,
+                    "clean_text": clean_text,
+                    "layer1_output": layer1_result.output,
+                    "layer2_output": layer2_result.output,
+                    "layer3_output": layer3_result.output,
+                },
+                on_token=on_token,
+                on_layer_start=on_layer_start,
+                on_layer_complete=on_layer_complete,
+            )
+            for r in extra_layer_results.values():
+                total_duration_ms += r.duration_ms
+                total_tokens_input += r.tokens_input
+                total_tokens_output += r.tokens_output
+
         logger.info(
             "pipeline_complete",
             total_duration_ms=total_duration_ms,
@@ -218,6 +245,7 @@ class PipelineOrchestrator:
             total_tokens_output=total_tokens_output,
             verdict=final_verdict,
             cci=final_cci,
+            extra_layers=list(extra_layer_results.keys()),
         )
 
         return PipelineResult(
@@ -225,6 +253,7 @@ class PipelineOrchestrator:
             layer1_result=layer1_result,
             layer2_result=layer2_result,
             layer3_result=layer3_result,
+            extra_layer_results=extra_layer_results,
             total_duration_ms=total_duration_ms,
             total_tokens_input=total_tokens_input,
             total_tokens_output=total_tokens_output,
@@ -232,3 +261,126 @@ class PipelineOrchestrator:
             final_cci=final_cci,
             error=None,
         )
+
+    async def _execute_extra_layers(
+        self,
+        extra_layers: list[dict],
+        context: dict,
+        on_token: Callable[[str, str], Awaitable[None]] | None = None,
+        on_layer_start: Callable[[str], Awaitable[None]] | None = None,
+        on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
+    ) -> dict[str, LayerResult]:
+        """
+        Execute custom/extra layers sequentially.
+
+        Each custom layer receives the accumulated pipeline context
+        as JSON in the user prompt, with its custom prompt as the system prompt.
+
+        Args:
+            extra_layers: List of dicts with 'layer_name' and 'prompt' keys
+            context: Accumulated pipeline context from built-in layers
+            on_token: Token streaming callback
+            on_layer_start: Layer start callback
+            on_layer_complete: Layer complete callback
+
+        Returns:
+            Dict mapping layer_name to LayerResult
+        """
+        results = {}
+        settings = self.llm_client  # We need settings for temperature etc.
+        from app.config import get_settings
+        config = get_settings()
+
+        for layer_config in extra_layers:
+            layer_name = layer_config.get("layer_name", "")
+            system_prompt = layer_config.get("prompt", "")
+
+            if not layer_name or not system_prompt:
+                continue
+
+            logger.info("extra_layer_start", layer=layer_name)
+            if on_layer_start:
+                await on_layer_start(layer_name)
+
+            # Build context prompt for the custom layer
+            user_prompt = (
+                "Below is the clinical case data processed through the SNAP-AI pipeline.\n"
+                "Use this context to perform your analysis.\n\n"
+                f"## Original Clinical Text\n{context.get('raw_text', '')}\n\n"
+                f"## Cleaned Text (Layer 1 Output)\n{context.get('clean_text', '')}\n\n"
+                f"## Layer 2 (CIE) Output\n{json.dumps(context.get('layer2_output', {}), indent=2)}\n\n"
+                f"## Layer 3 (CCC) Output\n{json.dumps(context.get('layer3_output', {}), indent=2)}\n"
+            )
+
+            # Add previous custom layer outputs for chaining
+            for prev_name, prev_result in results.items():
+                if prev_result.success and prev_result.output:
+                    user_prompt += f"\n## {prev_name} Output\n{json.dumps(prev_result.output, indent=2)}\n"
+
+            # Token callback for this layer
+            token_cb = None
+            if on_token:
+                def _make_cb(ln):
+                    async def cb(token: str):
+                        await on_token(ln, token)
+                    return cb
+                token_cb = _make_cb(layer_name)
+
+            try:
+                if token_cb:
+                    response = await self.llm_client.generate_stream(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        temperature=config.llm_temperature,
+                        max_tokens=config.llm_max_tokens,
+                        timeout=config.llm_timeout,
+                        on_token=token_cb,
+                    )
+                else:
+                    response = await self.llm_client.generate(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        temperature=config.llm_temperature,
+                        max_tokens=config.llm_max_tokens,
+                        timeout=config.llm_timeout,
+                    )
+
+                result = LayerResult(
+                    success=response.success,
+                    output=response.parsed_json,
+                    raw_response=response.content,
+                    tokens_input=response.tokens_input,
+                    tokens_output=response.tokens_output,
+                    duration_ms=response.duration_ms,
+                    error=response.error,
+                    layer_name=layer_name,
+                    prompt_version="custom",
+                )
+
+            except Exception as e:
+                logger.error("extra_layer_error", layer=layer_name, error=str(e))
+                result = LayerResult(
+                    success=False,
+                    output=None,
+                    raw_response="",
+                    tokens_input=0,
+                    tokens_output=0,
+                    duration_ms=0,
+                    error=str(e),
+                    layer_name=layer_name,
+                    prompt_version="custom",
+                )
+
+            results[layer_name] = result
+
+            if on_layer_complete:
+                await on_layer_complete(layer_name, result.success, result.duration_ms)
+
+            logger.info(
+                "extra_layer_complete",
+                layer=layer_name,
+                success=result.success,
+                duration_ms=result.duration_ms,
+            )
+
+        return results

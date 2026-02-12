@@ -22,12 +22,26 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    JSON,
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import types as sa_types
 from sqlalchemy.orm import declarative_base, relationship
 
 import enum
+
+
+# Cross-dialect JSON type: uses JSONB on PostgreSQL, falls back to JSON elsewhere (e.g. SQLite)
+class PortableJSON(sa_types.TypeDecorator):
+    """A JSON type that uses JSONB on PostgreSQL and plain JSON on other databases."""
+    impl = JSON
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(JSON())
 
 Base = declarative_base()
 
@@ -143,10 +157,19 @@ class JobCase(Base):
     # Input
     input_text = Column(Text, nullable=False)
 
-    # Layer outputs (JSONB for efficient querying)
-    layer1_output = Column(JSONB, nullable=True)
-    layer2_output = Column(JSONB, nullable=True)
-    layer3_output = Column(JSONB, nullable=True)
+    # Layer outputs (JSONB on PostgreSQL, JSON on SQLite)
+    layer1_output = Column(PortableJSON, nullable=True)
+    layer2_output = Column(PortableJSON, nullable=True)
+    layer3_output = Column(PortableJSON, nullable=True)
+
+    # Dynamic layer outputs (stores outputs for custom user layers)
+    extra_layer_outputs = Column(PortableJSON, nullable=True)  # { "layer_name": {...output...} }
+
+    # Raw LLM outputs (preserve streaming text for review)
+    layer1_raw_output = Column(Text, nullable=True)
+    layer2_raw_output = Column(Text, nullable=True)
+    layer3_raw_output = Column(Text, nullable=True)
+    extra_layer_raw_outputs = Column(PortableJSON, nullable=True)  # { "layer_name": "raw text" }
 
     # Final results
     final_verdict = Column(String(50), nullable=True)
@@ -194,6 +217,11 @@ class JobCase(Base):
                 "layer1_output": self.layer1_output,
                 "layer2_output": self.layer2_output,
                 "layer3_output": self.layer3_output,
+                "extra_layer_outputs": self.extra_layer_outputs,
+                "layer1_raw_output": self.layer1_raw_output,
+                "layer2_raw_output": self.layer2_raw_output,
+                "layer3_raw_output": self.layer3_raw_output,
+                "extra_layer_raw_outputs": self.extra_layer_raw_outputs,
                 "prompt_version": self.prompt_version,
                 "model_version": self.model_version,
                 "total_tokens_input": self.total_tokens_input,
@@ -227,7 +255,7 @@ class AuditLog(Base):
     layer = Column(String(20), nullable=True)  # CTP, CIE, CCC
 
     # Details
-    details = Column(JSONB, nullable=True)
+    details = Column(PortableJSON, nullable=True)
 
     # Processing info
     duration_ms = Column(Integer, nullable=True)
@@ -263,9 +291,10 @@ class AuditLog(Base):
 
 class PromptTemplate(Base):
     """
-    PromptTemplate model - stores custom prompt templates per layer.
+    PromptTemplate model - stores prompt templates per layer.
 
-    Allows doctors to customize the prompts used for each pipeline layer.
+    Supports both built-in layers (layer1_ctp, layer2_cie, layer3_ccc)
+    and user-created custom layers. Each layer can have multiple versions.
     """
 
     __tablename__ = "prompt_templates"
@@ -274,7 +303,7 @@ class PromptTemplate(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # Layer identification
-    layer_name = Column(String(50), nullable=False, index=True)  # e.g. 'layer1_ctp'
+    layer_name = Column(String(50), nullable=False, index=True)  # e.g. 'layer1_ctp' or custom name
     label = Column(String(200), nullable=True)  # Human-friendly label
 
     # Prompt content
@@ -284,9 +313,20 @@ class PromptTemplate(Base):
     version = Column(String(20), default="custom")
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # Custom layer support
+    is_builtin = Column(Boolean, default=True, nullable=False)  # False for user-created layers
+    display_order = Column(Integer, default=99, nullable=False)  # Ordering in the UI
+    is_default_prompt = Column(Boolean, default=False, nullable=False)  # Whether this is the default for the layer
+
+    # Active version tracking (NULL = use current content, else use version content)
+    active_version_id = Column(UUID(as_uuid=True), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    versions = relationship("PromptVersion", back_populates="template", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_prompt_templates_layer_active", "layer_name", "is_active"),
@@ -301,6 +341,52 @@ class PromptTemplate(Base):
             "content": self.content,
             "version": self.version,
             "is_active": self.is_active,
+            "is_builtin": self.is_builtin,
+            "display_order": self.display_order,
+            "is_default_prompt": self.is_default_prompt,
+            "active_version_id": str(self.active_version_id) if self.active_version_id else None,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
+            "version_count": len(self.versions) if self.versions else 0,
+        }
+
+
+class PromptVersion(Base):
+    """
+    PromptVersion model - stores historical versions of prompt templates.
+
+    Keeps last N versions for rollback capability.
+    """
+
+    __tablename__ = "prompt_versions"
+
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Foreign key to template
+    template_id = Column(UUID(as_uuid=True), ForeignKey("prompt_templates.id"), nullable=False, index=True)
+
+    # Version content snapshot
+    content = Column(Text, nullable=False)
+    version_label = Column(String(50), nullable=True)  # e.g., "v1.3", "backup-2024-02"
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(String(100), nullable=True)  # For future user tracking
+
+    # Relationship
+    template = relationship("PromptTemplate", back_populates="versions")
+
+    __table_args__ = (
+        Index("ix_prompt_versions_template_created", "template_id", "created_at"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "id": str(self.id),
+            "template_id": str(self.template_id),
+            "content": self.content,
+            "version_label": self.version_label,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }

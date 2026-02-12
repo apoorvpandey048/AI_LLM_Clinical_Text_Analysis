@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.utils import setup_logging, get_logger
-from app.db import engine, Base
+from app.db import Base
+from app.db import session as db_session
 
 # Initialize logging
 setup_logging()
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     # Create database tables
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=db_session.engine)
     logger.info("database_tables_created")
 
     logger.info(

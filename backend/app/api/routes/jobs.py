@@ -330,3 +330,92 @@ async def delete_job(
         data={"message": "Job deleted"},
         request_id=request_id,
     )
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_job(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel a running job.
+
+    Revokes the Celery task and marks the job as failed.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Check if job can be cancelled
+    if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job cannot be cancelled - current status: {job.status.value}",
+        )
+
+    # Revoke Celery task if available
+    revoked = False
+    if job.celery_task_id:
+        try:
+            from app.workers.celery_app import celery_app
+            celery_app.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
+            revoked = True
+            logger.info("celery_task_revoked", job_id=job_id, task_id=job.celery_task_id)
+        except Exception as e:
+            logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
+
+    # Update job status
+    job.status = JobStatus.FAILED
+    job.completed_at = datetime.utcnow()
+
+    # Update any processing cases to failed
+    processing_cases = db.query(JobCase).filter(
+        JobCase.job_id == job_uuid,
+        JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.PROCESSING]),
+    ).all()
+
+    for case in processing_cases:
+        case.status = CaseStatus.FAILED
+        case.error_message = "Job cancelled by user"
+
+    # Audit log
+    audit = AuditLog(
+        request_id=uuid.UUID(request_id) if request_id else None,
+        job_id=job.id,
+        action="job_cancelled",
+        details={
+            "celery_revoked": revoked,
+            "cases_cancelled": len(processing_cases),
+        },
+    )
+    db.add(audit)
+    db.commit()
+
+    logger.info(
+        "job_cancelled",
+        request_id=request_id,
+        job_id=job_id,
+        cases_cancelled=len(processing_cases),
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "message": "Job cancelled",
+            "job_id": job_id,
+            "celery_revoked": revoked,
+            "cases_cancelled": len(processing_cases),
+        },
+        request_id=request_id,
+    )

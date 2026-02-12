@@ -51,19 +51,67 @@ def _get_active_model() -> str:
 
 
 def _get_custom_prompts() -> dict[str, str]:
-    """Get custom prompts from the database if any exist."""
+    """Get custom prompts for BUILT-IN layers from the database.
+    
+    Respects active_version_id: if a template has an active version selected,
+    that version's content is returned instead of the template's current content.
+    """
     db = SessionLocal()
     try:
-        from app.db.models import PromptTemplate
+        from app.db.models import PromptTemplate, PromptVersion
+        builtin_names = ["layer1_ctp", "layer2_cie", "layer3_ccc"]
         templates = db.query(PromptTemplate).filter(
-            PromptTemplate.is_active == True
+            PromptTemplate.is_active == True,
+            PromptTemplate.layer_name.in_(builtin_names),
         ).all()
         prompts = {}
         for t in templates:
+            if t.active_version_id:
+                version = db.query(PromptVersion).filter(
+                    PromptVersion.id == t.active_version_id
+                ).first()
+                if version:
+                    prompts[t.layer_name] = version.content
+                    continue
             prompts[t.layer_name] = t.content
         return prompts
     except Exception:
         return {}
+    finally:
+        db.close()
+
+
+def _get_extra_layers() -> list[dict]:
+    """Get custom (non-built-in) layer configs for the pipeline.
+    
+    Returns a list of dicts with 'layer_name' and 'prompt' keys,
+    ordered by display_order.
+    """
+    db = SessionLocal()
+    try:
+        from app.db.models import PromptTemplate, PromptVersion
+        builtin_names = ["layer1_ctp", "layer2_cie", "layer3_ccc"]
+        templates = db.query(PromptTemplate).filter(
+            PromptTemplate.is_active == True,
+            PromptTemplate.layer_name.notin_(builtin_names),
+        ).order_by(PromptTemplate.display_order).all()
+        
+        layers = []
+        for t in templates:
+            content = t.content
+            if t.active_version_id:
+                version = db.query(PromptVersion).filter(
+                    PromptVersion.id == t.active_version_id
+                ).first()
+                if version:
+                    content = version.content
+            layers.append({
+                "layer_name": t.layer_name,
+                "prompt": content,
+            })
+        return layers
+    except Exception:
+        return []
     finally:
         db.close()
 
@@ -89,6 +137,13 @@ def save_case_result(job_id: str, case_number: int, result: dict) -> None:
             case.layer1_output = result.get("layer1_output")
             case.layer2_output = result.get("layer2_output")
             case.layer3_output = result.get("layer3_output")
+            # Save raw LLM outputs for review
+            case.layer1_raw_output = result.get("layer1_raw_output")
+            case.layer2_raw_output = result.get("layer2_raw_output")
+            case.layer3_raw_output = result.get("layer3_raw_output")
+            # Extra custom layer outputs
+            case.extra_layer_outputs = result.get("extra_layer_outputs")
+            case.extra_layer_raw_outputs = result.get("extra_layer_raw_outputs")
             case.final_verdict = result.get("final_verdict")
             case.final_cci = result.get("final_cci")
             case.total_duration_ms = result.get("total_duration_ms")
@@ -180,6 +235,7 @@ def _process_case_impl(
         # Get active model and custom prompts
         active_model = _get_active_model()
         custom_prompts = _get_custom_prompts()
+        extra_layers = _get_extra_layers()
 
         # Create LLM client with active model
         llm_client = OllamaClient(model=active_model)
@@ -205,6 +261,7 @@ def _process_case_impl(
                 orchestrator.execute(
                     raw_text=raw_text,
                     custom_prompts=custom_prompts if custom_prompts else None,
+                    extra_layers=extra_layers if extra_layers else None,
                     on_token=make_token_callback(),
                     on_layer_start=on_layer_start,
                     on_layer_complete=on_layer_complete,
@@ -231,6 +288,17 @@ def _process_case_impl(
             "layer1_output": result.layer1_result.output if result.layer1_result else None,
             "layer2_output": result.layer2_result.output if result.layer2_result else None,
             "layer3_output": result.layer3_result.output if result.layer3_result else None,
+            # Raw LLM outputs for review
+            "layer1_raw_output": result.layer1_result.raw_response if result.layer1_result else None,
+            "layer2_raw_output": result.layer2_result.raw_response if result.layer2_result else None,
+            "layer3_raw_output": result.layer3_result.raw_response if result.layer3_result else None,
+            # Extra custom layer outputs
+            "extra_layer_outputs": {
+                name: lr.output for name, lr in result.extra_layer_results.items()
+            } if result.extra_layer_results else None,
+            "extra_layer_raw_outputs": {
+                name: lr.raw_response for name, lr in result.extra_layer_results.items()
+            } if result.extra_layer_results else None,
             "final_verdict": result.final_verdict,
             "final_cci": result.final_cci,
             "total_duration_ms": result.total_duration_ms,

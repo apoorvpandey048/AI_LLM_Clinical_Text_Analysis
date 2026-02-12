@@ -29,12 +29,13 @@ const RECOMMENDED_MODELS = [
     { name: 'qwen2.5:14b', desc: 'Qwen 2.5 14B — Multilingual model' },
 ];
 
-// Layer metadata
-const LAYERS = {
-    layer1_ctp: { label: 'Layer 1 — Clinical Text Pre-Processor (CTP)', shortLabel: 'Layer 1: CTP', number: 1 },
-    layer2_cie: { label: 'Layer 2 — Complication Info Extraction (CIE)', shortLabel: 'Layer 2: CIE', number: 2 },
-    layer3_ccc: { label: 'Layer 3 — CCI Calculation & Cross-Check (CCC)', shortLabel: 'Layer 3: CCC', number: 3 },
+// Layer metadata — dynamically updated from /api/v1/prompts/layers
+let LAYERS = {
+    layer1_ctp: { label: 'Layer 1 — Clinical Text Pre-Processor (CTP)', shortLabel: 'Layer 1: CTP', number: 1, is_builtin: true },
+    layer2_cie: { label: 'Layer 2 — Complication Info Extraction (CIE)', shortLabel: 'Layer 2: CIE', number: 2, is_builtin: true },
+    layer3_ccc: { label: 'Layer 3 — CCI Calculation & Cross-Check (CCC)', shortLabel: 'Layer 3: CCC', number: 3, is_builtin: true },
 };
+const BUILTIN_LAYERS = ['layer1_ctp', 'layer2_cie', 'layer3_ccc'];
 
 // ============================================
 // State
@@ -49,14 +50,10 @@ const state = {
     eventSource: null,
     currentView: 'table',
 
-    // Streaming state
-    liveOutputBuffers: {
-        layer1_ctp: '',
-        layer2_cie: '',
-        layer3_ccc: '',
-    },
+    // Streaming state (dynamically keyed by available layers)
+    liveOutputBuffers: {},
     // Preserved streaming history per case
-    streamingHistory: {}, // { caseNumber: { layer1_ctp: '', layer2_cie: '', layer3_ccc: '' } }
+    streamingHistory: {}, // { caseNumber: { layer_name: '' } }
     activeLiveTab: 'layer1_ctp',
     currentStreamingLayer: null,
     currentCaseNumber: 1,
@@ -93,7 +90,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initLiveOutputTabs();
     loadModels();
     loadSystemInfo();
-    loadAllPrompts();
+    // Load dynamic layers first, then prompts (so tabs are built)
+    loadLayers().then(() => loadAllPrompts());
 
     console.log('SNAP-AI Frontend v2 initialized');
 });
@@ -426,11 +424,11 @@ function updateConnectionStatus(status) {
 
 function preserveStreamingHistory(caseNumber) {
     if (!caseNumber) return;
-    state.streamingHistory[caseNumber] = {
-        layer1_ctp: state.liveOutputBuffers.layer1_ctp || '',
-        layer2_cie: state.liveOutputBuffers.layer2_cie || '',
-        layer3_ccc: state.liveOutputBuffers.layer3_ccc || '',
-    };
+    const history = {};
+    Object.keys(state.liveOutputBuffers).forEach(k => {
+        history[k] = state.liveOutputBuffers[k] || '';
+    });
+    state.streamingHistory[caseNumber] = history;
 }
 
 function closeStream() {
@@ -454,10 +452,25 @@ function startLegacyPolling(jobId) {
 // ============================================
 
 function initLiveOutputTabs() {
-    document.querySelectorAll('.live-tab').forEach(tab => {
+    renderDynamicLiveOutputTabs();
+}
+
+function renderDynamicLiveOutputTabs() {
+    const container = document.getElementById('live-output-tabs-container');
+    if (!container) return;
+
+    const layerKeys = Object.keys(LAYERS);
+    container.innerHTML = layerKeys.map(key => {
+        const layer = LAYERS[key];
+        const isActive = key === state.activeLiveTab;
+        return `<button class="live-tab ${isActive ? 'active' : ''}" data-layer="${key}">${layer.shortLabel || key}</button>`;
+    }).join('');
+
+    // Rebind click handlers
+    container.querySelectorAll('.live-tab').forEach(tab => {
         tab.addEventListener('click', () => {
             state.activeLiveTab = tab.dataset.layer;
-            document.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
+            container.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             renderLiveOutputBuffer();
         });
@@ -469,7 +482,17 @@ function appendToken(layer, token, caseNumber) {
 
     // Map stream layer names to our keys
     const layerKey = normalizeLayerKey(layer);
-    if (!layerKey || !state.liveOutputBuffers.hasOwnProperty(layerKey)) return;
+    if (!layerKey) return;
+
+    // Auto-create buffer for dynamic/custom layers
+    if (!(layerKey in state.liveOutputBuffers)) {
+        state.liveOutputBuffers[layerKey] = '';
+        // If this is a new layer, ensure it has a tab
+        if (!LAYERS[layerKey]) {
+            LAYERS[layerKey] = { label: layerKey, shortLabel: layerKey, number: Object.keys(LAYERS).length + 1, is_builtin: false };
+        }
+        renderDynamicLiveOutputTabs();
+    }
 
     // Update current case number if provided
     if (caseNumber) {
@@ -509,7 +532,8 @@ function renderLiveOutputBuffer() {
 }
 
 function resetLiveOutput() {
-    state.liveOutputBuffers = { layer1_ctp: '', layer2_cie: '', layer3_ccc: '' };
+    state.liveOutputBuffers = {};
+    Object.keys(LAYERS).forEach(k => { state.liveOutputBuffers[k] = ''; });
     state.currentStreamingLayer = null;
     renderLiveOutputBuffer();
 }
@@ -517,10 +541,12 @@ function resetLiveOutput() {
 function normalizeLayerKey(layer) {
     if (!layer) return null;
     const l = layer.toLowerCase();
+    // Built-in aliases
     if (l.includes('layer1') || l.includes('ctp') || l.includes('layer_1')) return 'layer1_ctp';
     if (l.includes('layer2') || l.includes('cie') || l.includes('layer_2')) return 'layer2_cie';
     if (l.includes('layer3') || l.includes('ccc') || l.includes('layer_3')) return 'layer3_ccc';
-    return null;
+    // Custom layers — pass through as-is
+    return l;
 }
 
 // ============================================
@@ -537,34 +563,55 @@ function initializeProgressUI(caseCount) {
     document.getElementById('progress-fill').style.width = '0%';
     document.getElementById('progress-text').textContent = `0 of ${caseCount} cases completed`;
     document.getElementById('case-status-list').innerHTML = '';
+    renderDynamicLayerSteps();
     resetLayerSteps();
 }
 
+function renderDynamicLayerSteps() {
+    const container = document.getElementById('layer-progress');
+    if (!container) return;
+    const layerKeys = Object.keys(LAYERS);
+    container.innerHTML = layerKeys.map((key, i) => {
+        const layer = LAYERS[key];
+        const labels = {
+            layer1_ctp: { main: 'Pre-Processing', sub: 'Text extraction' },
+            layer2_cie: { main: 'Extraction', sub: 'Complications' },
+            layer3_ccc: { main: 'Verification', sub: 'CCI calculation' },
+        };
+        const defaultLabel = labels[key] || { main: layer.shortLabel || key, sub: 'Custom layer' };
+        return `
+            <div class="layer-step" data-layer="${i + 1}" data-layer-key="${key}" id="layer-step-${i + 1}">
+                <div class="layer-step-icon">${i + 1}</div>
+                <div class="layer-step-label">${defaultLabel.main}</div>
+                <div class="layer-step-sublabel">${defaultLabel.sub}</div>
+            </div>
+        `;
+    }).join('');
+}
+
 function resetLayerSteps() {
-    [1, 2, 3].forEach(n => {
-        const el = document.getElementById(`layer-step-${n}`);
-        if (el) el.className = 'layer-step';
-    });
+    const steps = document.querySelectorAll('#layer-progress .layer-step');
+    steps.forEach(el => { el.className = 'layer-step'; });
 }
 
 function setActiveLayer(layerKey) {
-    const num = LAYERS[layerKey]?.number;
-    if (!num) return;
-
-    [1, 2, 3].forEach(n => {
-        const el = document.getElementById(`layer-step-${n}`);
-        if (!el) return;
-        if (n < num) el.className = 'layer-step completed';
-        else if (n === num) el.className = 'layer-step active';
-        else el.className = 'layer-step';
+    const steps = document.querySelectorAll('#layer-progress .layer-step');
+    let found = false;
+    steps.forEach(el => {
+        if (found) {
+            el.className = 'layer-step';
+        } else if (el.dataset.layerKey === layerKey) {
+            el.className = 'layer-step active';
+            found = true;
+        } else {
+            el.className = 'layer-step completed';
+        }
     });
 }
 
 function markLayerComplete(layer) {
     const layerKey = normalizeLayerKey(layer);
-    const num = LAYERS[layerKey]?.number;
-    if (!num) return;
-    const el = document.getElementById(`layer-step-${num}`);
+    const el = document.querySelector(`#layer-progress .layer-step[data-layer-key="${layerKey}"]`);
     if (el) el.className = 'layer-step completed';
 }
 
@@ -729,6 +776,31 @@ function renderResultsCards(results) {
         const rawL2 = r.layer2_raw_output || streamingData.layer2_cie || '';
         const rawL3 = r.layer3_raw_output || streamingData.layer3_ccc || '';
 
+        // Build extra layer outputs HTML
+        const extraOutputs = r.extra_layer_outputs || {};
+        const extraRawOutputs = r.extra_layer_raw_outputs || {};
+        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs), ...Object.keys(streamingData).filter(k => !BUILTIN_LAYERS.includes(k))])];
+
+        const extraRawSections = allExtraKeys.map(key => {
+            const rawContent = extraRawOutputs[key] || streamingData[key] || '';
+            const label = LAYERS[key]?.label || key;
+            return `
+              <div class="raw-output-section">
+                <div class="raw-output-header">
+                  <h4>${escapeHtml(label)}</h4>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, '${key}')">Copy</button>
+                </div>
+                <pre class="raw-output-text" id="raw-${key}-${i}">${escapeHtml(rawContent) || '<em>No output captured</em>'}</pre>
+              </div>`;
+        }).join('');
+
+        const hasExtraRaw = allExtraKeys.length > 0;
+
+        // Extra layer parsed JSON details
+        const extraJsonHtml = allExtraKeys.length > 0
+            ? `<details class="json-details"><summary>Custom Layer Outputs</summary><pre class="json-tree">${syntaxHighlightJSON(extraOutputs)}</pre></details>`
+            : '';
+
         return `
       <div class="case-result-card ${r.error ? 'has-error' : ''}">
         <div class="case-result-header" onclick="toggleResult(${i})">
@@ -743,7 +815,7 @@ function renderResultsCards(results) {
           
           <div class="result-tabs">
             <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">Parsed JSON</button>
-            ${hasRawOutput ? `<button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>` : ''}
+            ${(hasRawOutput || hasExtraRaw) ? `<button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>` : ''}
           </div>
           
           <div class="result-tab-content" id="result-tab-json-${i}">
@@ -751,9 +823,10 @@ function renderResultsCards(results) {
               <summary>Layer Outputs</summary>
               <pre class="json-tree">${syntaxHighlightJSON(r)}</pre>
             </details>
+            ${extraJsonHtml}
           </div>
           
-          ${hasRawOutput ? `
+          ${(hasRawOutput || hasExtraRaw) ? `
           <div class="result-tab-content hidden" id="result-tab-raw-${i}">
             <div class="raw-output-container">
               <div class="raw-output-section">
@@ -777,6 +850,7 @@ function renderResultsCards(results) {
                 </div>
                 <pre class="raw-output-text" id="raw-l3-${i}">${escapeHtml(rawL3) || '<em>No output captured</em>'}</pre>
               </div>
+              ${extraRawSections}
             </div>
           </div>
           ` : ''}
@@ -1041,24 +1115,13 @@ function renderModelDropdown() {
         if (option?.dataset.needsPull === 'true') {
             const doPull = confirm(`Model "${model}" is not installed yet.\n\nWould you like to download and install it now?\n\nNote: Large models may take several minutes to download.`);
             if (doPull) {
-                showToast(`Pulling ${model}... This may take a while.`, 'info');
-                try {
-                    const res = await fetch(`${API_BASE}/models/pull`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ model }),
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        throw new Error(extractErrorMessage(err));
-                    }
-                    showToast(`${model} installed! Setting as active...`, 'success');
-                    await setActiveModel(model);
-                    await loadModels();
-                } catch (err) {
-                    showToast(`Failed to pull ${model}: ${err.message}`, 'error');
-                    await loadModels(); // Reset dropdown
-                }
+                showToast(`Pulling ${model}... Check Model Management for progress.`, 'info');
+                openModelModal();
+                // Put the model name in the custom input and trigger pull
+                const customInput = document.getElementById('model-pull-custom');
+                if (customInput) customInput.value = model;
+                await pullModelWithProgress(model);
+                await loadModels();
             } else {
                 await loadModels(); // Reset dropdown
             }
@@ -1107,19 +1170,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function pullModel() {
     const selectEl = document.getElementById('model-pull-select');
-    const statusEl = document.getElementById('model-pull-status');
     const modelName = selectEl?.value?.trim();
-
     if (!modelName) {
         showToast('Select a model to pull', 'warning');
         return;
     }
+    await pullModelWithProgress(modelName);
+}
 
+async function pullModelWithProgress(modelName) {
+    const statusEl = document.getElementById('model-pull-status');
     statusEl.className = 'model-pull-status loading';
-    statusEl.innerHTML = `
-        <span class="spinner-small"></span>
-        Pulling ${modelName}... This may take several minutes for large models.
-    `;
+    statusEl.innerHTML = `<span class="spinner-small"></span> Connecting to Ollama to pull ${modelName}...`;
     statusEl.classList.remove('hidden');
 
     try {
@@ -1129,19 +1191,50 @@ async function pullModel() {
             body: JSON.stringify({ model: modelName }),
         });
 
-        if (res.ok) {
-            statusEl.className = 'model-pull-status success';
-            statusEl.textContent = `✅ ${modelName} pulled successfully! You can now select it as active.`;
-            await loadModels();
-            renderModelPullDropdown();
-        } else {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(extractErrorMessage(err));
+        if (!res.ok) {
+            throw new Error(`Server returned ${res.status}`);
+        }
+
+        // Read SSE stream for progress
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.done) {
+                        if (data.success) {
+                            statusEl.className = 'model-pull-status success';
+                            statusEl.textContent = `\u2705 ${modelName} pulled successfully! You can now select it as active.`;
+                            await loadModels();
+                            renderModelPullDropdown();
+                        } else {
+                            throw new Error(data.error || 'Pull failed');
+                        }
+                    } else {
+                        const pct = data.percent != null ? ` (${data.percent}%)` : '';
+                        statusEl.innerHTML = `<span class="spinner-small"></span> ${escapeHtml(data.status || 'Downloading')}${pct}`;
+                    }
+                } catch (parseErr) {
+                    if (parseErr.message === 'Pull failed' || parseErr.message?.includes('Pull failed')) throw parseErr;
+                    // Ignore JSON parse errors on partial chunks
+                }
+            }
         }
     } catch (err) {
         statusEl.className = 'model-pull-status error';
         statusEl.innerHTML = `
-            <strong>❌ Failed to pull ${modelName}</strong><br>
+            <strong>\u274c Failed to pull ${escapeHtml(modelName)}</strong><br>
             <span>${escapeHtml(err.message)}</span><br>
             <small>Make sure the model name is correct and Ollama is running.</small>
         `;
@@ -1198,38 +1291,14 @@ function renderModelPullDropdown() {
 async function pullCustomModel() {
     const input = document.getElementById('model-pull-custom');
     const modelName = input?.value?.trim();
-    const statusEl = document.getElementById('model-pull-status');
 
     if (!modelName) {
         showToast('Enter a model name', 'warning');
         return;
     }
 
-    statusEl.className = 'model-pull-status loading';
-    statusEl.innerHTML = `<span class="spinner-small"></span> Pulling ${modelName}...`;
-    statusEl.classList.remove('hidden');
-
-    try {
-        const res = await fetch(`${API_BASE}/models/pull`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: modelName }),
-        });
-
-        if (res.ok) {
-            statusEl.className = 'model-pull-status success';
-            statusEl.textContent = `✅ ${modelName} pulled successfully!`;
-            input.value = '';
-            await loadModels();
-            renderModelPullDropdown();
-        } else {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(extractErrorMessage(err));
-        }
-    } catch (err) {
-        statusEl.className = 'model-pull-status error';
-        statusEl.textContent = `❌ ${err.message}`;
-    }
+    await pullModelWithProgress(modelName);
+    input.value = '';
 }
 
 function renderModelList() {
@@ -1304,6 +1373,155 @@ async function deleteModel(name) {
 }
 
 // ============================================
+// Dynamic Layer Loading
+// ============================================
+
+async function loadLayers() {
+    try {
+        const res = await fetch(`${API_BASE}/prompts/layers`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const data = json.data || json;
+        const layers = data.layers || [];
+
+        // Rebuild LAYERS dict
+        const newLayers = {};
+        layers.forEach((l, i) => {
+            newLayers[l.layer_name] = {
+                label: l.label || l.layer_name,
+                shortLabel: l.label ? l.label.split('—')[0]?.trim() || l.label.substring(0, 20) : l.layer_name,
+                number: i + 1,
+                is_builtin: l.is_builtin,
+            };
+        });
+
+        if (Object.keys(newLayers).length > 0) {
+            LAYERS = newLayers;
+        }
+
+        // Re-render dynamic UI elements
+        renderDynamicPromptTabs();
+        renderDynamicLiveOutputTabs();
+        resetLiveOutput();
+    } catch (err) {
+        console.warn('Failed to load layers, using defaults:', err);
+    }
+}
+
+function renderDynamicPromptTabs() {
+    const container = document.getElementById('prompt-tabs-container');
+    if (!container) return;
+
+    const layerKeys = Object.keys(LAYERS);
+    let html = '';
+
+    layerKeys.forEach(key => {
+        const layer = LAYERS[key];
+        const isActive = key === state.activePromptLayer;
+        html += `<button class="prompt-tab ${isActive ? 'active' : ''}" data-layer="${key}" onclick="switchPromptTab('${key}')">${layer.shortLabel || key}</button>`;
+    });
+
+    // "Add Layer" button
+    html += `<button class="prompt-tab add-layer-tab" onclick="showCreateLayerModal()" title="Create a new custom layer">+ Add Layer</button>`;
+
+    container.innerHTML = html;
+}
+
+// ============================================
+// Create Custom Layer
+// ============================================
+
+function showCreateLayerModal() {
+    const existing = document.getElementById('create-layer-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'create-layer-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Create Custom Layer</h3>
+                <button class="modal-close" onclick="document.getElementById('create-layer-modal').remove()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: var(--space-md);">
+                    <label class="section-label">Layer Name (lowercase, no spaces)</label>
+                    <input type="text" id="new-layer-name" class="input" placeholder="e.g. layer4_summary" pattern="[a-z][a-z0-9_\\-]{2,49}">
+                </div>
+                <div style="margin-bottom: var(--space-md);">
+                    <label class="section-label">Display Label</label>
+                    <input type="text" id="new-layer-label" class="input" placeholder="e.g. Layer 4 — Clinical Summary">
+                </div>
+                <div style="margin-bottom: var(--space-md);">
+                    <label class="section-label">Initial Prompt</label>
+                    <textarea id="new-layer-prompt" class="text-input" rows="8" placeholder="Enter the system prompt for this layer..."></textarea>
+                </div>
+                <div style="display: flex; gap: var(--space-sm); justify-content: flex-end;">
+                    <button class="btn btn-outline btn-sm" onclick="document.getElementById('create-layer-modal').remove()">Cancel</button>
+                    <button class="btn btn-primary btn-sm" onclick="createCustomLayer()">Create Layer</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+}
+
+async function createCustomLayer() {
+    const nameInput = document.getElementById('new-layer-name');
+    const labelInput = document.getElementById('new-layer-label');
+    const promptInput = document.getElementById('new-layer-prompt');
+
+    const layer_name = nameInput?.value?.trim().toLowerCase();
+    const label = labelInput?.value?.trim();
+    const content = promptInput?.value?.trim();
+
+    if (!layer_name || !label || !content) {
+        showToast('All fields are required', 'warning');
+        return;
+    }
+
+    if (content.length < 10) {
+        showToast('Prompt must be at least 10 characters', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/prompts/layers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ layer_name, label, content }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(err));
+        }
+
+        const json = await res.json();
+        showToast(json.data?.message || `Layer '${label}' created`, 'success');
+
+        // Remove modal
+        document.getElementById('create-layer-modal')?.remove();
+
+        // Reload layers and prompts
+        await loadLayers();
+        state.promptData = {};
+        await loadAllPrompts();
+
+        // Switch to the new layer
+        switchPromptTab(layer_name);
+    } catch (err) {
+        showToast(`Failed to create layer: ${err.message}`, 'error');
+    }
+}
+
+// ============================================
 // Prompt Editor (with Versioning)
 // ============================================
 
@@ -1333,6 +1551,12 @@ function switchPromptTab(layer) {
 
     const layerName = document.getElementById('prompt-layer-name');
     layerName.textContent = LAYERS[layer]?.label || layer;
+
+    // Update reset button visibility (only for built-in layers)
+    const resetBtn = document.getElementById('prompt-reset-btn');
+    const deleteBtn = document.getElementById('prompt-delete-btn');
+    if (resetBtn) resetBtn.style.display = BUILTIN_LAYERS.includes(layer) ? '' : 'none';
+    if (deleteBtn) deleteBtn.style.display = BUILTIN_LAYERS.includes(layer) ? 'none' : '';
 
     // Use cached prompt data if available
     if (state.promptData[layer] && state.promptData[layer].content) {
@@ -1366,8 +1590,19 @@ async function loadAllPrompts() {
                 source: p.source || 'default',
                 version: p.version || '1.3',
                 label: p.layer_label || p.label || '',
+                is_builtin: p.is_builtin !== false,
+                active_version_id: p.active_version_id || null,
+                version_count: p.version_count || 0,
             };
         });
+
+        // Re-render prompt tabs to reflect all loaded layers
+        renderDynamicPromptTabs();
+
+        // Ensure activePromptLayer is valid
+        if (!state.promptData[state.activePromptLayer]) {
+            state.activePromptLayer = Object.keys(LAYERS)[0] || 'layer1_ctp';
+        }
 
         // Display the currently active tab
         if (state.promptData[state.activePromptLayer] && state.promptData[state.activePromptLayer].content) {
@@ -1724,6 +1959,38 @@ async function importPrompts() {
 }
 
 // ============================================
+// Delete Custom Layer
+// ============================================
+
+async function deleteCustomLayer() {
+    const layer = state.activePromptLayer;
+    if (BUILTIN_LAYERS.includes(layer)) {
+        showToast('Cannot delete built-in layers', 'warning');
+        return;
+    }
+    if (!confirm(`Delete custom layer "${LAYERS[layer]?.label || layer}"?\n\nThis will remove the layer and its prompt history.`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/prompts/${layer}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(err));
+        }
+
+        showToast(`Layer "${layer}" deleted`, 'info');
+        delete state.promptData[layer];
+
+        // Reload layers and switch to first layer
+        await loadLayers();
+        state.promptData = {};
+        await loadAllPrompts();
+        switchPromptTab(Object.keys(LAYERS)[0] || 'layer1_ctp');
+    } catch (err) {
+        showToast(`Delete failed: ${err.message}`, 'error');
+    }
+}
+
+// ============================================
 // Global expose for onclick handlers in HTML
 // ============================================
 
@@ -1740,9 +2007,14 @@ window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;
 window.pullModel = pullModel;
 window.pullCustomModel = pullCustomModel;
+window.pullModelWithProgress = pullModelWithProgress;
 window.setActiveModel = setActiveModel;
 window.deleteModel = deleteModel;
 window.resetToUpload = resetToUpload;
 window.cancelJob = cancelJob;
 window.exportPrompts = exportPrompts;
 window.importPrompts = importPrompts;
+window.showCreateLayerModal = showCreateLayerModal;
+window.createCustomLayer = createCustomLayer;
+window.deleteCustomLayer = deleteCustomLayer;
+window.loadLayers = loadLayers;

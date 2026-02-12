@@ -6,9 +6,11 @@ pull new models, and delete unused ones.
 """
 
 import asyncio
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -152,32 +154,63 @@ async def set_active_model(body: SetActiveModelRequest, request: Request):
 @router.post("/pull")
 async def pull_model(body: PullModelRequest, request: Request):
     """
-    Pull a model from the Ollama registry.
+    Pull a model from the Ollama registry with SSE progress streaming.
 
-    This downloads the model and makes it available for use.
-    Note: Large models may take several minutes to download.
+    Returns a Server-Sent Events stream so the frontend can display
+    download progress in real-time. Each event is a JSON object with:
+    - status: current operation (e.g., "pulling manifest", "downloading ...")
+    - completed/total: bytes transferred (when available)
+    - percent: calculated download percentage
+
+    The final event has {"done": true, "success": true/false}.
     """
     request_id = getattr(request.state, "request_id", None)
-
     client = OllamaClient()
 
     logger.info("model_pull_requested", model=body.model, request_id=request_id)
 
-    success = await client.pull_model(body.model)
+    async def progress_stream():
+        """Generator that yields SSE events for pull progress."""
+        success = False
+        last_percent = -1
+        try:
+            async for data in client.pull_model_stream(body.model):
+                # Calculate percentage if bytes info available
+                completed = data.get("completed", 0)
+                total = data.get("total", 0)
+                status = data.get("status", "")
 
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to pull model '{body.model}'")
+                event = {"status": status}
+                if total > 0:
+                    percent = int((completed / total) * 100)
+                    event["completed"] = completed
+                    event["total"] = total
+                    event["percent"] = percent
+                    # Throttle: only send every 2% change to avoid flooding
+                    if percent == last_percent and percent < 100:
+                        continue
+                    last_percent = percent
+                elif "success" in status.lower():
+                    event["percent"] = 100
 
-    # Refresh model list
-    models = await client.list_models()
+                yield f"data: {json.dumps(event)}\n\n"
 
-    return create_response(
-        success=True,
-        data={
-            "message": f"Model '{body.model}' pulled successfully",
-            "models": models,
+            success = True
+            yield f"data: {json.dumps({'done': True, 'success': True, 'message': f'Model {body.model} pulled successfully'})}\n\n"
+
+            logger.info("model_pull_complete", model=body.model, request_id=request_id)
+
+        except Exception as e:
+            logger.error("model_pull_failed", model=body.model, error=str(e), request_id=request_id)
+            yield f"data: {json.dumps({'done': True, 'success': False, 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        progress_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
         },
-        request_id=request_id,
     )
 
 

@@ -40,15 +40,17 @@ class TestLayer1CTP:
         assert "clean_course_text" in error
 
     def test_validate_output_missing_dates(self, mock_llm_client):
-        """Missing extracted_dates should fail."""
+        """Missing extracted_dates should be auto-normalized to empty dict and pass."""
         layer = Layer1CTP(mock_llm_client)
         output = {
             "clean_course_text": "text",
             "drug_normalization": {},
         }
         is_valid, error = layer.validate_output(output)
-        assert is_valid is False
-        assert "extracted_dates" in error
+        # normalize_output fills in extracted_dates: {}
+        assert is_valid is True
+        assert error is None
+        assert "extracted_dates" in output
 
     def test_validate_output_wrong_type(self, mock_llm_client):
         """Wrong type for clean_course_text should fail."""
