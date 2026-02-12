@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Redis
     redis_host: str = "redis"
     redis_port: int = 6379
+    redis_password: str = ""
 
     # LLM Backend
     llm_backend: Literal["ollama", "vllm"] = "ollama"
@@ -69,6 +70,8 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         """Construct Redis URL from components."""
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
         return f"redis://{self.redis_host}:{self.redis_port}/0"
 
     @property

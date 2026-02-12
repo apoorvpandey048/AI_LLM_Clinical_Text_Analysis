@@ -20,6 +20,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
@@ -54,6 +55,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
@@ -133,9 +135,9 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-  # ===================
-  # Frontend
-  # ===================
+    # ===================
+    # Frontend
+    # ===================
   frontend:
     build:
       context: ./frontend

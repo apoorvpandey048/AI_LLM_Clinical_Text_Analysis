@@ -1,17 +1,17 @@
-# Remote deployment overlay for Ubuntu server with 8x NVIDIA A100 GPUs
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.remote.yml up -d
+# Remote/DGX deployment overlay
+# Usage: docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d
 #
 # Prerequisites:
 #   - NVIDIA drivers installed (525+)
 #   - NVIDIA Container Toolkit installed
 #   - Docker + Docker Compose installed
-#   - .env file configured with production settings
+#   - .env file configured (copy from .env.example)
 
 version: '3.8'
 
 services:
   # ===================
-  # Ollama LLM Service (Multi-GPU)
+  # Ollama LLM Service (GPU)
   # ===================
   ollama:
     image: ollama/ollama:latest
@@ -28,12 +28,12 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 1
               capabilities: [ gpu ]
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_NUM_PARALLEL=4
-      - OLLAMA_MAX_LOADED_MODELS=2
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_KEEP_ALIVE=10m
 
   # ===================
@@ -43,26 +43,28 @@ services:
     environment:
       - ENVIRONMENT=production
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-me-llama:70b-chat}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct-q4_K_M}
       - LLM_BACKEND=ollama
       - LOG_LEVEL=INFO
       - API_WORKERS=4
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:
       - ollama
     ports:
       - "127.0.0.1:8000:8000"
 
   # ===================
-  # Celery Worker (High Concurrency)
+  # Celery Worker
   # ===================
   worker:
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=50
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-me-llama:70b-chat}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct-q4_K_M}
       - LLM_BACKEND=ollama
       - LOG_LEVEL=INFO
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:
       - ollama
 

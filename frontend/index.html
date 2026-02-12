@@ -214,6 +214,16 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                             <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
                         </div>
                         <p class="progress-text" id="progress-text">0 of 0 cases completed</p>
+                        <button id="cancel-job-btn" class="btn btn-cancel btn-sm" onclick="cancelJob()" style="margin-top: var(--space-md);">
+                            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="15" x2="9" y1="9" y2="15" />
+                                <line x1="9" x2="15" y1="9" y2="15" />
+                            </svg>
+                            Cancel Job
+                        </button>
                     </div>
 
                     <!-- Per-Case Status -->
@@ -319,6 +329,31 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                         Customize the prompts sent to the LLM for each pipeline layer.
                         Changes take effect on the next processing run.
                     </p>
+
+                    <!-- Import/Export Actions -->
+                    <div class="prompt-actions" style="margin-bottom: var(--space-lg);">
+                        <button class="btn btn-outline btn-sm" onclick="exportPrompts()">
+                            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" x2="12" y1="15" y2="3" />
+                            </svg>
+                            Export Prompts
+                        </button>
+                        <input type="file" id="import-prompts-input" class="hidden" accept=".json" onchange="importPrompts(event)">
+                        <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-prompts-input').click()">
+                            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" x2="12" y1="3" y2="15" />
+                            </svg>
+                            Import Prompts
+                        </button>
+                    </div>
 
                     <!-- Prompt Layer Tabs -->
                     <div class="prompt-tabs">

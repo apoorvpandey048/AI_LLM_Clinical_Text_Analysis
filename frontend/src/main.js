@@ -55,8 +55,16 @@ const state = {
         layer2_cie: '',
         layer3_ccc: '',
     },
+    // Preserved streaming history per case
+    streamingHistory: {}, // { caseNumber: { layer1_ctp: '', layer2_cie: '', layer3_ccc: '' } }
     activeLiveTab: 'layer1_ctp',
     currentStreamingLayer: null,
+    currentCaseNumber: 1,
+
+    // Connection state
+    connectionStatus: 'unknown', // 'connected', 'reconnecting', 'disconnected'
+    reconnectAttempts: 0,
+    maxReconnectAttempts: 5,
 
     // Prompt state
     activePromptLayer: 'layer1_ctp',
@@ -286,31 +294,40 @@ async function processText(text) {
 }
 
 // ============================================
-// SSE Streaming (Typewriter Effect)
+// SSE Streaming (Typewriter Effect) with Auto-Reconnect
 // ============================================
 
 function startStreaming(jobId) {
     closeStream();
     resetLiveOutput();
+    state.reconnectAttempts = 0;
+    state.streamingHistory = {};
+    state.currentCaseNumber = 1;
 
+    connectSSE(jobId);
+}
+
+function connectSSE(jobId) {
     const url = `${API_BASE}/stream/${jobId}`;
     state.eventSource = new EventSource(url);
 
     const statusEl = document.getElementById('live-output-status');
     statusEl.classList.add('streaming');
     statusEl.innerHTML = '<span class="live-dot"></span> Streaming...';
+    updateConnectionStatus('connected');
 
     state.eventSource.addEventListener('token', (e) => {
         try {
             const data = JSON.parse(e.data);
-            appendToken(data.layer, data.token);
+            appendToken(data.layer, data.token, data.case_number);
         } catch { /* ignore parse errors */ }
     });
 
     state.eventSource.addEventListener('layer_start', (e) => {
         try {
             const data = JSON.parse(e.data);
-            const layerKey = data.layer;
+            const layerKey = normalizeLayerKey(data.layer);
+            state.currentCaseNumber = data.case_number || state.currentCaseNumber;
             setActiveLayer(layerKey);
             updateCurrentCaseInfo(data.case_number, null, layerKey);
         } catch { /* ignore */ }
@@ -326,8 +343,11 @@ function startStreaming(jobId) {
     state.eventSource.addEventListener('case_complete', (e) => {
         try {
             const data = JSON.parse(e.data);
+            // Preserve streaming history for this case before resetting
+            preserveStreamingHistory(state.currentCaseNumber);
             resetLiveOutput();
             updateCaseProgress(data);
+            state.currentCaseNumber = (data.case_number || state.currentCaseNumber) + 1;
         } catch { /* ignore */ }
     });
 
@@ -339,9 +359,12 @@ function startStreaming(jobId) {
     });
 
     state.eventSource.addEventListener('complete', (e) => {
+        // Preserve final case streaming history
+        preserveStreamingHistory(state.currentCaseNumber);
         closeStream();
         statusEl.classList.remove('streaming');
         statusEl.innerHTML = '<span class="live-dot"></span> Complete';
+        updateConnectionStatus('connected');
 
         try {
             const data = JSON.parse(e.data);
@@ -355,16 +378,59 @@ function startStreaming(jobId) {
     state.eventSource.addEventListener('error', () => {
         // SSE can auto-reconnect; only treat as fatal if readyState is CLOSED
         if (state.eventSource && state.eventSource.readyState === EventSource.CLOSED) {
-            closeStream();
-            statusEl.classList.remove('streaming');
-            statusEl.innerHTML = '<span class="live-dot"></span> Disconnected';
-            // Fall back to polling
-            startLegacyPolling(jobId);
+            handleSSEDisconnect(jobId);
         }
     });
 
     // Also poll as fallback (less frequently)
     state.pollInterval = setInterval(() => pollJobStatus(jobId), POLL_INTERVAL_MS * 2);
+}
+
+function handleSSEDisconnect(jobId) {
+    const statusEl = document.getElementById('live-output-status');
+
+    if (state.reconnectAttempts < state.maxReconnectAttempts) {
+        state.reconnectAttempts++;
+        const backoffMs = Math.min(1000 * Math.pow(2, state.reconnectAttempts - 1), 30000);
+
+        updateConnectionStatus('reconnecting');
+        statusEl.classList.remove('streaming');
+        statusEl.innerHTML = `<span class="live-dot reconnecting"></span> Reconnecting (${state.reconnectAttempts}/${state.maxReconnectAttempts})...`;
+
+        setTimeout(() => {
+            if (state.isProcessing) {
+                closeStream();
+                connectSSE(jobId);
+            }
+        }, backoffMs);
+    } else {
+        closeStream();
+        updateConnectionStatus('disconnected');
+        statusEl.classList.remove('streaming');
+        statusEl.innerHTML = '<span class="live-dot error"></span> Disconnected - Using fallback polling';
+        // Fall back to polling
+        startLegacyPolling(jobId);
+    }
+}
+
+function updateConnectionStatus(status) {
+    state.connectionStatus = status;
+    const indicator = document.getElementById('connection-status-indicator');
+    if (indicator) {
+        indicator.className = `connection-indicator ${status}`;
+        indicator.title = status === 'connected' ? 'Connected to server'
+            : status === 'reconnecting' ? 'Reconnecting...'
+            : 'Disconnected - Using polling';
+    }
+}
+
+function preserveStreamingHistory(caseNumber) {
+    if (!caseNumber) return;
+    state.streamingHistory[caseNumber] = {
+        layer1_ctp: state.liveOutputBuffers.layer1_ctp || '',
+        layer2_cie: state.liveOutputBuffers.layer2_cie || '',
+        layer3_ccc: state.liveOutputBuffers.layer3_ccc || '',
+    };
 }
 
 function closeStream() {
@@ -398,12 +464,17 @@ function initLiveOutputTabs() {
     });
 }
 
-function appendToken(layer, token) {
+function appendToken(layer, token, caseNumber) {
     if (!layer || !token) return;
 
     // Map stream layer names to our keys
     const layerKey = normalizeLayerKey(layer);
     if (!layerKey || !state.liveOutputBuffers.hasOwnProperty(layerKey)) return;
+
+    // Update current case number if provided
+    if (caseNumber) {
+        state.currentCaseNumber = caseNumber;
+    }
 
     state.liveOutputBuffers[layerKey] += token;
 
@@ -649,6 +720,15 @@ function renderResultsCards(results) {
         const verdict = r.layer3?.verdict ?? r.verdict ?? '—';
         const cci = r.layer3?.cci_score ?? r.cci_score ?? '—';
 
+        // Check if we have raw outputs (from server or client-side streaming history)
+        const hasRawOutput = r.layer1_raw_output || r.layer2_raw_output || r.layer3_raw_output
+            || state.streamingHistory[caseNum];
+
+        const streamingData = state.streamingHistory[caseNum] || {};
+        const rawL1 = r.layer1_raw_output || streamingData.layer1_ctp || '';
+        const rawL2 = r.layer2_raw_output || streamingData.layer2_cie || '';
+        const rawL3 = r.layer3_raw_output || streamingData.layer3_ccc || '';
+
         return `
       <div class="case-result-card ${r.error ? 'has-error' : ''}">
         <div class="case-result-header" onclick="toggleResult(${i})">
@@ -659,15 +739,75 @@ function renderResultsCards(results) {
           </div>
         </div>
         <div class="case-result-body" id="case-result-body-${i}">
-          ${r.error ? `<div class="error-message">${r.error}</div>` : ''}
-          <details class="json-details">
-            <summary>View Full JSON Output</summary>
-            <pre class="json-tree">${syntaxHighlightJSON(r)}</pre>
-          </details>
+          ${r.error ? `<div class="error-message">${escapeHtml(r.error)}</div>` : ''}
+          
+          <div class="result-tabs">
+            <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">Parsed JSON</button>
+            ${hasRawOutput ? `<button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>` : ''}
+          </div>
+          
+          <div class="result-tab-content" id="result-tab-json-${i}">
+            <details class="json-details" open>
+              <summary>Layer Outputs</summary>
+              <pre class="json-tree">${syntaxHighlightJSON(r)}</pre>
+            </details>
+          </div>
+          
+          ${hasRawOutput ? `
+          <div class="result-tab-content hidden" id="result-tab-raw-${i}">
+            <div class="raw-output-container">
+              <div class="raw-output-section">
+                <div class="raw-output-header">
+                  <h4>Layer 1: CTP</h4>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l1')">Copy</button>
+                </div>
+                <pre class="raw-output-text" id="raw-l1-${i}">${escapeHtml(rawL1) || '<em>No output captured</em>'}</pre>
+              </div>
+              <div class="raw-output-section">
+                <div class="raw-output-header">
+                  <h4>Layer 2: CIE</h4>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l2')">Copy</button>
+                </div>
+                <pre class="raw-output-text" id="raw-l2-${i}">${escapeHtml(rawL2) || '<em>No output captured</em>'}</pre>
+              </div>
+              <div class="raw-output-section">
+                <div class="raw-output-header">
+                  <h4>Layer 3: CCC</h4>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l3')">Copy</button>
+                </div>
+                <pre class="raw-output-text" id="raw-l3-${i}">${escapeHtml(rawL3) || '<em>No output captured</em>'}</pre>
+              </div>
+            </div>
+          </div>
+          ` : ''}
         </div>
       </div>
     `;
     }).join('');
+}
+
+function switchResultTab(index, tab) {
+    const jsonTab = document.getElementById(`result-tab-json-${index}`);
+    const rawTab = document.getElementById(`result-tab-raw-${index}`);
+    const buttons = document.querySelectorAll(`#case-result-body-${index} .result-tab-btn`);
+
+    buttons.forEach((btn, i) => {
+        btn.classList.toggle('active', (tab === 'json' && i === 0) || (tab === 'raw' && i === 1));
+    });
+
+    if (jsonTab) jsonTab.classList.toggle('hidden', tab !== 'json');
+    if (rawTab) rawTab.classList.toggle('hidden', tab !== 'raw');
+}
+
+function copyRawOutput(index, layer) {
+    const el = document.getElementById(`raw-${layer}-${index}`);
+    if (el) {
+        navigator.clipboard.writeText(el.innerText).then(() => {
+            showToast('Copied to clipboard', 'success');
+        }).catch(() => {
+            showToast('Failed to copy', 'error');
+        });
+    }
 }
 
 function switchView(view) {
@@ -1378,6 +1518,9 @@ async function loadSystemInfo() {
         const statusText = isConnected ? 'Connected' : 'Disconnected';
 
         bar.innerHTML = `
+            <div class="sys-info-item" id="connection-status-indicator" title="Connection status">
+                <span class="connection-indicator ${isConnected ? 'connected' : 'disconnected'}"></span>
+            </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Backend:</span>
                 <span class="sys-info-value sys-info-backend">${backendLabel}</span>
@@ -1388,16 +1531,16 @@ async function loadSystemInfo() {
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Workers:</span>
-                <span class="sys-info-value">${workerCount}</span>
+                <span class="sys-info-value" id="sys-info-workers">${workerCount}</span>
             </div>
             <div class="sys-info-item">
-                <span class="sys-info-label">Status:</span>
+                <span class="sys-info-label">LLM:</span>
                 <span class="sys-info-value ${statusClass}">${statusText}</span>
             </div>
             ${data.llm_error ? `
             <div class="sys-info-item sys-info-error">
                 <span class="sys-info-label">Error:</span>
-                <span class="sys-info-value">${escapeHtml(data.llm_error).substring(0, 50)}...</span>
+                <span class="sys-info-value" title="${escapeHtml(data.llm_error)}">${escapeHtml(data.llm_error).substring(0, 30)}...</span>
             </div>
             ` : ''}
         `;
@@ -1405,9 +1548,13 @@ async function loadSystemInfo() {
 
         // Store system info in state for later use
         state.systemInfo = data;
+        updateConnectionStatus(isConnected ? 'connected' : 'disconnected');
     } catch (err) {
         console.error('System info load failed:', err);
         bar.innerHTML = `
+            <div class="sys-info-item" id="connection-status-indicator" title="Connection status">
+                <span class="connection-indicator disconnected"></span>
+            </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Status:</span>
                 <span class="sys-info-value sys-info-disconnected">Backend Unavailable</span>
@@ -1418,6 +1565,7 @@ async function loadSystemInfo() {
             </div>
         `;
         bar.classList.remove('hidden');
+        updateConnectionStatus('disconnected');
     }
 }
 
@@ -1433,13 +1581,34 @@ function updateSystemInfoModel(model) {
 function extractErrorMessage(err) {
     if (!err) return 'Unknown error';
     if (typeof err === 'string') return err;
+
+    // FastAPI error response with detail field
     if (typeof err.detail === 'string') return err.detail;
-    // FastAPI 422 errors: detail is an array of validation errors
+
+    // FastAPI 422 validation errors: detail is an array
     if (Array.isArray(err.detail)) {
-        return err.detail.map(d => `${d.loc?.join('.')}: ${d.msg}`).join('; ');
+        const messages = err.detail.map(d => {
+            const field = d.loc ? d.loc.filter(l => l !== 'body').join('.') : 'field';
+            const msg = d.msg || 'validation error';
+            return `${field}: ${msg}`;
+        });
+        return messages.length > 3
+            ? `${messages.slice(0, 3).join('; ')} and ${messages.length - 3} more errors`
+            : messages.join('; ');
     }
+
+    // Standard error object
     if (err.message) return err.message;
-    return JSON.stringify(err);
+
+    // Error with status
+    if (err.error) return err.error;
+
+    // Fallback to JSON
+    try {
+        return JSON.stringify(err);
+    } catch {
+        return 'Unknown error';
+    }
 }
 
 function formatFileSize(bytes) {
@@ -1450,9 +1619,108 @@ function formatFileSize(bytes) {
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ============================================
+// Job Cancellation
+// ============================================
+
+async function cancelJob() {
+    if (!state.currentJobId) {
+        showToast('No job to cancel', 'warning');
+        return;
+    }
+
+    if (!confirm('Are you sure you want to cancel the current job?')) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/jobs/${state.currentJobId}/cancel`, {
+            method: 'POST',
+        });
+
+        if (res.ok) {
+            closeStream();
+            state.isProcessing = false;
+            showToast('Job cancelled', 'info');
+            resetToUpload();
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Failed to cancel: ${extractErrorMessage(err)}`, 'error');
+        }
+    } catch (err) {
+        showToast(`Cancel failed: ${err.message}`, 'error');
+    }
+}
+
+// ============================================
+// Prompt Import/Export
+// ============================================
+
+async function exportPrompts() {
+    try {
+        const res = await fetch(`${API_BASE}/prompts/export`);
+        if (!res.ok) throw new Error('Failed to export prompts');
+
+        const json = await res.json();
+        const data = json.data || json;
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snap-ai-prompts-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        showToast('Prompts exported successfully', 'success');
+    } catch (err) {
+        showToast(`Export failed: ${err.message}`, 'error');
+    }
+}
+
+async function importPrompts() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            if (!data.prompts) {
+                throw new Error('Invalid prompt file format');
+            }
+
+            const res = await fetch(`${API_BASE}/prompts/import`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompts: data.prompts }),
+            });
+
+            if (res.ok) {
+                const result = await res.json();
+                showToast(result.data?.message || 'Prompts imported', 'success');
+                // Reload prompts
+                state.promptData = {};
+                await loadAllPrompts();
+            } else {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(extractErrorMessage(err));
+            }
+        } catch (err) {
+            showToast(`Import failed: ${err.message}`, 'error');
+        }
+    };
+
+    input.click();
 }
 
 // ============================================
@@ -1465,6 +1733,8 @@ window.switchPromptTab = switchPromptTab;
 window.savePrompt = savePrompt;
 window.resetPrompt = resetPrompt;
 window.toggleResult = toggleResult;
+window.switchResultTab = switchResultTab;
+window.copyRawOutput = copyRawOutput;
 window.clearFile = clearFile;
 window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;
@@ -1473,3 +1743,6 @@ window.pullCustomModel = pullCustomModel;
 window.setActiveModel = setActiveModel;
 window.deleteModel = deleteModel;
 window.resetToUpload = resetToUpload;
+window.cancelJob = cancelJob;
+window.exportPrompts = exportPrompts;
+window.importPrompts = importPrompts;

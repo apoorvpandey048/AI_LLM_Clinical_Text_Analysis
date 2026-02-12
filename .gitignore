@@ -90,3 +90,12 @@ models/
 # Data files
 data/uploads/
 data/results/
+
+# SSL certificates (generated at deploy time)
+ssl/
+
+# Internal docs (not for repo)
+docs/IMPLEMENTATION_PLAN.md
+
+# Agent artifacts
+.gemini/
