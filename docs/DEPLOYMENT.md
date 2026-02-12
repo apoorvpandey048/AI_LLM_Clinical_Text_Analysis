@@ -67,24 +67,34 @@ The script prints the exact URL at the end.
 
 ## Sharing with the Doctor
 
-Once deployed, the doctor can access the application from **any browser** on any device connected to the same network (or internet if the server has a public IP).
+The DGX server is behind the university firewall, so the doctor can't access it directly by IP. Use a **Cloudflare Tunnel** to create a free public URL.
 
-### Option 1: Direct IP (easiest)
-```
-http://131.152.136.65
-```
-Share this link. The doctor opens it in Chrome/Firefox/Safari.
-
-### Option 2: SSH Tunnel (if behind firewall)
-If the server is not directly accessible from the internet, the doctor can use an SSH tunnel:
+### Quick Start (recommended)
 ```bash
-# On the doctor's machine (Mac/Linux)
-ssh -L 8080:localhost:80 vincent.ochs@dbe-dgx-a100-01.dbe.unibas.ch
-# Then open http://localhost:8080 in the browser
+# On the DGX server:
+chmod +x tunnel.sh
+./tunnel.sh
 ```
 
-### Option 3: Domain Name
-Ask your IT admin to point a domain (e.g., `snapai.your-university.ch`) to the server's IP.
+The script will:
+1. Install `cloudflared` (one-time, no sudo needed)
+2. Verify the app is running
+3. Create a public URL like `https://random-words.trycloudflare.com`
+
+**Share that URL with the doctor** — it works from any browser, anywhere in the world.
+
+> **Note:** The tunnel stays active as long as the script is running. To run it in the background:
+> ```bash
+> nohup ./tunnel.sh > tunnel.log 2>&1 &
+> ```
+> Check the URL: `grep trycloudflare tunnel.log`
+
+### Alternative: Direct IP (only works on campus network)
+If the doctor is on the same university network:
+```
+http://131.152.136.65:8080
+```
+
 
 ---
 
