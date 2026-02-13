@@ -127,10 +127,18 @@ async def upload_cases(
             )
 
         # Save temporarily and extract text
-        temp_path = Path(f"/tmp/{uuid.uuid4()}.docx")
+        # Use /app/uploads or fallback to system temp for Docker compatibility
+        upload_dir = Path("/app/uploads")
+        if not upload_dir.exists():
+            upload_dir = Path("./uploads")
+            upload_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = upload_dir / f"{uuid.uuid4()}.docx"
         try:
             temp_path.write_bytes(contents)
             raw_text = extract_text_from_docx(temp_path)
+        except Exception as e:
+            logger.error("file_extraction_failed", error=str(e), filename=file.filename)
+            raise HTTPException(status_code=500, detail=f"Failed to extract text from file: {str(e)}")
         finally:
             if temp_path.exists():
                 temp_path.unlink()
@@ -158,11 +166,14 @@ async def upload_cases(
     )
 
     # Create job record
+    # Attach authenticated user if available (set by auth middleware)
+    current_user_id = getattr(request.state, "user_id", None)
     job = Job(
         status=JobStatus.QUEUED,
         case_count=len(cases),
         source_type=source_type,
         source_filename=source_filename,
+        user_id=uuid.UUID(current_user_id) if current_user_id else None,
     )
     db.add(job)
     db.flush()
@@ -193,10 +204,13 @@ async def upload_cases(
 
     db.commit()
 
-    # Queue processing task
+    # Fetch actual case UUIDs from DB after flush
+    db_cases = db.query(JobCase).filter(JobCase.job_id == job.id).order_by(JobCase.case_number).all()
+
+    # Queue processing task with real DB case IDs
     task = process_batch.delay(
         str(job.id),
-        [{"case_id": str(i + 1), "text": c["text"]} for i, c in enumerate(cases)],
+        [{"case_id": str(c.id), "case_number": c.case_number, "text": c.input_text} for c in db_cases],
     )
 
     # Update job with task ID
@@ -252,10 +266,12 @@ async def upload_text(
         )
 
     # Create job
+    current_user_id = getattr(request.state, "user_id", None)
     job = Job(
         status=JobStatus.QUEUED,
         case_count=len(cases),
         source_type="text",
+        user_id=uuid.UUID(current_user_id) if current_user_id else None,
     )
     db.add(job)
     db.flush()
@@ -273,10 +289,13 @@ async def upload_text(
 
     db.commit()
 
+    # Fetch actual case UUIDs from DB after flush
+    db_cases_text = db.query(JobCase).filter(JobCase.job_id == job.id).order_by(JobCase.case_number).all()
+
     # Queue processing
     task = process_batch.delay(
         str(job.id),
-        [{"case_id": str(i + 1), "text": c["text"]} for i, c in enumerate(cases)],
+        [{"case_id": str(c.id), "case_number": c.case_number, "text": c.input_text} for c in db_cases_text],
     )
 
     job.celery_task_id = task.id

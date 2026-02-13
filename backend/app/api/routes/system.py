@@ -71,8 +71,10 @@ async def get_system_info(request: Request):
             llm_connected = True
         else:
             client = VLLMClient()
-            # vLLM health check
             llm_connected = await client.health_check()
+            if llm_connected:
+                model_names = await client.list_models()
+                available_models = [{"name": m} for m in model_names]
     except Exception as e:
         llm_error = str(e)
         llm_connected = False

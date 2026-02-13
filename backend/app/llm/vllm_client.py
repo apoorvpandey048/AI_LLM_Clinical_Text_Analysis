@@ -38,6 +38,7 @@ class VLLMClient(LLMClient):
         self.model = model or settings.vllm_model
         self.api_url = f"{self.host}/v1/completions"
         self.chat_url = f"{self.host}/v1/chat/completions"
+        self.reasoning_level = settings.llm_reasoning_level
 
     async def generate(
         self,
@@ -67,7 +68,9 @@ class VLLMClient(LLMClient):
         # Build messages for chat API
         messages = []
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+            # Add reasoning level hint for GPT-OSS models
+            reasoning_hint = f"\nReasoning: {self.reasoning_level}" if "gpt-oss" in self.model.lower() else ""
+            messages.append({"role": "system", "content": system_prompt + reasoning_hint})
         messages.append({"role": "user", "content": prompt})
 
         # Build request with JSON mode
@@ -76,8 +79,10 @@ class VLLMClient(LLMClient):
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},  # Enable JSON mode
         }
+        # Only add response_format for non-reasoning models or when we need JSON
+        if "gpt-oss" not in self.model.lower():
+            payload["response_format"] = {"type": "json_object"}
 
         logger.debug(
             "vllm_request",

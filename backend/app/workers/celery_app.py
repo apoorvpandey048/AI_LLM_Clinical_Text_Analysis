@@ -38,7 +38,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,  # Process one task at a time (LLM is heavy)
     worker_concurrency=2,  # 2 concurrent workers
     
-    # Task time limits
-    task_soft_time_limit=600,  # 10 minutes soft limit
-    task_time_limit=660,  # 11 minutes hard limit
+    # Task time limits (must exceed LLM timeout of 900s)
+    task_soft_time_limit=1200,  # 20 minutes soft limit
+    task_time_limit=1260,  # 21 minutes hard limit
 )

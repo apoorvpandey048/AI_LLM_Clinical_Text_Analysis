@@ -46,6 +46,13 @@ class PortableJSON(sa_types.TypeDecorator):
 Base = declarative_base()
 
 
+class UserRole(str, enum.Enum):
+    """User roles."""
+    ADMIN = "admin"
+    DOCTOR = "doctor"
+    PENDING = "pending"  # Waiting for admin approval
+
+
 class JobStatus(str, enum.Enum):
     """Job processing status."""
     QUEUED = "queued"
@@ -62,6 +69,42 @@ class CaseStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class User(Base):
+    """User model for authentication and authorization."""
+
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(SQLEnum(UserRole), default=UserRole.PENDING, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    # Relationships
+    jobs = relationship("Job", back_populates="user")
+
+    __table_args__ = (
+        Index("ix_users_username", "username"),
+        Index("ix_users_role", "role"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "id": str(self.id),
+            "username": self.username,
+            "name": self.name,
+            "role": self.role.value,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "last_login": self.last_login.isoformat() + "Z" if self.last_login else None,
+        }
+
+
 class Job(Base):
     """
     Job model - represents a batch processing job.
@@ -73,6 +116,9 @@ class Job(Base):
 
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # User who created this job
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
     # Status
     status = Column(
@@ -103,6 +149,7 @@ class Job(Base):
 
     # Relationships
     cases = relationship("JobCase", back_populates="job", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="jobs")
 
     # Indexes
     __table_args__ = (

@@ -43,15 +43,23 @@ class Settings(BaseSettings):
 
     # vLLM (Production)
     vllm_host: str = "http://vllm:8000"
-    vllm_model: str = "Qwen/Qwen2.5-72B-Instruct-AWQ"
+    vllm_model: str = "openai/gpt-oss-120b"
 
     # LLM Inference Settings
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 4096
-    llm_timeout: int = 600  # 10 minutes
+    llm_max_tokens: int = 8192
+    llm_timeout: int = 900  # 15 minutes for large model
+    llm_reasoning_level: str = "medium"  # low/medium/high for GPT-OSS-120B
 
     # Upload Settings
     max_upload_size_mb: int = 50
+
+    # Authentication
+    jwt_secret: str = "snapai-change-this-in-production-2026"
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_hours: int = 24
+    admin_email: str = "admin@snapai.local"
+    admin_password: str = "snapai-admin-2026"
 
     # Logging
     log_level: str = "INFO"

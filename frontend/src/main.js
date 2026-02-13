@@ -16,6 +16,40 @@
 const API_BASE = '/api/v1';
 const POLL_INTERVAL_MS = 2000;
 
+// ============================================
+// Auth State
+// ============================================
+
+const authState = {
+    token: localStorage.getItem('snapai_token'),
+    user: JSON.parse(localStorage.getItem('snapai_user') || 'null'),
+};
+
+/**
+ * Get auth headers for API calls.
+ */
+function getAuthHeaders() {
+    const headers = {};
+    if (authState.token) {
+        headers['Authorization'] = `Bearer ${authState.token}`;
+    }
+    return headers;
+}
+
+/**
+ * Authenticated fetch wrapper.
+ */
+async function authFetch(url, options = {}) {
+    const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+        // Token expired or invalid
+        handleLogout();
+        throw new Error('Session expired. Please log in again.');
+    }
+    return res;
+}
+
 // Recommended clinical models for the dropdown
 const RECOMMENDED_MODELS = [
     { name: 'gpt-oss-120b', desc: 'GPT OSS 120B — Large open-source model' },
@@ -81,6 +115,17 @@ const state = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Check auth state first
+    if (authState.token && authState.user) {
+        hideAuthOverlay();
+        initApp();
+    } else {
+        showAuthOverlay();
+    }
+});
+
+function initApp() {
+    updateUserDisplay();
     initTabs();
     initDropzone();
     initTextInput();
@@ -90,11 +135,14 @@ document.addEventListener('DOMContentLoaded', () => {
     initLiveOutputTabs();
     loadModels();
     loadSystemInfo();
-    // Load dynamic layers first, then prompts (so tabs are built)
     loadLayers().then(() => loadAllPrompts());
-
+    initLogViewer();
+    if (authState.user && authState.user.role === 'admin') {
+        document.getElementById('nav-admin')?.classList.remove('hidden');
+        loadAdminUsers();
+    }
     console.log('SNAP-AI Frontend v2 initialized');
-});
+}
 
 // ============================================
 // Toast Notifications
@@ -249,7 +297,7 @@ async function processFile(file) {
         updateProcessButton();
         showProgress();
 
-        const res = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData });
+        const res = await authFetch(`${API_BASE}/upload`, { method: 'POST', body: formData });
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
 
         const response = await res.json();
@@ -271,7 +319,7 @@ async function processText(text) {
         updateProcessButton();
         showProgress();
 
-        const res = await fetch(`${API_BASE}/upload/text`, {
+        const res = await authFetch(`${API_BASE}/upload/text`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text }),
@@ -643,7 +691,7 @@ function updateProgressUI(data) {
 
 async function pollJobStatus(jobId) {
     try {
-        const res = await fetch(`${API_BASE}/jobs/${jobId}`);
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}`);
         if (!res.ok) return;
         const response = await res.json();
         const data = response.data || response;
@@ -680,7 +728,7 @@ function renderCaseStatusList(cases) {
 
 async function loadResults(jobId) {
     try {
-        const res = await fetch(`${API_BASE}/jobs/${jobId}/results`);
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/results`);
         if (!res.ok) throw new Error('Failed to load results');
         const json = await res.json();
         const data = json.data || json;
@@ -1053,7 +1101,7 @@ function showProcessingError(message, data) {
 async function loadModels() {
     const dropdown = document.getElementById('model-dropdown');
     try {
-        const res = await fetch(`${API_BASE}/models`);
+        const res = await authFetch(`${API_BASE}/models`);
         if (!res.ok) throw new Error('Failed to load models');
         const json = await res.json();
         const data = json.data || json;
@@ -1130,7 +1178,7 @@ function renderModelDropdown() {
 
         // Set active model
         try {
-            const res = await fetch(`${API_BASE}/models/active`, {
+            const res = await authFetch(`${API_BASE}/models/active`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model }),
@@ -1181,11 +1229,11 @@ async function pullModel() {
 async function pullModelWithProgress(modelName) {
     const statusEl = document.getElementById('model-pull-status');
     statusEl.className = 'model-pull-status loading';
-    statusEl.innerHTML = `<span class="spinner-small"></span> Connecting to Ollama to pull ${modelName}...`;
+    statusEl.innerHTML = `<span class="spinner-small"></span> Pulling ${modelName}...`;
     statusEl.classList.remove('hidden');
 
     try {
-        const res = await fetch(`${API_BASE}/models/pull`, {
+        const res = await authFetch(`${API_BASE}/models/pull`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: modelName }),
@@ -1332,7 +1380,7 @@ function renderModelList() {
 
 async function setActiveModel(name) {
     try {
-        const res = await fetch(`${API_BASE}/models/active`, {
+        const res = await authFetch(`${API_BASE}/models/active`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: name }),
@@ -1355,7 +1403,7 @@ async function setActiveModel(name) {
 async function deleteModel(name) {
     if (!confirm(`Delete model "${name}"? This cannot be undone.`)) return;
     try {
-        const res = await fetch(`${API_BASE}/models`, {
+        const res = await authFetch(`${API_BASE}/models`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: name }),
@@ -1378,7 +1426,7 @@ async function deleteModel(name) {
 
 async function loadLayers() {
     try {
-        const res = await fetch(`${API_BASE}/prompts/layers`);
+        const res = await authFetch(`${API_BASE}/prompts/layers`);
         if (!res.ok) return;
         const json = await res.json();
         const data = json.data || json;
@@ -1492,7 +1540,7 @@ async function createCustomLayer() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/prompts/layers`, {
+        const res = await authFetch(`${API_BASE}/prompts/layers`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ layer_name, label, content }),
@@ -1573,7 +1621,7 @@ async function loadAllPrompts() {
     editor.disabled = true;
 
     try {
-        const res = await fetch(`${API_BASE}/prompts`);
+        const res = await authFetch(`${API_BASE}/prompts`);
         if (!res.ok) throw new Error('Failed to load prompts');
         const json = await res.json();
         const data = json.data || json;
@@ -1641,7 +1689,7 @@ async function loadPrompt(layer) {
     editor.disabled = true;
 
     try {
-        const res = await fetch(`${API_BASE}/prompts/${layer}`);
+        const res = await authFetch(`${API_BASE}/prompts/${layer}`);
         if (!res.ok) throw new Error('Failed to load prompt');
         const json = await res.json();
         const data = json.data || json;
@@ -1673,7 +1721,7 @@ async function savePrompt() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/prompts/${layer}`, {
+        const res = await authFetch(`${API_BASE}/prompts/${layer}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content }),
@@ -1711,7 +1759,7 @@ async function resetPrompt() {
     if (!confirm(`Reset ${LAYERS[layer]?.shortLabel || layer} to the default prompt? Your custom version will be removed.`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/prompts/${layer}/reset`, { method: 'POST' });
+        const res = await authFetch(`${API_BASE}/prompts/${layer}/reset`, { method: 'POST' });
         if (res.ok) {
             // Clear cache so it reloads from file
             delete state.promptData[layer];
@@ -1739,7 +1787,7 @@ async function loadSystemInfo() {
 
     try {
         // Fetch comprehensive system info
-        const res = await fetch(`${API_BASE}/system/info`);
+        const res = await authFetch(`${API_BASE}/system/info`);
         if (!res.ok) throw new Error('Failed to load system info');
         
         const json = await res.json();
@@ -1873,7 +1921,7 @@ async function cancelJob() {
     if (!confirm('Are you sure you want to cancel the current job?')) return;
 
     try {
-        const res = await fetch(`${API_BASE}/jobs/${state.currentJobId}/cancel`, {
+        const res = await authFetch(`${API_BASE}/jobs/${state.currentJobId}/cancel`, {
             method: 'POST',
         });
 
@@ -1897,7 +1945,7 @@ async function cancelJob() {
 
 async function exportPrompts() {
     try {
-        const res = await fetch(`${API_BASE}/prompts/export`);
+        const res = await authFetch(`${API_BASE}/prompts/export`);
         if (!res.ok) throw new Error('Failed to export prompts');
 
         const json = await res.json();
@@ -1934,7 +1982,7 @@ async function importPrompts() {
                 throw new Error('Invalid prompt file format');
             }
 
-            const res = await fetch(`${API_BASE}/prompts/import`, {
+            const res = await authFetch(`${API_BASE}/prompts/import`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ prompts: data.prompts }),
@@ -1971,7 +2019,7 @@ async function deleteCustomLayer() {
     if (!confirm(`Delete custom layer "${LAYERS[layer]?.label || layer}"?\n\nThis will remove the layer and its prompt history.`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/prompts/${layer}`, { method: 'DELETE' });
+        const res = await authFetch(`${API_BASE}/prompts/${layer}`, { method: 'DELETE' });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(extractErrorMessage(err));
@@ -1987,6 +2035,280 @@ async function deleteCustomLayer() {
         switchPromptTab(Object.keys(LAYERS)[0] || 'layer1_ctp');
     } catch (err) {
         showToast(`Delete failed: ${err.message}`, 'error');
+    }
+}
+
+// ============================================
+// Auth Functions
+// ============================================
+
+function showAuthOverlay() {
+    document.getElementById('auth-overlay')?.classList.add('active');
+}
+
+function hideAuthOverlay() {
+    document.getElementById('auth-overlay')?.classList.remove('active');
+}
+
+function showLogin(e) {
+    if (e) e.preventDefault();
+    document.getElementById('login-form')?.classList.remove('hidden');
+    document.getElementById('signup-form')?.classList.add('hidden');
+}
+
+function showSignup(e) {
+    if (e) e.preventDefault();
+    document.getElementById('login-form')?.classList.add('hidden');
+    document.getElementById('signup-form')?.classList.remove('hidden');
+}
+
+function updateUserDisplay() {
+    if (authState.user) {
+        const nameEl = document.getElementById('user-display-name');
+        const roleEl = document.getElementById('user-role-badge');
+        if (nameEl) nameEl.textContent = authState.user.name || authState.user.username;
+        if (roleEl) {
+            roleEl.textContent = authState.user.role;
+            roleEl.className = `user-role-badge role-${authState.user.role}`;
+        }
+    }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    const username = document.getElementById('login-username').value;
+    const password = document.getElementById('login-password').value;
+    const errorEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-btn');
+
+    errorEl.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = 'Signing in...';
+
+    try {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            const msg = data.error?.message || data.detail || 'Login failed';
+            throw new Error(msg);
+        }
+
+        authState.token = data.data.token;
+        authState.user = data.data.user;
+        localStorage.setItem('snapai_token', authState.token);
+        localStorage.setItem('snapai_user', JSON.stringify(authState.user));
+
+        hideAuthOverlay();
+        initApp();
+        showToast(`Welcome, ${authState.user.name}!`, 'success');
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove('hidden');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+    }
+}
+
+async function handleSignup(e) {
+    e.preventDefault();
+    const name = document.getElementById('signup-name').value;
+    const username = document.getElementById('signup-username').value;
+    const password = document.getElementById('signup-password').value;
+    const errorEl = document.getElementById('signup-error');
+    const successEl = document.getElementById('signup-success');
+    const btn = document.getElementById('signup-btn');
+
+    errorEl.classList.add('hidden');
+    successEl.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = 'Creating account...';
+
+    try {
+        const res = await fetch(`${API_BASE}/auth/signup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, name, password }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            const msg = data.error?.message || data.detail || 'Signup failed';
+            throw new Error(msg);
+        }
+
+        successEl.textContent = 'Account created! Waiting for admin approval. You can sign in once approved.';
+        successEl.classList.remove('hidden');
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove('hidden');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
+    }
+}
+
+function handleLogout() {
+    authState.token = null;
+    authState.user = null;
+    localStorage.removeItem('snapai_token');
+    localStorage.removeItem('snapai_user');
+    showAuthOverlay();
+    showToast('Logged out', 'info');
+}
+
+// ============================================
+// Log Viewer
+// ============================================
+
+let logRefreshInterval = null;
+
+function initLogViewer() {
+    refreshLogs();
+    toggleLogAutoRefresh();
+}
+
+async function refreshLogs() {
+    const level = document.getElementById('log-level-filter')?.value || '';
+    const search = document.getElementById('log-search')?.value || '';
+    const container = document.getElementById('log-container');
+    if (!container) return;
+
+    try {
+        let url = `${API_BASE}/logs?limit=200`;
+        if (level) url += `&level=${level}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+
+        const res = await authFetch(url);
+        if (!res.ok) throw new Error('Failed to fetch logs');
+        const data = await res.json();
+        const logs = data.data?.logs || [];
+
+        if (logs.length === 0) {
+            container.innerHTML = '<div class="log-empty">No logs found</div>';
+            return;
+        }
+
+        container.innerHTML = logs.map(log => {
+            const levelClass = `log-${(log.level || 'info').toLowerCase()}`;
+            const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '';
+            return `<div class="log-entry ${levelClass}">
+                <span class="log-time">${time}</span>
+                <span class="log-level-badge">${log.level || 'INFO'}</span>
+                <span class="log-component">${log.component || 'app'}</span>
+                <span class="log-message">${escapeHtml(log.message || '')}</span>
+            </div>`;
+        }).join('');
+
+    } catch (err) {
+        container.innerHTML = `<div class="log-error">Error loading logs: ${err.message}</div>`;
+    }
+}
+
+function toggleLogAutoRefresh() {
+    const checked = document.getElementById('log-auto-refresh')?.checked;
+    if (logRefreshInterval) clearInterval(logRefreshInterval);
+    if (checked) {
+        logRefreshInterval = setInterval(refreshLogs, 5000);
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============================================
+// Admin Panel
+// ============================================
+
+async function loadAdminUsers() {
+    const container = document.getElementById('admin-users-list');
+    if (!container) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/auth/users`);
+        if (!res.ok) throw new Error('Failed to load users');
+        const data = await res.json();
+        const users = data.data?.users || [];
+
+        if (users.length === 0) {
+            container.innerHTML = '<div class="log-empty">No users found</div>';
+            return;
+        }
+
+        container.innerHTML = `
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Created</th>
+                        <th>Last Login</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${users.map(u => `
+                        <tr class="${u.role === 'pending' ? 'pending-row' : ''}">
+                            <td>${escapeHtml(u.username)}</td>
+                            <td>${escapeHtml(u.name)}</td>
+                            <td><span class="user-role-badge role-${u.role}">${u.role}</span></td>
+                            <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
+                            <td>${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
+                            <td>
+                                ${u.role === 'pending' ? `
+                                    <button class="btn btn-sm btn-primary" onclick="approveUser('${u.id}', 'doctor')">Approve</button>
+                                    <button class="btn btn-sm btn-cancel" onclick="rejectUser('${u.id}')">Reject</button>
+                                ` : u.role !== 'admin' ? `
+                                    <button class="btn btn-sm btn-cancel" onclick="rejectUser('${u.id}')">Deactivate</button>
+                                ` : '<span class="text-muted">—</span>'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (err) {
+        container.innerHTML = `<div class="log-error">Error: ${err.message}</div>`;
+    }
+}
+
+async function approveUser(userId, role) {
+    try {
+        const res = await authFetch(`${API_BASE}/auth/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, role }),
+        });
+        if (!res.ok) throw new Error('Failed to approve user');
+        showToast('User approved', 'success');
+        loadAdminUsers();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    }
+}
+
+async function rejectUser(userId) {
+    if (!confirm('Are you sure you want to deactivate this user?')) return;
+    try {
+        const res = await authFetch(`${API_BASE}/auth/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId }),
+        });
+        if (!res.ok) throw new Error('Failed to reject user');
+        showToast('User deactivated', 'success');
+        loadAdminUsers();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
     }
 }
 
@@ -2018,3 +2340,16 @@ window.showCreateLayerModal = showCreateLayerModal;
 window.createCustomLayer = createCustomLayer;
 window.deleteCustomLayer = deleteCustomLayer;
 window.loadLayers = loadLayers;
+// Auth
+window.handleLogin = handleLogin;
+window.handleSignup = handleSignup;
+window.handleLogout = handleLogout;
+window.showLogin = showLogin;
+window.showSignup = showSignup;
+// Logs
+window.refreshLogs = refreshLogs;
+window.toggleLogAutoRefresh = toggleLogAutoRefresh;
+// Admin
+window.approveUser = approveUser;
+window.rejectUser = rejectUser;
+window.loadAdminUsers = loadAdminUsers;

@@ -1,7 +1,7 @@
 """Database package."""
 
 from app.db.session import get_db, engine, SessionLocal
-from app.db.models import Base, Job, JobCase, AuditLog
+from app.db.models import Base, Job, JobCase, AuditLog, User, UserRole
 
 __all__ = [
     "get_db",
@@ -11,4 +11,6 @@ __all__ = [
     "Job",
     "JobCase",
     "AuditLog",
+    "User",
+    "UserRole",
 ]

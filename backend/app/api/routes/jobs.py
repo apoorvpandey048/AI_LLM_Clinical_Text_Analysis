@@ -262,7 +262,7 @@ async def reprocess_job(
 
     task = process_batch.delay(
         str(job.id),
-        [{"case_id": str(c.case_number), "text": c.input_text} for c in cases],
+        [{"case_id": str(c.id), "case_number": c.case_number, "text": c.input_text} for c in cases],
     )
 
     job.celery_task_id = task.id

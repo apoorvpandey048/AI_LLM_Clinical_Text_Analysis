@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=db_session.engine)
     logger.info("database_tables_created")
 
+    # Create default admin user if not exists
+    _create_default_admin()
+
     logger.info(
         "starting_application",
         environment=settings.environment,
@@ -40,6 +43,37 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("shutting_down_application")
+
+
+def _create_default_admin():
+    """Create the default admin user if it doesn't exist."""
+    from app.db.models import User, UserRole
+    from passlib.context import CryptContext
+
+    settings = get_settings()
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    db = db_session.SessionLocal()
+    try:
+        existing = db.query(User).filter(User.username == "admin").first()
+        if not existing:
+            admin = User(
+                username="admin",
+                name="SNAP-AI Administrator",
+                password_hash=pwd_context.hash(settings.admin_password),
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("default_admin_created", username="admin")
+        else:
+            logger.info("default_admin_exists")
+    except Exception as e:
+        logger.error("create_admin_failed", error=str(e))
+        db.rollback()
+    finally:
+        db.close()
 
 
 # Create FastAPI app
@@ -86,6 +120,68 @@ async def add_request_id(request: Request, call_next):
     )
 
     return response
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    Authentication middleware.
+    Protects all /api/v1/ routes except /auth/, /health, and /api/v1/info.
+    """
+    path = request.url.path
+
+    # Public routes that don't need auth
+    # Note: /api/v1/stream/ is public because EventSource API cannot send
+    # Authorization headers. Job UUIDs are unguessable and serve as tokens.
+    public_paths = [
+        "/health",
+        "/api/v1/auth/",
+        "/api/v1/info",
+        "/api/v1/stream/",
+        "/api/v1/logs/stream",
+        "/docs",
+        "/openapi.json",
+    ]
+
+    is_public = any(path.startswith(p) for p in public_paths)
+
+    if is_public or not path.startswith("/api/v1/"):
+        return await call_next(request)
+
+    # Check JWT token
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "success": False,
+                "error": {"code": "UNAUTHORIZED", "message": "Authentication required"},
+                "data": None,
+                "meta": {"timestamp": datetime.utcnow().isoformat() + "Z"},
+            },
+        )
+
+    from app.api.routes.auth import verify_token
+    token = auth_header.split(" ", 1)[1]
+    payload = verify_token(token)
+
+    if not payload:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "success": False,
+                "error": {"code": "TOKEN_INVALID", "message": "Invalid or expired token"},
+                "data": None,
+                "meta": {"timestamp": datetime.utcnow().isoformat() + "Z"},
+            },
+        )
+
+    # Store user info in request state for downstream use
+    request.state.user_id = payload.get("sub")
+    request.state.username = payload.get("username")
+    request.state.user_role = payload.get("role")
+
+    return await call_next(request)
 
 
 @app.exception_handler(HTTPException)
@@ -175,7 +271,10 @@ from app.api.routes.stream import router as stream_router
 from app.api.routes.prompts import router as prompts_router
 from app.api.routes.models import router as models_router
 from app.api.routes.system import router as system_router
+from app.api.routes.auth import router as auth_router
+from app.api.routes.logs import router as logs_router
 
+app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(jobs_router)
 app.include_router(settings_router)
@@ -183,6 +282,7 @@ app.include_router(stream_router)
 app.include_router(prompts_router)
 app.include_router(models_router)
 app.include_router(system_router)
+app.include_router(logs_router)
 
 
 # ============================================
@@ -208,9 +308,10 @@ async def readiness_check():
     # Check database
     db_status = "healthy"
     try:
+        from sqlalchemy import text
         from app.db import SessionLocal
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
     except Exception:
         db_status = "unhealthy"
@@ -225,11 +326,11 @@ async def readiness_check():
     except Exception:
         redis_status = "unhealthy"
 
-    # Check LLM
+    # Check LLM (auto-selects backend based on config)
     llm_status = "pending"
     try:
-        from app.llm import OllamaClient
-        client = OllamaClient()
+        from app.llm import get_llm_client
+        client = get_llm_client()
         import asyncio
         loop = asyncio.new_event_loop()
         healthy = loop.run_until_complete(client.health_check())

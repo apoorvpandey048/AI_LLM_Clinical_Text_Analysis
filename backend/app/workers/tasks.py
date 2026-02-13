@@ -12,7 +12,7 @@ from typing import Any
 
 from app.workers.celery_app import celery_app
 from app.config import get_settings
-from app.llm import OllamaClient
+from app.llm import get_llm_client, OllamaClient, VLLMClient
 from app.pipeline import PipelineOrchestrator
 from app.db.session import SessionLocal
 from app.db.models import Job, JobCase, AuditLog, JobStatus, CaseStatus
@@ -237,8 +237,11 @@ def _process_case_impl(
         custom_prompts = _get_custom_prompts()
         extra_layers = _get_extra_layers()
 
-        # Create LLM client with active model
-        llm_client = OllamaClient(model=active_model)
+        # Create LLM client via factory (respects llm_backend setting)
+        llm_client = get_llm_client()
+        # Override model if a specific one was selected in Redis
+        if hasattr(llm_client, 'model'):
+            llm_client.model = active_model
         orchestrator = PipelineOrchestrator(llm_client)
 
         # Create streaming callbacks
@@ -405,7 +408,7 @@ def process_batch(
     for i, case in enumerate(cases):
         case_id = case.get("case_id", str(i + 1))
         text = case.get("text", "")
-        case_number = i + 1
+        case_number = case.get("case_number", i + 1)
 
         # Update case status to processing
         db = SessionLocal()

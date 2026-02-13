@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
-from app.llm import OllamaClient
+from app.llm import OllamaClient, VLLMClient, get_llm_client
 from app.utils import get_logger
 
 logger = get_logger(__name__)
@@ -60,14 +60,21 @@ class DeleteModelRequest(BaseModel):
 @router.get("")
 async def list_models(request: Request):
     """
-    List all available Ollama models with details.
-
-    Returns model name, size, family, and quantization info.
+    List all available models. Supports both Ollama and vLLM backends.
     """
     request_id = getattr(request.state, "request_id", None)
 
-    client = OllamaClient()
-    models = await client.list_models()
+    models = []
+    try:
+        if settings.llm_backend == "vllm":
+            client = VLLMClient()
+            model_names = await client.list_models()
+            models = [{"name": m, "size": "N/A", "family": "vllm"} for m in model_names]
+        else:
+            client = OllamaClient()
+            models = await client.list_models()
+    except Exception as e:
+        logger.warning("list_models_failed", backend=settings.llm_backend, error=str(e))
 
     # Get active model
     try:
@@ -83,6 +90,7 @@ async def list_models(request: Request):
             "models": models,
             "active_model": active_model,
             "default_model": settings.llm_model,
+            "backend": settings.llm_backend,
         },
         request_id=request_id,
     )
@@ -110,22 +118,30 @@ async def get_active_model(request: Request):
 @router.put("/active")
 async def set_active_model(body: SetActiveModelRequest, request: Request):
     """
-    Set the active model for processing.
-
-    The model must already be available in Ollama.
+    Set the active model for processing. Works with both Ollama and vLLM.
     """
     request_id = getattr(request.state, "request_id", None)
 
-    # Verify model exists
-    client = OllamaClient()
-    models = await client.list_models()
-    model_names = [m["name"] for m in models]
+    # Verify model exists (skip check for vLLM as model is pre-loaded)
+    if settings.llm_backend == "ollama":
+        client = OllamaClient()
+        models = await client.list_models()
+        model_names = [m["name"] for m in models]
 
-    if body.model not in model_names:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Model '{body.model}' not found. Available models: {', '.join(model_names)}",
-        )
+        if body.model not in model_names:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{body.model}' not found. Available models: {', '.join(model_names)}",
+            )
+    else:
+        # For vLLM, verify via API
+        client = VLLMClient()
+        model_names = await client.list_models()
+        if model_names and body.model not in model_names:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{body.model}' not loaded in vLLM. Available: {', '.join(model_names)}",
+            )
 
     # Store active model in Redis
     try:

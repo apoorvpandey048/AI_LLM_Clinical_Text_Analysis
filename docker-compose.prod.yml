@@ -1,17 +1,21 @@
-# Production overrides for 48GB GPU
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-version: '3.8'
+# Production deployment for DGX A100-40GB with GPT-OSS-120B
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Prerequisites:
+#   - NVIDIA drivers installed (525+)
+#   - NVIDIA Container Toolkit installed
+#   - Cloudflare tunnel token in .env
 
 services:
   # ===================
-  # vLLM Service (Production)
+  # vLLM Service — GPT-OSS-120B (Multi-GPU)
+  # Uses 2x A100-40GB with tensor parallelism
   # ===================
   vllm:
-    image: vllm/vllm-openai:latest
+    build:
+      context: ./vllm
+      dockerfile: Dockerfile
     container_name: snapai-vllm
-    ports:
-      - "8080:8000"
     volumes:
       - vllm_cache:/root/.cache/huggingface
     networks:
@@ -23,41 +27,106 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
+              count: 2
+              capabilities: [gpu]
     environment:
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-4,7}
+      - VLLM_ATTENTION_BACKEND=FLASH_ATTN
     command: >
-      --model Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq --dtype auto --max-model-len 8192 --gpu-memory-utilization 0.90 --tensor-parallel-size 1 --trust-remote-code --enable-prefix-caching
+      --model openai/gpt-oss-120b
+      --tensor-parallel-size 2
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --gpu-memory-utilization 0.92
+      --dtype auto
+      --trust-remote-code
+      --enable-prefix-caching
+      --host 0.0.0.0
+      --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s
+      retries: 20
+
+  # Disable Ollama in production
+  ollama:
+    image: busybox
+    command: ["true"]
+    profiles:
+      - disabled
 
   # Override backend for production
   backend:
     environment:
       - ENVIRONMENT=production
-      - VLLM_HOST=http://vllm:8000
-      - VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ
       - LLM_BACKEND=vllm
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=openai/gpt-oss-120b
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_TIMEOUT=900
       - LOG_LEVEL=INFO
       - API_WORKERS=4
+      - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
     depends_on:
-      - vllm
+      vllm:
+        condition: service_healthy
 
   # Override worker for production
   worker:
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
-      - VLLM_HOST=http://vllm:8000
-      - VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ
       - LLM_BACKEND=vllm
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=openai/gpt-oss-120b
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_TIMEOUT=900
       - LOG_LEVEL=INFO
+      - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
     depends_on:
-      - vllm
+      vllm:
+        condition: service_healthy
 
-  # Production frontend with caching
+  # Production frontend
   frontend:
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
     environment:
       - NODE_ENV=production
+
+  # ===================
+  # Cloudflare Tunnel (Permanent URL)
+  # ===================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: snapai-tunnel
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    depends_on:
+      - frontend
+
+  # PostgreSQL hardening
+  postgres:
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_prod_2026}
+
+  # Redis hardening
+  redis:
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   vllm_cache:
