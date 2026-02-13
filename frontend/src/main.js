@@ -37,14 +37,32 @@ function getAuthHeaders() {
 }
 
 /**
- * Authenticated fetch wrapper.
+ * Safely parse JSON from a response, returning null if it fails.
  */
+async function safeJson(res) {
+    try {
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Authenticated fetch wrapper.
+ * Deduplicates 401 handling so multiple parallel calls don't spam the user.
+ */
+let _logoutInProgress = false;
 async function authFetch(url, options = {}) {
     const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
     const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
-        // Token expired or invalid
-        handleLogout();
+        // Token expired or invalid — only show one toast
+        if (!_logoutInProgress) {
+            _logoutInProgress = true;
+            handleLogout();
+            // Reset flag after a short delay so future real 401s still work
+            setTimeout(() => { _logoutInProgress = false; }, 2000);
+        }
         throw new Error('Session expired. Please log in again.');
     }
     return res;
@@ -2091,7 +2109,13 @@ async function handleLogin(e) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password }),
         });
-        const data = await res.json();
+
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            throw new Error(`Server returned non-JSON response (HTTP ${res.status}). Backend may be unavailable.`);
+        }
 
         if (!res.ok) {
             const msg = data.error?.message || data.detail || 'Login failed';
@@ -2135,7 +2159,13 @@ async function handleSignup(e) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, name, password }),
         });
-        const data = await res.json();
+
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            throw new Error(`Server returned non-JSON response (HTTP ${res.status}). Backend may be unavailable.`);
+        }
 
         if (!res.ok) {
             const msg = data.error?.message || data.detail || 'Signup failed';
@@ -2154,12 +2184,13 @@ async function handleSignup(e) {
 }
 
 function handleLogout() {
+    const wasLoggedIn = !!authState.token;
     authState.token = null;
     authState.user = null;
     localStorage.removeItem('snapai_token');
     localStorage.removeItem('snapai_user');
     showAuthOverlay();
-    showToast('Logged out', 'info');
+    if (wasLoggedIn) showToast('Logged out', 'info');
 }
 
 // ============================================
