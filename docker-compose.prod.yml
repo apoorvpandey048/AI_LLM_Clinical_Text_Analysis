@@ -26,10 +26,11 @@ services:
       - snapai-network
     restart: unless-stopped
     ipc: host
-    runtime: nvidia
+    privileged: true
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-3}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - VLLM_ATTENTION_BACKEND=FLASH_ATTN
     command: >
       --model openai/gpt-oss-120b
