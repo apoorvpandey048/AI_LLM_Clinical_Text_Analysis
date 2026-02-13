@@ -19,6 +19,10 @@ RUN mkdir -p /app/uploads
 # Copy application code
 COPY app/ ./app/
 
+# Copy alembic for database migrations
+COPY alembic.ini ./alembic.ini
+COPY alembic/ ./alembic/
+
 # Environment
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

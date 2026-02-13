@@ -1,0 +1,78 @@
+# ===========================================
+# Local GPU Deployment (DGX / AnyDesk)
+# ===========================================
+# Run the full SNAP-AI stack locally with vLLM on host GPU.
+# vLLM runs OUTSIDE Docker (host has direct GPU access).
+# Docker containers connect to it via host.docker.internal.
+#
+# Usage:
+#   1. Start vLLM on host:  ./start-vllm.sh &
+#   2. Start stack:         docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml up -d --build
+#   3. Open browser:        http://localhost:8080
+#   4. Login:               admin / <ADMIN_PASSWORD from .env>
+#
+# Stop:
+#   docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml down
+#   pkill -f 'vllm serve'
+# ===========================================
+
+services:
+  # --- Disable Ollama (we use vLLM) ---
+  ollama:
+    image: busybox
+    command: ["true"]
+    profiles:
+      - disabled
+
+  # --- Backend: connect to vLLM on host ---
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - ENVIRONMENT=production
+      - LLM_BACKEND=vllm
+      - VLLM_HOST=http://host.docker.internal:8000
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_TIMEOUT=900
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - API_WORKERS=4
+      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Pancreas123}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_prod_2026}
+
+  # --- Worker: connect to vLLM on host ---
+  worker:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
+    environment:
+      - ENVIRONMENT=production
+      - LLM_BACKEND=vllm
+      - VLLM_HOST=http://host.docker.internal:8000
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_TIMEOUT=900
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_prod_2026}
+
+  # --- Frontend: expose on port 8080 ---
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    environment:
+      - NODE_ENV=production
+
+  # --- PostgreSQL hardening ---
+  postgres:
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_prod_2026}
+
+  # --- Redis hardening ---
+  redis:
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
