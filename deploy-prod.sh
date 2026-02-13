@@ -123,9 +123,9 @@ fi
 echo ""
 echo -e "${YELLOW}[4/7] Building Docker images...${NC}"
 
-docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache backend frontend worker vllm
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache backend frontend worker
 
-echo "  \u2713 Backend, Frontend, Worker, vLLM images built"
+echo "  \u2713 Backend, Frontend, Worker images built"
 
 # ============================================
 # Step 5: Start Infrastructure
@@ -156,16 +156,33 @@ echo "  waiting 5s for services to initialize..."
 sleep 5
 
 # ============================================
-# Step 7: Start vLLM (Model Download)
+# Step 7: Start vLLM on HOST (not Docker)
 # ============================================
 echo ""
-echo -e "${YELLOW}[7/7] Starting vLLM with GPT-OSS-120B...${NC}"
-echo "  This will download the model (~60-70GB) on first run."
-echo "  Model cache: /raid/s3cache/${USER}/huggingface (bypasses quota)"
-echo "  Monitor progress: docker logs -f snapai-vllm"
+echo -e "${YELLOW}[7/7] Starting vLLM on host with GPT-OSS-120B...${NC}"
+echo "  Rootless Docker cannot pass GPUs to containers."
+echo "  vLLM runs directly on the host with native GPU access."
 echo ""
 
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d vllm
+# Source .env for HF_TOKEN
+set -a
+source "$SCRIPT_DIR/.env" 2>/dev/null || true
+set +a
+
+# Check if vLLM is already running
+if curl -sf http://localhost:8000/v1/models > /dev/null 2>&1; then
+    echo -e "${GREEN}  ✓ vLLM is already running${NC}"
+else
+    echo "  Starting vLLM server in background..."
+    echo "  First run will download the model (~60-70GB). Be patient."
+    echo "  Model cache: /raid/s3cache/${USER}/huggingface (bypasses quota)"
+    echo ""
+    chmod +x "$SCRIPT_DIR/start-vllm.sh"
+    nohup "$SCRIPT_DIR/start-vllm.sh" > "$SCRIPT_DIR/vllm.log" 2>&1 &
+    VLLM_PID=$!
+    echo "  vLLM PID: $VLLM_PID"
+    echo "  Monitor: tail -f $SCRIPT_DIR/vllm.log"
+fi
 
 echo ""
 echo "============================================"
@@ -183,10 +200,13 @@ echo "Default admin login:"
 echo "  Username: admin"
 echo "  Password: (check ADMIN_PASSWORD in .env)"
 echo ""
-echo "Monitor vLLM model download:"
-echo "  docker logs -f snapai-vllm"
+echo "Monitor vLLM:"
+echo "  tail -f $SCRIPT_DIR/vllm.log"
 echo ""
-echo "View all logs:"
+echo "Stop vLLM:"
+echo "  pkill -f 'vllm serve'"
+echo ""
+echo "View Docker logs:"
 echo "  docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f"
 echo ""
 echo "============================================"

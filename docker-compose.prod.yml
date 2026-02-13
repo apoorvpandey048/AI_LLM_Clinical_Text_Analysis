@@ -2,52 +2,28 @@
 # Deploy on DGX-02 (dbe-sl21-02) — GPU 3 with single-GPU inference
 # Model cache stored on /raid/s3cache/ to bypass 60GB home quota
 #
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# vLLM runs on HOST (not in Docker) because rootless Docker
+# cannot pass GPUs to containers. Start it with: ./start-vllm.sh
+#
+# Usage:
+#   1. ./start-vllm.sh &           (start vLLM on host with GPU)
+#   2. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # Prerequisites:
 #   - NVIDIA drivers installed (525+)
-#   - NVIDIA Container Toolkit installed
 #   - mkdir -p /raid/s3cache/$USER/huggingface
-#   - CDI specs generated: nvidia-ctk cdi generate --output=$HOME/.config/cdi/nvidia.yaml
 #   - Cloudflare tunnel token in .env
 
 services:
   # ===================
-  # vLLM Service — GPT-OSS-120B (Single GPU)
-  # Uses 1x A100-40GB (5.1B active params with MXFP4 fits in 40GB)
+  # vLLM runs on HOST — disable Docker container
+  # Start with: ./start-vllm.sh
   # ===================
   vllm:
-    build:
-      context: ./vllm
-      dockerfile: Dockerfile
-    container_name: snapai-vllm
-    volumes:
-      - /raid/s3cache/${USER:-vincent.ochs}/huggingface:/root/.cache/huggingface
-    networks:
-      - snapai-network
-    restart: unless-stopped
-    ipc: host
-    devices:
-      - nvidia.com/gpu=${VLLM_GPU_DEVICES:-3}
-    environment:
-      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      - VLLM_ATTENTION_BACKEND=FLASH_ATTN
-    command: >
-      --model openai/gpt-oss-120b
-      --tensor-parallel-size 1
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
-      --gpu-memory-utilization 0.92
-      --dtype auto
-      --trust-remote-code
-      --enable-prefix-caching
-      --host 0.0.0.0
-      --port 8000
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/v1/models"]
-      interval: 30s
-      timeout: 10s
-      start_period: 600s
-      retries: 20
+    image: busybox
+    command: ["true"]
+    profiles:
+      - disabled
 
   # Disable Ollama in production
   ollama:
@@ -57,11 +33,14 @@ services:
       - disabled
 
   # Override backend for production
+  # vLLM runs on host — connect via host.docker.internal
   backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=vllm
-      - VLLM_HOST=http://vllm:8000
+      - VLLM_HOST=http://host.docker.internal:8000
       - VLLM_MODEL=openai/gpt-oss-120b
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
@@ -70,26 +49,22 @@ services:
       - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
-    depends_on:
-      vllm:
-        condition: service_healthy
 
   # Override worker for production
   worker:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=vllm
-      - VLLM_HOST=http://vllm:8000
+      - VLLM_HOST=http://host.docker.internal:8000
       - VLLM_MODEL=openai/gpt-oss-120b
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
       - LOG_LEVEL=INFO
       - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
-    depends_on:
-      vllm:
-        condition: service_healthy
 
   # Production frontend
   frontend:
@@ -127,5 +102,5 @@ services:
       timeout: 5s
       retries: 5
 
-# Note: vllm HF cache uses bind mount to /raid/s3cache/ to bypass home quota
-# No named vllm_cache volume needed
+# Note: vLLM runs on host (not Docker) due to rootless Docker GPU limitations
+# Start with: ./start-vllm.sh
