@@ -88,7 +88,6 @@ class User(Base):
     jobs = relationship("Job", back_populates="user")
 
     __table_args__ = (
-        Index("ix_users_username", "username"),
         Index("ix_users_role", "role"),
     )
 

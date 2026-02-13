@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     # Wait for database to be ready (up to 30s)
     for attempt in range(1, 7):
         try:
-            Base.metadata.create_all(bind=db_session.engine)
+            Base.metadata.create_all(bind=db_session.engine, checkfirst=True)
             logger.info("database_tables_created")
             break
         except Exception as e:
