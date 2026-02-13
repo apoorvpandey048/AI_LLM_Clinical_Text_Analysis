@@ -71,6 +71,12 @@ echo -e "${CYAN}============================================${NC}"
 echo ""
 
 # ---- Recreate conda env (clean Python 3.11) ----
+# Deactivate if we're currently inside the vllm env
+if [ "${CONDA_DEFAULT_ENV:-}" = "vllm" ]; then
+    echo -e "${YELLOW}Deactivating current vllm env...${NC}"
+    conda deactivate 2>/dev/null || true
+fi
+
 # Delete old env to avoid stale packages / wrong Python version
 if [ -d "$ENV_DIR" ]; then
     echo -e "${YELLOW}Removing old conda env 'vllm'...${NC}"
