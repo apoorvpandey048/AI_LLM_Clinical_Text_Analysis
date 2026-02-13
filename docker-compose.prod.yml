@@ -8,6 +8,7 @@
 #   - NVIDIA drivers installed (525+)
 #   - NVIDIA Container Toolkit installed
 #   - mkdir -p /raid/s3cache/$USER/huggingface
+#   - CDI specs generated: nvidia-ctk cdi generate --output=$HOME/.config/cdi/nvidia.yaml
 #   - Cloudflare tunnel token in .env
 
 services:
@@ -26,11 +27,10 @@ services:
       - snapai-network
     restart: unless-stopped
     ipc: host
-    privileged: true
+    devices:
+      - nvidia.com/gpu=${VLLM_GPU_DEVICES:-3}
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-3}
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - VLLM_ATTENTION_BACKEND=FLASH_ATTN
     command: >
       --model openai/gpt-oss-120b
