@@ -1,15 +1,19 @@
 # Production deployment for DGX A100-40GB with GPT-OSS-120B
+# Deploy on DGX-02 (dbe-sl21-02) — GPU 3 with single-GPU inference
+# Model cache stored on /raid/s3cache/ to bypass 60GB home quota
+#
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Prerequisites:
 #   - NVIDIA drivers installed (525+)
 #   - NVIDIA Container Toolkit installed
+#   - mkdir -p /raid/s3cache/$USER/huggingface
 #   - Cloudflare tunnel token in .env
 
 services:
   # ===================
-  # vLLM Service — GPT-OSS-120B (Multi-GPU)
-  # Uses 2x A100-40GB with tensor parallelism
+  # vLLM Service — GPT-OSS-120B (Single GPU)
+  # Uses 1x A100-40GB (5.1B active params with MXFP4 fits in 40GB)
   # ===================
   vllm:
     build:
@@ -17,7 +21,7 @@ services:
       dockerfile: Dockerfile
     container_name: snapai-vllm
     volumes:
-      - vllm_cache:/root/.cache/huggingface
+      - /raid/s3cache/${USER:-vincent.ochs}/huggingface:/root/.cache/huggingface
     networks:
       - snapai-network
     restart: unless-stopped
@@ -27,15 +31,15 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 2
+              device_ids: ["${VLLM_GPU_DEVICES:-3}"]
               capabilities: [gpu]
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-4,7}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-3}
       - VLLM_ATTENTION_BACKEND=FLASH_ATTN
     command: >
       --model openai/gpt-oss-120b
-      --tensor-parallel-size 2
+      --tensor-parallel-size 1
       --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
       --gpu-memory-utilization 0.92
       --dtype auto
@@ -128,5 +132,5 @@ services:
       timeout: 5s
       retries: 5
 
-volumes:
-  vllm_cache:
+# Note: vllm HF cache uses bind mount to /raid/s3cache/ to bypass home quota
+# No named vllm_cache volume needed

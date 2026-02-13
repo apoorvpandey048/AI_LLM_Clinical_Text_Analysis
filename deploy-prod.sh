@@ -1,7 +1,10 @@
 #!/bin/bash
 # ===========================================
 # SNAP-AI Production Deployment Script
-# For DGX A100 with GPT-OSS-120B
+# For DGX-02 A100-40GB with GPT-OSS-120B (single GPU)
+#
+# Model weights are stored on /raid/s3cache/ to bypass
+# the 60GB home directory quota.
 # ===========================================
 set -e
 
@@ -79,16 +82,39 @@ else
 fi
 
 # ============================================
-# Step 3: Check Disk Space
+# Step 3: Check Disk Space & Setup Model Cache
 # ============================================
 echo ""
-echo -e "${YELLOW}[3/7] Checking disk space...${NC}"
+echo -e "${YELLOW}[3/7] Checking disk space & model cache...${NC}"
 
-AVAIL_GB=$(df -BG . | tail -1 | awk '{print $4}' | tr -d 'G')
-echo "  Available: ${AVAIL_GB}GB"
+# Create HuggingFace cache on /raid/s3cache to bypass home quota
+HF_CACHE="/raid/s3cache/${USER}/huggingface"
+if [ -d "/raid/s3cache" ]; then
+    mkdir -p "$HF_CACHE" 2>/dev/null || true
+    if [ -w "$HF_CACHE" ]; then
+        echo "  ✓ HuggingFace cache: $HF_CACHE (on /raid, bypasses home quota)"
+        RAID_AVAIL=$(df -BG /raid | tail -1 | awk '{print $4}' | tr -d 'G')
+        echo "  Available on /raid: ${RAID_AVAIL}GB"
+    else
+        echo -e "${RED}  ERROR: Cannot write to $HF_CACHE${NC}"
+        echo "  Run: mkdir -p $HF_CACHE"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}  ⚠ /raid/s3cache not found — model will use home dir (check quota!)${NC}"
+fi
 
-if [ "$AVAIL_GB" -lt 150 ]; then
-    echo -e "${YELLOW}  ⚠ Less than 150GB free. GPT-OSS-120B needs ~70-100GB for download.${NC}"
+AVAIL_GB=$(df -BG "$HOME" | tail -1 | awk '{print $4}' | tr -d 'G')
+echo "  Home dir available: ${AVAIL_GB}GB"
+
+# Check user quota
+QUOTA_USED=$(quota -s 2>/dev/null | grep '/dev/md0' | awk '{print $2}' || echo "unknown")
+QUOTA_LIMIT=$(quota -s 2>/dev/null | grep '/dev/md0' | awk '{print $3}' || echo "unknown")
+echo "  Disk quota: ${QUOTA_USED} / ${QUOTA_LIMIT}"
+
+if [ "$AVAIL_GB" -lt 15 ] 2>/dev/null; then
+    echo -e "${YELLOW}  ⚠ Less than 15GB free in home. Docker images need ~12-15GB.${NC}"
+    echo "  Run: docker system prune -a -f"
 fi
 
 # ============================================
@@ -134,7 +160,8 @@ sleep 5
 # ============================================
 echo ""
 echo -e "${YELLOW}[7/7] Starting vLLM with GPT-OSS-120B...${NC}"
-echo "  This will download the model (~70-100GB) on first run."
+echo "  This will download the model (~60-70GB) on first run."
+echo "  Model cache: /raid/s3cache/${USER}/huggingface (bypasses quota)"
 echo "  Monitor progress: docker logs -f snapai-vllm"
 echo ""
 
