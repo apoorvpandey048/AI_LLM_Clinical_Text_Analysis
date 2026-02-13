@@ -3,23 +3,30 @@
 from app.llm.client import LLMClient, LLMResponse
 from app.llm.ollama_client import OllamaClient
 from app.llm.vllm_client import VLLMClient
+from app.llm.stub_client import StubLLMClient
 
 
 def get_llm_client() -> LLMClient:
-    """
-    Factory function to get the appropriate LLM client based on config.
-    
-    Returns:
-        LLMClient instance (OllamaClient or VLLMClient)
+    """Factory: return an LLM client based on config.
+
+    Supports: `vllm`, `ollama`, and `stub` (local testing).
     """
     from app.config import get_settings
+
     settings = get_settings()
-    
-    if settings.llm_backend == "vllm":
+    backend = (settings.llm_backend or "vllm").lower()
+
+    if backend == "vllm":
         return VLLMClient()
-    return OllamaClient()
+    if backend == "ollama":
+        return OllamaClient()
+    if backend == "stub":
+        return StubLLMClient()
+
+    # default
+    return VLLMClient()
 
 
-__all__ = ["LLMClient", "LLMResponse", "OllamaClient", "VLLMClient", "get_llm_client"]
+__all__ = ["LLMClient", "LLMResponse", "OllamaClient", "VLLMClient", "StubLLMClient", "get_llm_client"]
 
 
