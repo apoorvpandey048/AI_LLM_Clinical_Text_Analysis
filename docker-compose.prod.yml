@@ -26,13 +26,7 @@ services:
       - snapai-network
     restart: unless-stopped
     ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${VLLM_GPU_DEVICES:-3}"]
-              capabilities: [gpu]
+    runtime: nvidia
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - NVIDIA_VISIBLE_DEVICES=${VLLM_GPU_DEVICES:-3}
