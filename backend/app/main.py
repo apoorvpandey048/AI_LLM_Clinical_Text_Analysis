@@ -26,14 +26,31 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
+    import time
     settings = get_settings()
 
-    # Create database tables
-    Base.metadata.create_all(bind=db_session.engine)
-    logger.info("database_tables_created")
+    # Wait for database to be ready (up to 30s)
+    for attempt in range(1, 7):
+        try:
+            Base.metadata.create_all(bind=db_session.engine)
+            logger.info("database_tables_created")
+            break
+        except Exception as e:
+            logger.warning(
+                "database_not_ready",
+                attempt=attempt,
+                error=str(e),
+            )
+            if attempt == 6:
+                logger.error("database_connection_failed_after_retries")
+                raise
+            time.sleep(5)
 
     # Create default admin user if not exists
-    _create_default_admin()
+    try:
+        _create_default_admin()
+    except Exception as e:
+        logger.error("create_admin_failed_at_startup", error=str(e))
 
     logger.info(
         "starting_application",

@@ -26,10 +26,11 @@ services:
       - ./backend/app:/app/app:ro
       - ./prompts:/app/prompts:ro
       - uploads_data:/app/uploads
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - snapai-network
     restart: unless-stopped
@@ -57,13 +58,22 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+    # Override healthcheck - Celery worker has no HTTP server
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>/dev/null | grep -q 'pong' || exit 1"]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
     volumes:
       - ./backend/app:/app/app:ro
       - ./prompts:/app/prompts:ro
       - uploads_data:/app/uploads
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - snapai-network
     restart: unless-stopped
@@ -137,7 +147,8 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - snapai-network
     restart: unless-stopped
