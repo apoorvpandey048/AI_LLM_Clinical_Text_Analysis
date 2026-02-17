@@ -172,17 +172,18 @@ async def pull_model(body: PullModelRequest, request: Request):
     """
     Pull a model from the Ollama registry with SSE progress streaming.
 
-    Returns a Server-Sent Events stream so the frontend can display
-    download progress in real-time. Each event is a JSON object with:
-    - status: current operation (e.g., "pulling manifest", "downloading ...")
-    - completed/total: bytes transferred (when available)
-    - percent: calculated download percentage
-
-    The final event has {"done": true, "success": true/false}.
+    Only available for the Ollama backend — vLLM models are pre-loaded.
     """
     request_id = getattr(request.state, "request_id", None)
-    client = OllamaClient()
 
+    if settings.llm_backend == "vllm":
+        raise HTTPException(
+            status_code=400,
+            detail="Model pull is not applicable for the vLLM backend. "
+                   "Models are pre-loaded when vLLM starts.",
+        )
+
+    client = OllamaClient()
     logger.info("model_pull_requested", model=body.model, request_id=request_id)
 
     async def progress_stream():
@@ -236,8 +237,16 @@ async def delete_model(body: DeleteModelRequest, request: Request):
     Delete a model from Ollama.
 
     Cannot delete the currently active model.
+    Only available for the Ollama backend.
     """
     request_id = getattr(request.state, "request_id", None)
+
+    if settings.llm_backend == "vllm":
+        raise HTTPException(
+            status_code=400,
+            detail="Model deletion is not applicable for the vLLM backend. "
+                   "Models are managed by the vLLM server process.",
+        )
 
     # Check if it's the active model
     try:
@@ -282,6 +291,28 @@ async def delete_model(body: DeleteModelRequest, request: Request):
 async def get_model_info(model_name: str, request: Request):
     """Get detailed info about a specific model."""
     request_id = getattr(request.state, "request_id", None)
+
+    if settings.llm_backend == "vllm":
+        # For vLLM, check if the model is loaded via the /v1/models endpoint
+        client = VLLMClient()
+        model_names = await client.list_models()
+        if model_name not in model_names:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_name}' not loaded in vLLM. Available: {', '.join(model_names)}",
+            )
+        return create_response(
+            success=True,
+            data={
+                "model": model_name,
+                "info": {
+                    "name": model_name,
+                    "backend": "vllm",
+                    "status": "loaded",
+                },
+            },
+            request_id=request_id,
+        )
 
     client = OllamaClient()
     info = await client.model_info(model_name)

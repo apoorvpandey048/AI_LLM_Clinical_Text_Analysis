@@ -211,12 +211,17 @@ def _process_case_impl(
     raw_text: str,
     case_number: int = 1,
     task_id: str = None,
+    loop: asyncio.AbstractEventLoop = None,
 ) -> dict[str, Any]:
     """
     Core implementation for processing a single clinical case.
     
     This is called directly from process_batch (not as a Celery subtask)
     to avoid the "Never call result.get() within a task" error.
+    
+    Args:
+        loop: Optional event loop to reuse. If None, creates and closes one.
+              When called from process_batch, pass a shared loop.
     """
     from app.utils.stream_manager import StreamPublisher
 
@@ -230,6 +235,11 @@ def _process_case_impl(
 
     # Initialize streaming publisher
     publisher = StreamPublisher()
+
+    # Determine if we own the loop (and should close it)
+    owns_loop = loop is None
+    if owns_loop:
+        loop = _get_or_create_event_loop()
 
     try:
         # Get active model and custom prompts
@@ -258,20 +268,16 @@ def _process_case_impl(
             publisher.publish_layer_complete(job_id, case_number, layer, success, duration_ms)
 
         # Run pipeline with streaming
-        loop = _get_or_create_event_loop()
-        try:
-            result = loop.run_until_complete(
-                orchestrator.execute(
-                    raw_text=raw_text,
-                    custom_prompts=custom_prompts if custom_prompts else None,
-                    extra_layers=extra_layers if extra_layers else None,
-                    on_token=make_token_callback(),
-                    on_layer_start=on_layer_start,
-                    on_layer_complete=on_layer_complete,
-                )
+        result = loop.run_until_complete(
+            orchestrator.execute(
+                raw_text=raw_text,
+                custom_prompts=custom_prompts if custom_prompts else None,
+                extra_layers=extra_layers if extra_layers else None,
+                on_token=make_token_callback(),
+                on_layer_start=on_layer_start,
+                on_layer_complete=on_layer_complete,
             )
-        finally:
-            loop.close()
+        )
 
         logger.info(
             "task_completed",
@@ -345,6 +351,8 @@ def _process_case_impl(
         return error_result
     finally:
         publisher.close()
+        if owns_loop:
+            loop.close()
 
 
 @celery_app.task(bind=True, name="process_case")
@@ -405,40 +413,45 @@ def process_batch(
 
     results = []
 
-    for i, case in enumerate(cases):
-        case_id = case.get("case_id", str(i + 1))
-        text = case.get("text", "")
-        case_number = case.get("case_number", i + 1)
+    # Create a single event loop for the entire batch
+    loop = _get_or_create_event_loop()
 
-        # Update case status to processing
-        db = SessionLocal()
-        try:
-            job_case = db.query(JobCase).filter(
-                JobCase.job_id == uuid.UUID(job_id),
-                JobCase.case_number == case_number,
-            ).first()
-            if job_case:
-                job_case.status = CaseStatus.PROCESSING
-                db.commit()
-        finally:
-            db.close()
+    try:
+        for i, case in enumerate(cases):
+            case_id = case.get("case_id", str(i + 1))
+            text = case.get("text", "")
+            case_number = case.get("case_number", i + 1)
 
-        # Process each case - call the function directly, not as a subtask
-        # (Celery doesn't allow calling .get() inside a task)
-        result = _process_case_impl(case_id, job_id, text, case_number)
+            # Update case status to processing
+            db = SessionLocal()
+            try:
+                job_case = db.query(JobCase).filter(
+                    JobCase.job_id == uuid.UUID(job_id),
+                    JobCase.case_number == case_number,
+                ).first()
+                if job_case:
+                    job_case.status = CaseStatus.PROCESSING
+                    db.commit()
+            finally:
+                db.close()
 
-        results.append(result)
+            # Process each case — reuse the shared event loop
+            result = _process_case_impl(case_id, job_id, text, case_number, loop=loop)
 
-        # Update progress
-        self.update_state(
-            state="PROGRESS",
-            meta={
-                "job_id": job_id,
-                "completed": i + 1,
-                "total": len(cases),
-                "current_case": case_id,
-            },
-        )
+            results.append(result)
+
+            # Update progress
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "job_id": job_id,
+                    "completed": i + 1,
+                    "total": len(cases),
+                    "current_case": case_id,
+                },
+            )
+    finally:
+        loop.close()
 
     # Determine final job status
     success_count = sum(1 for r in results if r.get("success"))
@@ -462,3 +475,4 @@ def process_batch(
         "success_count": success_count,
         "results": results,
     }
+

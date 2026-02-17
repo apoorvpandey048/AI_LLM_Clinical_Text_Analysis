@@ -33,7 +33,12 @@ services:
       - ENVIRONMENT=production
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct-q4_K_M}
-      - LLM_BACKEND=ollama
+      - LLM_BACKEND=${LLM_BACKEND:-vllm}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - LOG_LEVEL=INFO
       - API_WORKERS=4
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -49,7 +54,12 @@ services:
       - ENVIRONMENT=production
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct-q4_K_M}
-      - LLM_BACKEND=ollama
+      - LLM_BACKEND=${LLM_BACKEND:-vllm}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - LOG_LEVEL=INFO
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:

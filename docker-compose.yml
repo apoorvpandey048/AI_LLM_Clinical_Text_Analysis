@@ -25,8 +25,9 @@ services:
       - VLLM_HOST=${VLLM_HOST:-http://vllm:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - JWT_SECRET=${JWT_SECRET:-snapai-change-this-in-production-2026}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -70,13 +71,14 @@ services:
       - VLLM_HOST=${VLLM_HOST:-http://vllm:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - JWT_SECRET=${JWT_SECRET:-snapai-change-this-in-production-2026}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
     # Override healthcheck - Celery worker has no HTTP server
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>/dev/null | grep -q 'pong' || exit 1"]
+      test: [ "CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>/dev/null | grep -q 'pong' || exit 1" ]
       interval: 30s
       timeout: 15s
       start_period: 30s
@@ -121,14 +123,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: snapai-redis
-    command:
-      sh -c '
-        if [ -n "$$REDIS_PASSWORD" ]; then
-          exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 2gb --maxmemory-policy allkeys-lru;
-        else
-          exec redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru;
-        fi
-      '
+    command: sh -c ' if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 2gb --maxmemory-policy allkeys-lru; else exec redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru; fi '
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     volumes:
@@ -137,7 +132,7 @@ services:
       - snapai-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
+      test: [ "CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi" ]
       interval: 10s
       timeout: 5s
       retries: 5

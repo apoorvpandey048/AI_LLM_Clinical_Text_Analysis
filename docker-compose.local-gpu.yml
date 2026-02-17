@@ -20,7 +20,7 @@ services:
   # --- Disable Ollama (we use vLLM) ---
   ollama:
     image: busybox
-    command: ["true"]
+    command: [ "true" ]
     profiles:
       - disabled
 
@@ -33,8 +33,9 @@ services:
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
       - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - API_WORKERS=4
       - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
@@ -52,8 +53,9 @@ services:
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
       - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
@@ -75,4 +77,4 @@ services:
   redis:
     command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 2gb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping" ]

@@ -235,6 +235,9 @@ class VLLMClient(LLMClient):
 
         Returns:
             List of model names
+        
+        Raises:
+            httpx.ConnectError: if vLLM server is unreachable
         """
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -242,8 +245,11 @@ class VLLMClient(LLMClient):
                 response.raise_for_status()
                 data = response.json()
                 return [m["id"] for m in data.get("data", [])]
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            logger.error("vllm_unreachable", host=self.host, error=str(e))
+            raise
         except Exception as e:
-            logger.warning("vllm_list_models_failed", error=str(e))
+            logger.warning("vllm_list_models_failed", host=self.host, error=str(e))
             return []
 
     async def get_model_info(self) -> dict[str, Any]:
