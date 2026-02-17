@@ -175,14 +175,14 @@ class StreamSubscriber:
                     # Yield heartbeat to keep SSE alive
                     yield {"type": "heartbeat"}
 
-    except GeneratorExit:
-        # Normal: browser closed SSE connection
-        logger.debug("stream_client_disconnected", job_id=job_id)
-    except Exception as e:
-        logger.error("stream_subscribe_error", job_id=job_id, error=str(e))
-    finally:
-        try:
-            await pubsub.unsubscribe(channel_name)
-            await pubsub.close()
-        except Exception:
-            pass
+        except GeneratorExit:
+            # Normal: browser closed SSE connection
+            logger.debug("stream_client_disconnected", job_id=job_id)
+        except Exception as e:
+            logger.error("stream_subscribe_error", job_id=job_id, error=str(e))
+        finally:
+            try:
+                await pubsub.unsubscribe(channel_name)
+                await pubsub.close()
+            except Exception:
+                pass
