@@ -30,8 +30,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - ENVIRONMENT=production
-      - LLM_BACKEND=vllm
-      - VLLM_HOST=http://host.docker.internal:8000
+      - LLM_BACKEND=${LLM_BACKEND:-vllm}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
@@ -49,8 +49,8 @@ services:
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
-      - LLM_BACKEND=vllm
-      - VLLM_HOST=http://host.docker.internal:8000
+      - LLM_BACKEND=${LLM_BACKEND:-vllm}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
