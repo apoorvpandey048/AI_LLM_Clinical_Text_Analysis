@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # LLM Inference Settings
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 8192
+    llm_max_tokens: int = 4096
     llm_timeout: int = 900  # 15 minutes for large model
     llm_reasoning_level: str = "medium"  # low/medium/high for GPT-OSS-120B
 
