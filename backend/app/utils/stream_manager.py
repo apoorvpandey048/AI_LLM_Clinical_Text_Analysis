@@ -175,12 +175,14 @@ class StreamSubscriber:
                     # Yield heartbeat to keep SSE alive
                     yield {"type": "heartbeat"}
 
-        except Exception as e:
-            logger.error("stream_subscribe_error", job_id=job_id, error=str(e))
-        finally:
+    except GeneratorExit:
+        # Normal: browser closed SSE connection
+        logger.debug("stream_client_disconnected", job_id=job_id)
+    except Exception as e:
+        logger.error("stream_subscribe_error", job_id=job_id, error=str(e))
+    finally:
+        try:
             await pubsub.unsubscribe(channel_name)
             await pubsub.close()
-
-    async def close(self):
-        """Close the Redis connection."""
-        await self._redis.close()
+        except Exception:
+            pass

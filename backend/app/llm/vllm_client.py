@@ -137,6 +137,10 @@ class VLLMClient(LLMClient):
                 tokens_output=tokens_output,
                 duration_ms=duration_ms,
                 json_parsed=parsed_json is not None,
+                has_content=bool(raw_content) if "choices" in result and result["choices"] else False,
+                has_reasoning=bool(raw_reasoning) if "choices" in result and result["choices"] else False,
+                content_length=len(content),
+                finish_reason=result["choices"][0].get("finish_reason") if "choices" in result and result["choices"] else None,
             )
 
             return LLMResponse(
