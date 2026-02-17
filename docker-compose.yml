@@ -121,13 +121,23 @@ services:
   redis:
     image: redis:7-alpine
     container_name: snapai-redis
+    command:
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 2gb --maxmemory-policy allkeys-lru;
+        else
+          exec redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru;
+        fi
+      '
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     volumes:
       - redis_data:/data
     networks:
       - snapai-network
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 10s
       timeout: 5s
       retries: 5
