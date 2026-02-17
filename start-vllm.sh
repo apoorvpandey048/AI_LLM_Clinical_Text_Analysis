@@ -115,7 +115,7 @@ VLLM_ARGS=(
     "$MODEL"
     --tensor-parallel-size "$TP_SIZE"
     --max-model-len "$MAX_MODEL_LEN"
-    --gpu-memory-utilization 0.92
+    --gpu-memory-utilization 0.98
     --dtype auto
     --trust-remote-code
     --enforce-eager
