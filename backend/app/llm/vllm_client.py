@@ -102,9 +102,26 @@ class VLLMClient(LLMClient):
 
             # Extract content from chat completions response
             content = ""
+            reasoning_content = ""
             if "choices" in result and len(result["choices"]) > 0:
                 message = result["choices"][0].get("message", {})
-                content = message.get("content", "")
+                raw_content = message.get("content")
+                raw_reasoning = message.get("reasoning")
+
+                # For reasoning models (GPT-OSS), content can be null
+                # while actual output is in the reasoning field
+                content = raw_content if raw_content else ""
+                reasoning_content = raw_reasoning if raw_reasoning else ""
+
+                if not content and reasoning_content:
+                    logger.warning(
+                        "vllm_content_null_using_reasoning",
+                        model=self.model,
+                        reasoning_length=len(reasoning_content),
+                        finish_reason=result["choices"][0].get("finish_reason"),
+                    )
+                    # Try using reasoning as the content source
+                    content = reasoning_content
 
             parsed_json = self._try_parse_json(content)
 

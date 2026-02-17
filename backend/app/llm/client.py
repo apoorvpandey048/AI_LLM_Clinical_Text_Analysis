@@ -129,10 +129,13 @@ class LLMClient(ABC):
         import json
         import re
 
+        if not content:
+            return None
+
         # Try direct parse first
         try:
             return json.loads(content)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             pass
 
         # Try to extract JSON from markdown code blocks
