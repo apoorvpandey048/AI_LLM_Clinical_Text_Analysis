@@ -35,6 +35,15 @@ MODEL="${VLLM_MODEL:-openai/gpt-oss-120b}"
 MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
 QUANTIZATION="${VLLM_QUANTIZATION:-mxfp4}"
 PORT=8000
+# Configurable runtime knobs (override via env or .env)
+# - VLLM_GPU_MEMORY_UTILIZATION: fraction of GPU memory to reserve for vllm (0.0-1.0)
+# - VLLM_MAX_NUM_SEQS: optional --max-num-seqs value to reduce sampler warmup
+# - VLLM_OFFLOAD_DIR: directory for offload/cache
+# - VLLM_PYTORCH_EXPANDABLE: if "true", set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.95}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-}"
+VLLM_OFFLOAD_DIR="${VLLM_OFFLOAD_DIR:-}${SCRIPT_DIR}/.cache/vllm_offload"
+VLLM_PYTORCH_EXPANDABLE="${VLLM_PYTORCH_EXPANDABLE:-false}"
 
 # ---- HuggingFace cache ----
 # Prefer /raid (large shared storage), fallback to project dir
@@ -46,7 +55,7 @@ else
 fi
 
 # vLLM offload dir (for CPU weight offload if needed)
-OFFLOAD_DIR="${SCRIPT_DIR}/.cache/vllm_offload"
+OFFLOAD_DIR="$VLLM_OFFLOAD_DIR"
 mkdir -p "$OFFLOAD_DIR"
 
 export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN:-}"
@@ -64,6 +73,8 @@ echo "  Max context:  ${MAX_MODEL_LEN}"
 echo "  Port:         ${PORT}"
 echo "  HF cache:     ${HF_HOME}"
 echo "  Offload dir:  ${OFFLOAD_DIR}"
+echo "  GPU memory util: ${VLLM_GPU_MEMORY_UTILIZATION}"
+if [ -n "$VLLM_MAX_NUM_SEQS" ]; then echo "  Max num seqs:  ${VLLM_MAX_NUM_SEQS}"; fi
 echo "============================================"
 
 # ---- Create venv (use uv if available, else pip) ----
@@ -115,7 +126,7 @@ VLLM_ARGS=(
     "$MODEL"
     --tensor-parallel-size "$TP_SIZE"
     --max-model-len "$MAX_MODEL_LEN"
-    --gpu-memory-utilization 0.95
+    --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION"
     --dtype auto
     --trust-remote-code
     --enforce-eager
@@ -126,6 +137,17 @@ VLLM_ARGS=(
 # Add quantization if set
 if [ -n "$QUANTIZATION" ] && [ "$QUANTIZATION" != "none" ]; then
     VLLM_ARGS+=(--quantization "$QUANTIZATION")
+fi
+
+# Add optional max-num-seqs to reduce sampler warmup memory (if provided)
+if [ -n "$VLLM_MAX_NUM_SEQS" ]; then
+    VLLM_ARGS+=(--max-num-seqs "$VLLM_MAX_NUM_SEQS")
+fi
+
+# Optionally set PyTorch allocation policy to reduce fragmentation
+if [ "$VLLM_PYTORCH_EXPANDABLE" = "true" ] || [ "$VLLM_PYTORCH_EXPANDABLE" = "1" ]; then
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+    echo "Exported PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF"
 fi
 
 exec vllm serve "${VLLM_ARGS[@]}"
