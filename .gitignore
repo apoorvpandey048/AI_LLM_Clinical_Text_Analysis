@@ -34,8 +34,8 @@ env/
 *.swo
 *~
 
-# Environment variables
-.env
+# Environment variables (repo is private — .env tracked intentionally)
+# .env
 .env.local
 .env.*.local
 
