@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
-    import time
+    import asyncio
     settings = get_settings()
 
     # Wait for database to be ready (up to 30s)
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
             if attempt == 6:
                 logger.error("database_connection_failed_after_retries")
                 raise
-            time.sleep(5)
+            await asyncio.sleep(5)
 
     # Create default admin user if not exists
     try:

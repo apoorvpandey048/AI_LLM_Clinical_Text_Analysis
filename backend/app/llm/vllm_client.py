@@ -5,8 +5,9 @@ Used for production deployment with vLLM server.
 vLLM provides OpenAI-compatible API for high-performance inference.
 """
 
+import json
 import time
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 import httpx
 
@@ -73,15 +74,22 @@ class VLLMClient(LLMClient):
             messages.append({"role": "system", "content": system_prompt + reasoning_hint})
         messages.append({"role": "user", "content": prompt})
 
-        # Build request with JSON mode
+        # Build request — GPT-OSS compatibility mode
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        # Only add response_format for non-reasoning models or when we need JSON
-        if "gpt-oss" not in self.model.lower():
+
+        # GPT-OSS / vLLM: strip fields that cause HTTP 400
+        if "gpt-oss" in self.model.lower():
+            # Do NOT send response_format, tools, tool_choice — vLLM rejects them
+            payload.pop("response_format", None)
+            payload.pop("tools", None)
+            payload.pop("tool_choice", None)
+            payload.pop("parallel_tool_calls", None)
+        else:
             payload["response_format"] = {"type": "json_object"}
 
         logger.debug(
@@ -228,6 +236,190 @@ class VLLMClient(LLMClient):
         except Exception as e:
             logger.warning("vllm_health_check_failed", error=str(e))
             return False
+
+    # ------------------------------------------------------------------
+    # Streaming support (OpenAI SSE format)
+    # ------------------------------------------------------------------
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        timeout: int = 600,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
+        """
+        Generate a response with real-time token streaming via SSE.
+
+        Streams tokens from vLLM's OpenAI-compatible streaming endpoint
+        and calls on_token for each chunk.  Falls back to non-streaming
+        if the stream encounters errors.
+
+        Args:
+            prompt: The user prompt to send
+            system_prompt: Optional system prompt for context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            timeout: Request timeout in seconds
+            on_token: Async callback invoked with each token string
+
+        Returns:
+            LLMResponse with the complete result
+        """
+        start_time = time.time()
+
+        # Build messages
+        messages = []
+        if system_prompt:
+            reasoning_hint = (
+                f"\nReasoning: {self.reasoning_level}"
+                if "gpt-oss" in self.model.lower()
+                else ""
+            )
+            messages.append({"role": "system", "content": system_prompt + reasoning_hint})
+        messages.append({"role": "user", "content": prompt})
+
+        # Payload — GPT-OSS safe
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if "gpt-oss" in self.model.lower():
+            payload.pop("response_format", None)
+            payload.pop("tools", None)
+            payload.pop("tool_choice", None)
+        else:
+            payload["response_format"] = {"type": "json_object"}
+
+        logger.debug(
+            "vllm_stream_request",
+            model=self.model,
+            prompt_length=len(prompt),
+            temperature=temperature,
+        )
+
+        accumulated_content = ""
+        accumulated_reasoning = ""
+        finish_reason = None
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout, connect=30.0)
+            ) as client:
+                async with client.stream(
+                    "POST", self.chat_url, json=payload
+                ) as response:
+                    response.raise_for_status()
+
+                    async for raw_line in response.aiter_lines():
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+
+                        # SSE format: "data: {...}" or "data: [DONE]"
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+
+                        delta = choices[0].get("delta", {})
+                        token = delta.get("content") or ""
+                        reasoning_token = delta.get("reasoning") or ""
+
+                        if token:
+                            accumulated_content += token
+                            if on_token:
+                                await on_token(token)
+
+                        if reasoning_token:
+                            accumulated_reasoning += reasoning_token
+                            # Optionally stream reasoning tokens too
+                            if on_token and not token:
+                                await on_token(reasoning_token)
+
+                        fr = choices[0].get("finish_reason")
+                        if fr:
+                            finish_reason = fr
+
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # GPT-OSS: content may be null; fall back to reasoning
+            content = accumulated_content
+            if not content and accumulated_reasoning:
+                logger.warning(
+                    "vllm_stream_content_null_using_reasoning",
+                    model=self.model,
+                    reasoning_length=len(accumulated_reasoning),
+                    finish_reason=finish_reason,
+                )
+                content = accumulated_reasoning
+
+            parsed_json = self._try_parse_json(content)
+
+            logger.info(
+                "vllm_stream_response",
+                model=self.model,
+                duration_ms=duration_ms,
+                content_length=len(content),
+                json_parsed=parsed_json is not None,
+                finish_reason=finish_reason,
+            )
+
+            return LLMResponse(
+                content=content,
+                parsed_json=parsed_json,
+                tokens_input=0,  # usage not available in streaming
+                tokens_output=0,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=True,
+            )
+
+        except httpx.TimeoutException:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_msg = f"vLLM stream timed out after {timeout}s"
+            logger.error("vllm_stream_timeout", error=error_msg, duration_ms=duration_ms)
+            return LLMResponse(
+                content=accumulated_content,
+                parsed_json=None,
+                tokens_input=0,
+                tokens_output=0,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
+                error=error_msg,
+            )
+
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_msg = f"vLLM stream error: {str(e)}"
+            logger.error("vllm_stream_error", error=str(e))
+            return LLMResponse(
+                content=accumulated_content,
+                parsed_json=None,
+                tokens_input=0,
+                tokens_output=0,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
+                error=error_msg,
+            )
 
     async def list_models(self) -> list[str]:
         """
