@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"
 
     # vLLM (Production)
-    vllm_host: str = "http://vllm:8000"
+    vllm_host: str = "http://host.docker.internal:8000"
     vllm_model: str = "openai/gpt-oss-120b"
 
     # LLM Inference Settings
