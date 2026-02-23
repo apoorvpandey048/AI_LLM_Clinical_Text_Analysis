@@ -31,7 +31,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
-      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
+      - VLLM_HOST=${VLLM_HOST:-http://131.152.136.65:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
@@ -51,7 +51,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
-      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
+      - VLLM_HOST=${VLLM_HOST:-http://131.152.136.65:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
