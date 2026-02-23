@@ -767,9 +767,9 @@ function renderResults(data) {
 
     // Summary stats
     const total = results.length;
-    const completed = results.filter(r => r.status === 'completed' || r.layer3).length;
+    const completed = results.filter(r => r.status === 'completed' || r.layer3_output).length;
     const avgCci = results.reduce((acc, r) => {
-        const cci = r.layer3?.cci_score ?? r.cci_score ?? 0;
+        const cci = r.layer3_output?.cci_score ?? r.final_cci ?? 0;
         return acc + cci;
     }, 0) / (completed || 1);
 
@@ -800,12 +800,12 @@ function renderResultsTable(results) {
     }
 
     const rows = results.map((r, i) => {
-        const cci = r.layer3?.cci_score ?? r.cci_score ?? '—';
-        const verdict = r.layer3?.verdict ?? r.verdict ?? '—';
-        const complications = r.layer2?.complications ?? r.complications ?? [];
+        const cci = r.layer3_output?.cci_score ?? r.final_cci ?? '—';
+        const verdict = r.layer3_output?.verdict ?? r.final_verdict ?? '—';
+        const complications = r.layer2_output?.complications ?? [];
         const grades = complications.map(c => c.cd_grade || '?').filter(Boolean);
 
-        return `<tr class="${r.error ? 'row-error' : ''}">
+        return `<tr class="${r.error_message ? 'row-error' : ''}">
       <td>${r.case_number ?? i + 1}</td>
       <td><div class="cd-grades">${grades.length ? grades.map(g => `<span class="cd-grade-badge">${g}</span>`).join('') : '<span class="no-grades">None</span>'}</div></td>
       <td class="cci-value">${cci}</td>
@@ -830,8 +830,8 @@ function renderResultsCards(results) {
     const container = document.getElementById('case-results');
     container.innerHTML = results.map((r, i) => {
         const caseNum = r.case_number ?? i + 1;
-        const verdict = r.layer3?.verdict ?? r.verdict ?? '—';
-        const cci = r.layer3?.cci_score ?? r.cci_score ?? '—';
+        const verdict = r.layer3_output?.verdict ?? r.final_verdict ?? '—';
+        const cci = r.layer3_output?.cci_score ?? r.final_cci ?? '—';
 
         // Check if we have raw outputs (from server or client-side streaming history)
         const hasRawOutput = r.layer1_raw_output || r.layer2_raw_output || r.layer3_raw_output
@@ -868,7 +868,7 @@ function renderResultsCards(results) {
             : '';
 
         return `
-      <div class="case-result-card ${r.error ? 'has-error' : ''}">
+      <div class="case-result-card ${r.error_message ? 'has-error' : ''}">
         <div class="case-result-header" onclick="toggleResult(${i})">
           <span><strong>Case #${caseNum}</strong></span>
           <div class="case-result-badges">
@@ -877,7 +877,7 @@ function renderResultsCards(results) {
           </div>
         </div>
         <div class="case-result-body" id="case-result-body-${i}">
-          ${r.error ? `<div class="error-message">${escapeHtml(r.error)}</div>` : ''}
+          ${r.error_message ? `<div class="error-message">${escapeHtml(r.error_message)}</div>` : ''}
           
           <div class="result-tabs">
             <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">Parsed JSON</button>
@@ -885,10 +885,22 @@ function renderResultsCards(results) {
           </div>
           
           <div class="result-tab-content" id="result-tab-json-${i}">
-            <details class="json-details" open>
-              <summary>Layer Outputs</summary>
+            ${r.layer1_output ? `<details class="json-details" open>
+              <summary>Layer 1: CTP — Clinical Text Pre-Processor</summary>
+              <pre class="json-tree">${syntaxHighlightJSON(r.layer1_output)}</pre>
+            </details>` : ''}
+            ${r.layer2_output ? `<details class="json-details" open>
+              <summary>Layer 2: CIE — Complication Info Extraction</summary>
+              <pre class="json-tree">${syntaxHighlightJSON(r.layer2_output)}</pre>
+            </details>` : ''}
+            ${r.layer3_output ? `<details class="json-details" open>
+              <summary>Layer 3: CCC — CCI Calculation &amp; Cross-Check</summary>
+              <pre class="json-tree">${syntaxHighlightJSON(r.layer3_output)}</pre>
+            </details>` : ''}
+            ${(!r.layer1_output && !r.layer2_output && !r.layer3_output) ? `<details class="json-details" open>
+              <summary>Full Result</summary>
               <pre class="json-tree">${syntaxHighlightJSON(r)}</pre>
-            </details>
+            </details>` : ''}
             ${extraJsonHtml}
           </div>
           
