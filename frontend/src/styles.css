@@ -398,6 +398,28 @@ p {
   height: 14px;
 }
 
+.btn-xs {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-copy {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  margin-left: 8px;
+  transition: all 0.15s;
+  vertical-align: middle;
+}
+
+.btn-copy:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--text-primary);
+  border-color: var(--primary);
+}
+
 .btn-ghost {
   background: transparent;
   color: white;

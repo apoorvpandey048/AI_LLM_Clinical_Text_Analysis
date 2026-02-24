@@ -36,7 +36,7 @@ celery_app.conf.update(
     
     # Worker settings
     worker_prefetch_multiplier=1,  # Process one task at a time (LLM is heavy)
-    worker_concurrency=2,  # 2 concurrent workers
+    worker_concurrency=1,  # Sequential processing for deterministic inference
     
     # Task time limits (must exceed LLM timeout of 900s)
     task_soft_time_limit=1200,  # 20 minutes soft limit

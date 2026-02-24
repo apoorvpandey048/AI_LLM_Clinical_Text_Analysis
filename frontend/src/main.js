@@ -833,22 +833,34 @@ function renderResultsCards(results) {
         const verdict = r.layer3_output?.verdict ?? r.final_verdict ?? '—';
         const cci = r.layer3_output?.cci_score ?? r.final_cci ?? '—';
 
-        // Check if we have raw outputs (from server or client-side streaming history)
-        const hasRawOutput = r.layer1_raw_output || r.layer2_raw_output || r.layer3_raw_output
-            || state.streamingHistory[caseNum];
+        // Always use server-persisted outputs — never depend on streaming buffers
+        const l1Output = r.layer1_output ?? {};
+        const l2Output = r.layer2_output ?? {};
+        const l3Output = r.layer3_output ?? {};
+        const rawL1 = r.layer1_raw_output ?? '';
+        const rawL2 = r.layer2_raw_output ?? '';
+        const rawL3 = r.layer3_raw_output ?? '';
 
-        const streamingData = state.streamingHistory[caseNum] || {};
-        const rawL1 = r.layer1_raw_output || streamingData.layer1_ctp || '';
-        const rawL2 = r.layer2_raw_output || streamingData.layer2_cie || '';
-        const rawL3 = r.layer3_raw_output || streamingData.layer3_ccc || '';
-
-        // Build extra layer outputs HTML
+        // Build extra layer outputs
         const extraOutputs = r.extra_layer_outputs || {};
         const extraRawOutputs = r.extra_layer_raw_outputs || {};
-        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs), ...Object.keys(streamingData).filter(k => !BUILTIN_LAYERS.includes(k))])];
+        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs)])];
+
+        const extraParsedSections = allExtraKeys.map(key => {
+            const data = extraOutputs[key] ?? {};
+            const label = LAYERS[key]?.label || key;
+            return `
+              <details class="json-details" open>
+                <summary>
+                  ${escapeHtml(label)}
+                  <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].extra_layer_outputs?.['${key}'] ?? {})">Copy JSON</button>
+                </summary>
+                <pre class="json-tree">${syntaxHighlightJSON(data)}</pre>
+              </details>`;
+        }).join('');
 
         const extraRawSections = allExtraKeys.map(key => {
-            const rawContent = extraRawOutputs[key] || streamingData[key] || '';
+            const rawContent = extraRawOutputs[key] || '';
             const label = LAYERS[key]?.label || key;
             return `
               <div class="raw-output-section">
@@ -859,13 +871,6 @@ function renderResultsCards(results) {
                 <pre class="raw-output-text" id="raw-${key}-${i}">${escapeHtml(rawContent) || '<em>No output captured</em>'}</pre>
               </div>`;
         }).join('');
-
-        const hasExtraRaw = allExtraKeys.length > 0;
-
-        // Extra layer parsed JSON details
-        const extraJsonHtml = allExtraKeys.length > 0
-            ? `<details class="json-details"><summary>Custom Layer Outputs</summary><pre class="json-tree">${syntaxHighlightJSON(extraOutputs)}</pre></details>`
-            : '';
 
         return `
       <div class="case-result-card ${r.error_message ? 'has-error' : ''}">
@@ -881,30 +886,55 @@ function renderResultsCards(results) {
           
           <div class="result-tabs">
             <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">Parsed JSON</button>
-            ${(hasRawOutput || hasExtraRaw) ? `<button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>` : ''}
+            <button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>
           </div>
           
           <div class="result-tab-content" id="result-tab-json-${i}">
-            ${r.layer1_output ? `<details class="json-details" open>
-              <summary>Layer 1: CTP — Clinical Text Pre-Processor</summary>
-              <pre class="json-tree">${syntaxHighlightJSON(r.layer1_output)}</pre>
-            </details>` : ''}
-            ${r.layer2_output ? `<details class="json-details" open>
-              <summary>Layer 2: CIE — Complication Info Extraction</summary>
-              <pre class="json-tree">${syntaxHighlightJSON(r.layer2_output)}</pre>
-            </details>` : ''}
-            ${r.layer3_output ? `<details class="json-details" open>
-              <summary>Layer 3: CCC — CCI Calculation &amp; Cross-Check</summary>
-              <pre class="json-tree">${syntaxHighlightJSON(r.layer3_output)}</pre>
-            </details>` : ''}
-            ${(!r.layer1_output && !r.layer2_output && !r.layer3_output) ? `<details class="json-details" open>
-              <summary>Full Result</summary>
-              <pre class="json-tree">${syntaxHighlightJSON(r)}</pre>
-            </details>` : ''}
-            ${extraJsonHtml}
+            <details class="json-details" open>
+              <summary>
+                Layer 1: CTP — Clinical Text Pre-Processor
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_output ?? {})">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(l1Output)}</pre>
+            </details>
+            <details class="json-details" open>
+              <summary>
+                Layer 2: CIE — Complication Info Extraction
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_output ?? {})">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(l2Output)}</pre>
+            </details>
+            <details class="json-details" open>
+              <summary>
+                Layer 3: CCC — CCI Calculation &amp; Cross-Check
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_output ?? {})">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(l3Output)}</pre>
+            </details>
+            <details class="json-details">
+              <summary>
+                Layer 1: Raw Output
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_raw_output ?? '')">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(rawL1)}</pre>
+            </details>
+            <details class="json-details">
+              <summary>
+                Layer 2: Raw Output
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_raw_output ?? '')">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(rawL2)}</pre>
+            </details>
+            <details class="json-details">
+              <summary>
+                Layer 3: Raw Output
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_raw_output ?? '')">Copy JSON</button>
+              </summary>
+              <pre class="json-tree">${syntaxHighlightJSON(rawL3)}</pre>
+            </details>
+            ${extraParsedSections}
           </div>
           
-          ${(hasRawOutput || hasExtraRaw) ? `
           <div class="result-tab-content hidden" id="result-tab-raw-${i}">
             <div class="raw-output-container">
               <div class="raw-output-section">
@@ -931,11 +961,13 @@ function renderResultsCards(results) {
               ${extraRawSections}
             </div>
           </div>
-          ` : ''}
         </div>
       </div>
     `;
     }).join('');
+
+    // Store result data on window for copy buttons to access
+    window._resultData = results;
 }
 
 function switchResultTab(index, tab) {
@@ -960,6 +992,18 @@ function copyRawOutput(index, layer) {
             showToast('Failed to copy', 'error');
         });
     }
+}
+
+/**
+ * Copy any object or string to clipboard as formatted JSON.
+ */
+function copyToClipboard(obj) {
+    const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard', 'success');
+    }).catch(() => {
+        showToast('Failed to copy', 'error');
+    });
 }
 
 function switchView(view) {
@@ -2361,6 +2405,7 @@ window.resetPrompt = resetPrompt;
 window.toggleResult = toggleResult;
 window.switchResultTab = switchResultTab;
 window.copyRawOutput = copyRawOutput;
+window.copyToClipboard = copyToClipboard;
 window.clearFile = clearFile;
 window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;

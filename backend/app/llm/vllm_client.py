@@ -79,6 +79,7 @@ class VLLMClient(LLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "top_p": 1,
             "max_tokens": max_tokens,
         }
 
@@ -286,6 +287,7 @@ class VLLMClient(LLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "top_p": 1,
             "max_tokens": max_tokens,
             "stream": True,
         }

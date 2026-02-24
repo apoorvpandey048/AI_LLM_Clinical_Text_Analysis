@@ -47,7 +47,7 @@ services:
   worker:
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
