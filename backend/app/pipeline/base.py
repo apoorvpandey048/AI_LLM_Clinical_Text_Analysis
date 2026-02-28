@@ -150,6 +150,7 @@ class BaseLayer(ABC):
         self,
         custom_prompt: str | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
+        temperature_override: float | None = None,
         **kwargs,
     ) -> LayerResult:
         """
@@ -158,12 +159,16 @@ class BaseLayer(ABC):
         Args:
             custom_prompt: Optional custom prompt to use instead of file
             on_token: Optional async callback for each generated token
+            temperature_override: If set, overrides settings temperature (for per-case dynamic control)
             **kwargs: Layer-specific input data
 
         Returns:
             LayerResult with the execution result
         """
-        logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None)
+        # Resolve temperature: per-case override > settings default
+        effective_temperature = temperature_override if temperature_override is not None else self.settings.llm_temperature
+
+        logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None, temperature=effective_temperature)
 
         try:
             # Load system prompt (custom or file)
@@ -177,7 +182,7 @@ class BaseLayer(ABC):
                 response: LLMResponse = await self.llm_client.generate_stream(
                     prompt=user_prompt,
                     system_prompt=system_prompt,
-                    temperature=self.settings.llm_temperature,
+                    temperature=effective_temperature,
                     max_tokens=self.settings.llm_max_tokens,
                     timeout=self.settings.llm_timeout,
                     on_token=on_token,
@@ -186,7 +191,7 @@ class BaseLayer(ABC):
                 response: LLMResponse = await self.llm_client.generate(
                     prompt=user_prompt,
                     system_prompt=system_prompt,
-                    temperature=self.settings.llm_temperature,
+                    temperature=effective_temperature,
                     max_tokens=self.settings.llm_max_tokens,
                     timeout=self.settings.llm_timeout,
                 )

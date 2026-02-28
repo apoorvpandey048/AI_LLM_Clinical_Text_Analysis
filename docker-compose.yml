@@ -54,7 +54,7 @@ services:
     container_name: snapai-worker
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}

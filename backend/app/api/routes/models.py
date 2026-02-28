@@ -9,7 +9,10 @@ import asyncio
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
+
+from app.api.routes.auth import require_auth, require_admin
+from app.db.models import User
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -58,7 +61,7 @@ class DeleteModelRequest(BaseModel):
 
 
 @router.get("")
-async def list_models(request: Request):
+async def list_models(request: Request, user: User = Depends(require_auth)):
     """
     List all available models. Supports both Ollama and vLLM backends.
     """
@@ -97,7 +100,7 @@ async def list_models(request: Request):
 
 
 @router.get("/active")
-async def get_active_model(request: Request):
+async def get_active_model(request: Request, user: User = Depends(require_auth)):
     """Get the currently active model."""
     request_id = getattr(request.state, "request_id", None)
 
@@ -116,7 +119,7 @@ async def get_active_model(request: Request):
 
 
 @router.put("/active")
-async def set_active_model(body: SetActiveModelRequest, request: Request):
+async def set_active_model(body: SetActiveModelRequest, request: Request, admin: User = Depends(require_admin)):
     """
     Set the active model for processing. Works with both Ollama and vLLM.
     """
@@ -157,6 +160,17 @@ async def set_active_model(body: SetActiveModelRequest, request: Request):
         request_id=request_id,
     )
 
+    # Audit log
+    from app.db import get_db, AuditLog
+    db = next(get_db())
+    audit = AuditLog(
+        action="model_activated",
+        details={"model": body.model, "admin": admin.username},
+    )
+    db.add(audit)
+    db.commit()
+    db.close()
+
     return create_response(
         success=True,
         data={
@@ -168,7 +182,7 @@ async def set_active_model(body: SetActiveModelRequest, request: Request):
 
 
 @router.post("/pull")
-async def pull_model(body: PullModelRequest, request: Request):
+async def pull_model(body: PullModelRequest, request: Request, admin: User = Depends(require_admin)):
     """
     Pull a model from the Ollama registry with SSE progress streaming.
 
@@ -232,7 +246,7 @@ async def pull_model(body: PullModelRequest, request: Request):
 
 
 @router.delete("")
-async def delete_model(body: DeleteModelRequest, request: Request):
+async def delete_model(body: DeleteModelRequest, request: Request, admin: User = Depends(require_admin)):
     """
     Delete a model from Ollama.
 
@@ -277,6 +291,17 @@ async def delete_model(body: DeleteModelRequest, request: Request):
         request_id=request_id,
     )
 
+    # Audit log
+    from app.db import get_db, AuditLog
+    db = next(get_db())
+    audit = AuditLog(
+        action="model_deleted",
+        details={"model": body.model, "admin": admin.username},
+    )
+    db.add(audit)
+    db.commit()
+    db.close()
+
     return create_response(
         success=True,
         data={
@@ -288,7 +313,7 @@ async def delete_model(body: DeleteModelRequest, request: Request):
 
 
 @router.get("/{model_name}/info")
-async def get_model_info(model_name: str, request: Request):
+async def get_model_info(model_name: str, request: Request, user: User = Depends(require_auth)):
     """Get detailed info about a specific model."""
     request_id = getattr(request.state, "request_id", None)
 

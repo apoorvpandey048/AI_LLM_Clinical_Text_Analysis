@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, HTTPException
+
+from app.api.routes.auth import require_auth, require_admin
+from app.db.models import User
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
@@ -146,6 +149,7 @@ class PromptImportRequest(BaseModel):
 async def list_prompts(
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     List all prompt layers (built-in + custom) with their current prompt.
@@ -236,6 +240,7 @@ async def list_prompts(
 async def list_layers(
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     List all available layer names with metadata (for streaming/pipeline/frontend use).
@@ -288,6 +293,7 @@ async def list_layers(
 async def export_prompts(
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """Export all prompts (built-in + custom) as JSON."""
     request_id = getattr(request.state, "request_id", None)
@@ -346,15 +352,25 @@ async def import_prompts(
     body: PromptImportRequest,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Import prompts from JSON. Creates or updates layers."""
     request_id = getattr(request.state, "request_id", None)
+
+    # Size limits
+    if len(body.prompts) > 20:
+        raise HTTPException(status_code=400, detail="Import limited to 20 prompts maximum")
 
     imported = []
     for layer_name, prompt_data in body.prompts.items():
         content = prompt_data.get("content")
         if not content or len(content) < 10:
             continue
+        if len(content) > 100_000:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Prompt '{layer_name}' exceeds 100KB content limit",
+            )
 
         is_builtin = prompt_data.get("is_builtin", layer_name in BUILTIN_LAYERS)
 
@@ -383,6 +399,15 @@ async def import_prompts(
 
     db.commit()
 
+    # Audit log
+    from app.db import AuditLog
+    audit = AuditLog(
+        action="prompts_imported",
+        details={"imported_layers": imported, "admin": admin.username},
+    )
+    db.add(audit)
+    db.commit()
+
     logger.info("prompts_imported", imported_layers=imported, request_id=request_id)
 
     return create_response(
@@ -400,6 +425,7 @@ async def create_custom_layer(
     body: CreateLayerRequest,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """
     Create a new custom pipeline layer.
@@ -473,6 +499,7 @@ async def get_prompt(
     layer_name: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """Get the current prompt for a specific layer."""
     request_id = getattr(request.state, "request_id", None)
@@ -527,6 +554,7 @@ async def update_prompt(
     body: PromptUpdateRequest,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Save or update a prompt for a layer. Creates version history."""
     request_id = getattr(request.state, "request_id", None)
@@ -615,6 +643,7 @@ async def delete_custom_layer(
     layer_name: str,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Delete a custom layer. Built-in layers cannot be deleted."""
     request_id = getattr(request.state, "request_id", None)
@@ -651,6 +680,7 @@ async def reset_prompt(
     layer_name: str,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Reset a layer's prompt to the default."""
     request_id = getattr(request.state, "request_id", None)
@@ -688,6 +718,7 @@ async def get_prompt_history(
     layer_name: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """Get version history for a layer's prompt (up to last 10)."""
     request_id = getattr(request.state, "request_id", None)
@@ -758,6 +789,7 @@ async def set_active_version(
     body: SetVersionRequest,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """
     Set which version of a prompt to use for this layer.
@@ -826,6 +858,7 @@ async def set_as_default(
     body: SetDefaultRequest,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Mark the current prompt as the default for this layer."""
     request_id = getattr(request.state, "request_id", None)
@@ -860,6 +893,7 @@ async def rollback_prompt(
     version_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
 ):
     """Rollback a layer's prompt to a previous version (copies version content into current)."""
     request_id = getattr(request.state, "request_id", None)

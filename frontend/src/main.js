@@ -186,6 +186,12 @@ function showToast(message, type = 'info') {
 // ============================================
 
 function switchPage(page) {
+    // Role guard: block non-admin from admin page
+    if (page === 'admin' && authState.user?.role !== 'admin') {
+        showToast('Admin access required', 'warning');
+        return;
+    }
+
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
@@ -439,6 +445,22 @@ function connectSSE(jobId) {
         showToast('Processing complete!', 'success');
     });
 
+    state.eventSource.addEventListener('job_failed', (e) => {
+        // Backend explicitly signals job failure — exit processing immediately
+        closeStream();
+        statusEl.classList.remove('streaming');
+        statusEl.innerHTML = '<span class="live-dot error"></span> Failed';
+        state.isProcessing = false;
+        state.currentJobId = null;
+        updateProcessButton();
+        try {
+            const data = JSON.parse(e.data);
+            showProcessingError(data.error || 'Pipeline failed', data);
+        } catch {
+            showProcessingError('Pipeline failed — check server logs');
+        }
+    });
+
     state.eventSource.addEventListener('error', () => {
         // SSE can auto-reconnect; only treat as fatal if readyState is CLOSED
         if (state.eventSource && state.eventSource.readyState === EventSource.CLOSED) {
@@ -484,7 +506,7 @@ function updateConnectionStatus(status) {
         indicator.className = `connection-indicator ${status}`;
         indicator.title = status === 'connected' ? 'Connected to server'
             : status === 'reconnecting' ? 'Reconnecting...'
-            : 'Disconnected - Using polling';
+                : 'Disconnected - Using polling';
     }
 }
 
@@ -894,6 +916,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 1: CTP — Clinical Text Pre-Processor
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_output ?? {})">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_output ?? {}, 'case${r.case_number ?? i + 1}_layer1_ctp.json')">Download JSON</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(l1Output)}</pre>
             </details>
@@ -901,6 +924,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 2: CIE — Complication Info Extraction
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_output ?? {})">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_output ?? {}, 'case${r.case_number ?? i + 1}_layer2_cie.json')">Download JSON</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(l2Output)}</pre>
             </details>
@@ -908,6 +932,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 3: CCC — CCI Calculation &amp; Cross-Check
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_output ?? {})">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_output ?? {}, 'case${r.case_number ?? i + 1}_layer3_ccc.json')">Download JSON</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(l3Output)}</pre>
             </details>
@@ -915,6 +940,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 1: Raw Output
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_raw_output ?? '')">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer1_raw.txt')">Download</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(rawL1)}</pre>
             </details>
@@ -922,6 +948,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 2: Raw Output
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_raw_output ?? '')">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer2_raw.txt')">Download</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(rawL2)}</pre>
             </details>
@@ -929,6 +956,7 @@ function renderResultsCards(results) {
               <summary>
                 Layer 3: Raw Output
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_raw_output ?? '')">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer3_raw.txt')">Download</button>
               </summary>
               <pre class="json-tree">${syntaxHighlightJSON(rawL3)}</pre>
             </details>
@@ -1004,6 +1032,20 @@ function copyToClipboard(obj) {
     }).catch(() => {
         showToast('Failed to copy', 'error');
     });
+}
+
+function downloadJSON(obj, filename) {
+    const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'output.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Downloaded ${filename}`, 'success');
 }
 
 function switchView(view) {
@@ -1384,7 +1426,7 @@ function renderModelPullDropdown() {
         return;
     }
 
-    const options = unpulledModels.map(m => 
+    const options = unpulledModels.map(m =>
         `<option value="${m.name}">${m.name} — ${m.desc.split('—')[1]?.trim() || ''}</option>`
     ).join('');
 
@@ -1540,7 +1582,10 @@ function renderDynamicPromptTabs() {
     layerKeys.forEach(key => {
         const layer = LAYERS[key];
         const isActive = key === state.activePromptLayer;
-        html += `<button class="prompt-tab ${isActive ? 'active' : ''}" data-layer="${key}" onclick="switchPromptTab('${key}')">${layer.shortLabel || key}</button>`;
+        const deleteBtn = (!layer.is_builtin && authState.user?.role === 'admin')
+            ? `<span class="tab-delete-btn" onclick="event.stopPropagation(); deleteCustomLayer('${key}')" title="Delete layer">&times;</span>`
+            : '';
+        html += `<button class="prompt-tab ${isActive ? 'active' : ''}" data-layer="${key}" onclick="switchPromptTab('${key}')">${layer.shortLabel || key}${deleteBtn}</button>`;
     });
 
     // "Add Layer" button
@@ -1686,6 +1731,9 @@ function switchPromptTab(layer) {
     } else {
         loadPrompt(layer);
     }
+
+    // Load version history for this layer
+    loadVersionHistory(layer);
 }
 
 async function loadAllPrompts() {
@@ -1778,8 +1826,9 @@ async function loadPrompt(layer) {
 
         state.promptData[layer] = promptInfo;
         displayPromptData(layer, promptInfo);
-    } catch {
-        editor.value = 'Failed to load prompt template.\n\nMake sure the backend is running and accessible.';
+    } catch (err) {
+        const msg = err?.message || 'Unknown error';
+        editor.value = `Failed to load prompt template.\n\nError: ${msg}\n\nIf you just logged in, try refreshing the page.`;
         editor.disabled = false;
     }
 }
@@ -1818,6 +1867,9 @@ async function savePrompt() {
             badge.textContent = `Custom v${prompt.version || 1}`;
             badge.className = 'prompt-source-badge custom';
 
+            // Refresh version history after save
+            loadVersionHistory(layer);
+
             showToast(`Prompt for ${LAYERS[layer]?.shortLabel || layer} saved`, 'success');
         } else {
             const err = await res.json().catch(() => ({}));
@@ -1845,6 +1897,103 @@ async function resetPrompt() {
     }
 }
 
+// deleteCustomLayer is defined once below (merged definition)
+
+// ============================================
+// Version History + Rollback
+// ============================================
+
+async function loadVersionHistory(layerName) {
+    const panel = document.getElementById('version-history-panel');
+    if (!panel) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/prompts/${layerName}/history`);
+        if (!res.ok) { panel.innerHTML = '<p class="text-muted">No version history available.</p>'; return; }
+        const json = await res.json();
+        const data = json.data || json;
+        const versions = data.versions || [];
+
+        if (versions.length === 0) {
+            panel.innerHTML = '<p class="text-muted">No previous versions.</p>';
+            return;
+        }
+
+        const activeVersionId = data.active_version_id || 'current';
+
+        let html = '<div class="version-list">';
+        versions.forEach(v => {
+            const isCurrent = v.id === 'current';
+            const isActive = v.id === activeVersionId;
+            const date = v.created_at ? new Date(v.created_at).toLocaleString() : 'Current';
+            const label = v.version_label || v.version || (isCurrent ? 'Current' : '?');
+            const preview = (v.content || '').substring(0, 80).replace(/</g, '&lt;');
+            html += `
+                <div class="version-item ${isActive ? 'active-version' : ''}">
+                    <div class="version-header">
+                        <span class="version-label">${escapeHtml(label)}</span>
+                        <span class="version-date">${date}</span>
+                        ${isActive ? '<span class="version-active-badge">Active</span>' : ''}
+                    </div>
+                    <div class="version-preview">${escapeHtml(preview)}...</div>
+                    <div class="version-actions">
+                        ${isCurrent
+                            ? (isActive ? '<span class="text-muted">Currently active</span>'
+                                        : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', null)">Use Current</button>`)
+                            : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', '${v.id}')">Use This</button>
+                               <button class="btn btn-xs btn-outline" onclick="rollbackToVersion('${layerName}', '${v.id}')">Rollback</button>`
+                        }
+                    </div>
+                </div>`;
+        });
+        html += '</div>';
+        panel.innerHTML = html;
+    } catch {
+        panel.innerHTML = '<p class="text-muted">Failed to load history.</p>';
+    }
+}
+
+async function setActiveVersion(layerName, versionId) {
+    try {
+        const res = await authFetch(`${API_BASE}/prompts/${layerName}/set-version`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version_id: versionId }),
+        });
+        if (res.ok) {
+            showToast(versionId ? 'Switched to selected version' : 'Switched to latest version', 'success');
+            delete state.promptData[layerName];
+            await loadPrompt(layerName);
+            loadVersionHistory(layerName);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Failed: ${extractErrorMessage(err)}`, 'error');
+        }
+    } catch (err) {
+        showToast(`Version switch failed: ${err.message}`, 'error');
+    }
+}
+
+async function rollbackToVersion(layerName, versionId) {
+    if (!confirm('Rollback will copy this version\'s content as the new current prompt. Continue?')) return;
+    try {
+        const res = await authFetch(`${API_BASE}/prompts/${layerName}/rollback/${versionId}`, {
+            method: 'POST',
+        });
+        if (res.ok) {
+            showToast('Rolled back successfully', 'success');
+            delete state.promptData[layerName];
+            await loadPrompt(layerName);
+            loadVersionHistory(layerName);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Rollback failed: ${extractErrorMessage(err)}`, 'error');
+        }
+    } catch (err) {
+        showToast(`Rollback failed: ${err.message}`, 'error');
+    }
+}
+
 function updateCharCount() {
     const editor = document.getElementById('prompt-editor');
     const charCount = document.getElementById('prompt-char-count');
@@ -1863,7 +2012,7 @@ async function loadSystemInfo() {
         // Fetch comprehensive system info
         const res = await authFetch(`${API_BASE}/system/info`);
         if (!res.ok) throw new Error('Failed to load system info');
-        
+
         const json = await res.json();
         const data = json.data || json;
 
@@ -1873,6 +2022,9 @@ async function loadSystemInfo() {
         const isConnected = data.llm_connected;
         const statusClass = isConnected ? 'sys-info-connected' : 'sys-info-disconnected';
         const statusText = isConnected ? 'Connected' : 'Disconnected';
+        const temperature = data.temperature ?? 0.0;
+        const promptVersion = data.prompt_version || '—';
+        const modelVersion = data.model_version || data.active_model || '—';
 
         bar.innerHTML = `
             <div class="sys-info-item" id="connection-status-indicator" title="Connection status">
@@ -1885,6 +2037,17 @@ async function loadSystemInfo() {
             <div class="sys-info-item">
                 <span class="sys-info-label">Model:</span>
                 <span class="sys-info-value" id="sys-info-model">${activeModel}</span>
+            </div>
+            <div class="sys-info-item">
+                <span class="sys-info-label">Temp:</span>
+                <input type="number" class="sys-info-temp-input" id="sys-info-temp"
+                       value="${temperature}" min="0" max="2" step="0.1"
+                       title="LLM Temperature (0.0 = deterministic)"
+                       onchange="updateTemperature(this.value)">
+            </div>
+            <div class="sys-info-item">
+                <span class="sys-info-label">Prompt:</span>
+                <span class="sys-info-value" title="Prompt version">${promptVersion}</span>
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Workers:</span>
@@ -1931,6 +2094,29 @@ function updateSystemInfoModel(model) {
     if (el) el.textContent = model;
 }
 
+async function updateTemperature(value) {
+    const temp = parseFloat(value);
+    if (isNaN(temp) || temp < 0 || temp > 2) {
+        showToast('Temperature must be 0.0 – 2.0', 'warning');
+        return;
+    }
+    try {
+        const res = await authFetch(`${API_BASE}/system/temperature`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ temperature: temp }),
+        });
+        if (res.ok) {
+            showToast(`Temperature set to ${temp}`, 'success');
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Failed: ${extractErrorMessage(err)}`, 'error');
+        }
+    } catch (err) {
+        showToast(`Temperature update failed: ${err.message}`, 'error');
+    }
+}
+
 // ============================================
 // Utilities
 // ============================================
@@ -1957,8 +2143,9 @@ function extractErrorMessage(err) {
     // Standard error object
     if (err.message) return err.message;
 
-    // Error with status
-    if (err.error) return err.error;
+    // Error with nested error object (middleware format: {error: {code, message}})
+    if (err.error && typeof err.error === 'object') return err.error.message || err.error.code || JSON.stringify(err.error);
+    if (err.error && typeof err.error === 'string') return err.error;
 
     // Fallback to JSON
     try {
@@ -2048,12 +2235,29 @@ async function importPrompts() {
         const file = e.target.files[0];
         if (!file) return;
 
+        // File size limit: 5MB
+        if (file.size > 5 * 1024 * 1024) {
+            showToast('Import file too large (max 5MB)', 'error');
+            return;
+        }
+
         try {
             const text = await file.text();
             const data = JSON.parse(text);
 
-            if (!data.prompts) {
-                throw new Error('Invalid prompt file format');
+            if (!data.prompts || typeof data.prompts !== 'object' || Array.isArray(data.prompts)) {
+                throw new Error('Invalid format: expected { "prompts": { layerName: { content: "..." } } }');
+            }
+
+            // Validate individual prompts
+            const entries = Object.entries(data.prompts);
+            if (entries.length > 20) {
+                throw new Error(`Too many prompts (${entries.length}). Maximum is 20.`);
+            }
+            for (const [name, prompt] of entries) {
+                if (!prompt.content || typeof prompt.content !== 'string' || prompt.content.length < 10) {
+                    throw new Error(`Prompt "${name}" has missing or too-short content (min 10 chars)`);
+                }
             }
 
             const res = await authFetch(`${API_BASE}/prompts/import`, {
@@ -2084,9 +2288,14 @@ async function importPrompts() {
 // Delete Custom Layer
 // ============================================
 
-async function deleteCustomLayer() {
-    const layer = state.activePromptLayer;
-    if (BUILTIN_LAYERS.includes(layer)) {
+/**
+ * Delete a custom (non-builtin) layer.
+ * Can be called with an explicit layerName (from the tab × button)
+ * or without arguments (from the dedicated delete button — uses active layer).
+ */
+async function deleteCustomLayer(layerName) {
+    const layer = layerName || state.activePromptLayer;
+    if (BUILTIN_LAYERS.includes(layer) || LAYERS[layer]?.is_builtin) {
         showToast('Cannot delete built-in layers', 'warning');
         return;
     }
@@ -2099,7 +2308,7 @@ async function deleteCustomLayer() {
             throw new Error(extractErrorMessage(err));
         }
 
-        showToast(`Layer "${layer}" deleted`, 'info');
+        showToast(`Layer "${LAYERS[layer]?.label || layer}" deleted`, 'info');
         delete state.promptData[layer];
 
         // Reload layers and switch to first layer
@@ -2186,6 +2395,13 @@ async function handleLogin(e) {
         hideAuthOverlay();
         initApp();
         showToast(`Welcome, ${authState.user.name}!`, 'success');
+
+        // Remove admin functions from window for non-admin users
+        if (authState.user.role !== 'admin') {
+            delete window.approveUser;
+            delete window.rejectUser;
+            delete window.loadAdminUsers;
+        }
     } catch (err) {
         errorEl.textContent = err.message;
         errorEl.classList.remove('hidden');
@@ -2406,6 +2622,8 @@ window.toggleResult = toggleResult;
 window.switchResultTab = switchResultTab;
 window.copyRawOutput = copyRawOutput;
 window.copyToClipboard = copyToClipboard;
+window.downloadJSON = downloadJSON;
+window.updateTemperature = updateTemperature;
 window.clearFile = clearFile;
 window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;
@@ -2421,6 +2639,9 @@ window.importPrompts = importPrompts;
 window.showCreateLayerModal = showCreateLayerModal;
 window.createCustomLayer = createCustomLayer;
 window.deleteCustomLayer = deleteCustomLayer;
+window.setActiveVersion = setActiveVersion;
+window.rollbackToVersion = rollbackToVersion;
+window.loadVersionHistory = loadVersionHistory;
 window.loadLayers = loadLayers;
 // Auth
 window.handleLogin = handleLogin;

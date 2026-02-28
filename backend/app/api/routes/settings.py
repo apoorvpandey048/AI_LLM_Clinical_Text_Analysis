@@ -9,6 +9,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_auth, require_admin
+from app.db.models import User
+
 from app.db import get_db
 from app.api.schemas import RetentionSettings
 from app.utils import get_logger
@@ -35,7 +38,7 @@ def create_response(success: bool, data=None, error=None, request_id=None):
 
 
 @router.get("/retention")
-async def get_retention_settings(request: Request):
+async def get_retention_settings(request: Request, user: User = Depends(require_auth)):
     """
     Get current auto-delete retention settings.
 
@@ -59,6 +62,7 @@ async def get_retention_settings(request: Request):
 async def update_retention_settings(
     settings: RetentionSettings,
     request: Request,
+    admin: User = Depends(require_admin),
 ):
     """
     Update auto-delete retention settings.
@@ -78,6 +82,17 @@ async def update_retention_settings(
         enabled=settings.enabled,
         days=settings.days,
     )
+
+    # Audit log
+    from app.db import get_db, AuditLog
+    db = next(get_db())
+    audit = AuditLog(
+        action="retention_settings_changed",
+        details={"enabled": settings.enabled, "days": settings.days, "admin": admin.username},
+    )
+    db.add(audit)
+    db.commit()
+    db.close()
 
     return create_response(
         success=True,

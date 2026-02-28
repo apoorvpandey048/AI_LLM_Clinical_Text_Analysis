@@ -50,6 +50,24 @@ def _get_active_model() -> str:
     return settings.llm_model
 
 
+def _get_runtime_temperature() -> float:
+    """Get runtime temperature from Redis, falling back to settings.
+    
+    Called per case to ensure dynamically updated temperature
+    is picked up immediately, even for queued jobs.
+    """
+    try:
+        import redis
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        temp = r.get("snapai:temperature")
+        r.close()
+        if temp is not None:
+            return float(temp)
+    except Exception:
+        pass
+    return settings.llm_temperature
+
+
 def _get_custom_prompts() -> dict[str, str]:
     """Get custom prompts for BUILT-IN layers from the database.
     
@@ -171,6 +189,7 @@ def save_case_result(job_id: str, case_number: int, result: dict) -> None:
                     "verdict": result.get("final_verdict"),
                     "cci": result.get("final_cci"),
                     "model_used": result.get("model_used"),
+                    "temperature_used": result.get("temperature_used"),
                 },
                 duration_ms=result.get("total_duration_ms"),
                 tokens_input=result.get("total_tokens_input"),
@@ -242,10 +261,11 @@ def _process_case_impl(
         loop = _get_or_create_event_loop()
 
     try:
-        # Get active model and custom prompts
+        # Get active model, custom prompts, and runtime temperature — all per case
         active_model = _get_active_model()
         custom_prompts = _get_custom_prompts()
         extra_layers = _get_extra_layers()
+        runtime_temperature = _get_runtime_temperature()
 
         # Create LLM client via factory (respects llm_backend setting)
         llm_client = get_llm_client()
@@ -267,7 +287,7 @@ def _process_case_impl(
         async def on_layer_complete(layer: str, success: bool, duration_ms: int):
             publisher.publish_layer_complete(job_id, case_number, layer, success, duration_ms)
 
-        # Run pipeline with streaming
+        # Run pipeline with streaming and per-case temperature
         result = loop.run_until_complete(
             orchestrator.execute(
                 raw_text=raw_text,
@@ -276,6 +296,7 @@ def _process_case_impl(
                 on_token=make_token_callback(),
                 on_layer_start=on_layer_start,
                 on_layer_complete=on_layer_complete,
+                temperature=runtime_temperature,
             )
         )
 
@@ -315,6 +336,7 @@ def _process_case_impl(
             "total_tokens_output": result.total_tokens_output,
             "error": result.error,
             "model_used": active_model,
+            "temperature_used": runtime_temperature,
             "processed_at": datetime.utcnow().isoformat() + "Z",
         }
 
@@ -416,6 +438,10 @@ def process_batch(
     # Create a single event loop for the entire batch
     loop = _get_or_create_event_loop()
 
+    # Create publisher for job-level events
+    from app.utils.stream_manager import StreamPublisher
+    job_publisher = StreamPublisher()
+
     try:
         for i, case in enumerate(cases):
             case_id = case.get("case_id", str(i + 1))
@@ -450,6 +476,19 @@ def process_batch(
                     "current_case": case_id,
                 },
             )
+    except Exception as e:
+        # Emit JOB_FAILED SSE so frontend exits processing immediately
+        logger.error(
+            "batch_failed",
+            task_id=self.request.id,
+            job_id=job_id,
+            error=str(e),
+        )
+        job_publisher.publish_job_failed(job_id, str(e))
+        update_job_status(job_id, JobStatus.FAILED)
+        job_publisher.close()
+        loop.close()
+        raise
     finally:
         loop.close()
 
@@ -459,6 +498,10 @@ def process_batch(
 
     # Update job status
     update_job_status(job_id, final_status)
+
+    # Emit job completion SSE event
+    job_publisher.publish_job_complete(job_id, len(cases), success_count)
+    job_publisher.close()
 
     logger.info(
         "batch_completed",

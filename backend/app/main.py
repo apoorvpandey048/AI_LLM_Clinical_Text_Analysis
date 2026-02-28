@@ -52,6 +52,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("create_admin_failed_at_startup", error=str(e))
 
+    # Run schema migrations for any new columns
+    try:
+        _run_schema_migrations()
+    except Exception as e:
+        logger.error("schema_migration_failed", error=str(e))
+
     logger.info(
         "starting_application",
         environment=settings.environment,
@@ -89,6 +95,65 @@ def _create_default_admin():
     except Exception as e:
         logger.error("create_admin_failed", error=str(e))
         db.rollback()
+    finally:
+        db.close()
+
+
+def _run_schema_migrations():
+    """Add any columns that exist in models but not yet in the database.
+
+    Uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS so it's safe to run
+    on every startup.
+    """
+    from sqlalchemy import text
+
+    migrations = [
+        # prompt_templates — custom layer support
+        "ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 99",
+        "ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS is_default_prompt BOOLEAN NOT NULL DEFAULT FALSE",
+        # jobs — ownership + lifecycle tracking
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id UUID NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255) NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NULL DEFAULT 'text'",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_filename VARCHAR(500) NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_count INTEGER NULL DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS failed_count INTEGER NULL DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
+        # job_cases — full result storage
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS case_label VARCHAR(200) NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS input_text TEXT NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer1_output JSONB NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer2_output JSONB NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer3_output JSONB NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer1_raw_output TEXT NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer2_raw_output TEXT NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer3_raw_output TEXT NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS extra_layer_outputs JSONB NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS extra_layer_raw_outputs JSONB NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS final_verdict VARCHAR(100) NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS final_cci INTEGER NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS total_duration_ms INTEGER NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS total_tokens_input INTEGER NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS total_tokens_output INTEGER NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS error_message TEXT NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(50) NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS model_version VARCHAR(200) NULL",
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP NULL",
+    ]
+
+    db = db_session.SessionLocal()
+    try:
+        for sql in migrations:
+            db.execute(text(sql))
+        db.commit()
+        logger.info("schema_migrations_applied", count=len(migrations))
+    except Exception as e:
+        logger.error("schema_migration_error", error=str(e))
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -154,6 +219,7 @@ async def auth_middleware(request: Request, call_next):
         "/health",
         "/api/v1/auth/",
         "/api/v1/info",
+        "/api/v1/system/health",
         "/api/v1/stream/",
         "/api/v1/logs/stream",
         "/docs",

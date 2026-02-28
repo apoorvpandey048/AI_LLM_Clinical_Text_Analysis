@@ -79,6 +79,7 @@ class PipelineOrchestrator:
         on_token: Callable[[str, str], Awaitable[None]] | None = None,
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
+        temperature: float | None = None,
     ) -> PipelineResult:
         """
         Execute the complete pipeline (3 built-in layers + optional custom layers).
@@ -90,11 +91,12 @@ class PipelineOrchestrator:
             on_token: Async callback (layer_name, token) for streaming
             on_layer_start: Async callback (layer_name) when layer begins
             on_layer_complete: Async callback (layer_name, success, duration_ms)
+            temperature: Runtime temperature override (read from Redis per case)
 
         Returns:
             PipelineResult with all layer outputs
         """
-        logger.info("pipeline_start", text_length=len(raw_text))
+        logger.info("pipeline_start", text_length=len(raw_text), temperature=temperature)
 
         total_duration_ms = 0
         total_tokens_input = 0
@@ -118,6 +120,7 @@ class PipelineOrchestrator:
             raw_text=raw_text,
             custom_prompt=custom_prompts.get("layer1_ctp"),
             on_token=make_token_cb("layer1_ctp"),
+            temperature_override=temperature,
         )
 
         total_duration_ms += layer1_result.duration_ms
@@ -154,6 +157,7 @@ class PipelineOrchestrator:
             clean_text=clean_text,
             custom_prompt=custom_prompts.get("layer2_cie"),
             on_token=make_token_cb("layer2_cie"),
+            temperature_override=temperature,
         )
 
         total_duration_ms += layer2_result.duration_ms
@@ -188,6 +192,7 @@ class PipelineOrchestrator:
             layer2_output=layer2_result.output,
             custom_prompt=custom_prompts.get("layer3_ccc"),
             on_token=make_token_cb("layer3_ccc"),
+            temperature_override=temperature,
         )
 
         total_duration_ms += layer3_result.duration_ms
@@ -232,6 +237,7 @@ class PipelineOrchestrator:
                 on_token=on_token,
                 on_layer_start=on_layer_start,
                 on_layer_complete=on_layer_complete,
+                temperature=temperature,
             )
             for r in extra_layer_results.values():
                 total_duration_ms += r.duration_ms
@@ -269,6 +275,7 @@ class PipelineOrchestrator:
         on_token: Callable[[str, str], Awaitable[None]] | None = None,
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
+        temperature: float | None = None,
     ) -> dict[str, LayerResult]:
         """
         Execute custom/extra layers sequentially.
@@ -282,14 +289,15 @@ class PipelineOrchestrator:
             on_token: Token streaming callback
             on_layer_start: Layer start callback
             on_layer_complete: Layer complete callback
+            temperature: Runtime temperature override
 
         Returns:
             Dict mapping layer_name to LayerResult
         """
         results = {}
-        settings = self.llm_client  # We need settings for temperature etc.
         from app.config import get_settings
         config = get_settings()
+        effective_temperature = temperature if temperature is not None else config.llm_temperature
 
         for layer_config in extra_layers:
             layer_name = layer_config.get("layer_name", "")
@@ -331,7 +339,7 @@ class PipelineOrchestrator:
                     response = await self.llm_client.generate_stream(
                         prompt=user_prompt,
                         system_prompt=system_prompt,
-                        temperature=config.llm_temperature,
+                        temperature=effective_temperature,
                         max_tokens=config.llm_max_tokens,
                         timeout=config.llm_timeout,
                         on_token=token_cb,
@@ -340,7 +348,7 @@ class PipelineOrchestrator:
                     response = await self.llm_client.generate(
                         prompt=user_prompt,
                         system_prompt=system_prompt,
-                        temperature=config.llm_temperature,
+                        temperature=effective_temperature,
                         max_tokens=config.llm_max_tokens,
                         timeout=config.llm_timeout,
                     )

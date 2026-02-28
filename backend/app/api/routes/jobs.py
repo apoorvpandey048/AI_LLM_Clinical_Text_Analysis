@@ -12,6 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy import desc, and_
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_auth, require_admin
+from app.db.models import User, UserRole
+
 from app.db import get_db, Job, JobCase, AuditLog
 from app.db.models import JobStatus, CaseStatus
 from app.utils import get_logger
@@ -19,6 +22,14 @@ from app.utils import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["Jobs"])
+
+
+def _check_job_ownership(job: Job, user: User) -> None:
+    """Verify the authenticated user owns this job (or is admin)."""
+    if user.role == UserRole.ADMIN:
+        return
+    if job.user_id is not None and job.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied: you do not own this job")
 
 
 def create_response(success: bool, data=None, error=None, request_id=None):
@@ -38,6 +49,7 @@ def create_response(success: bool, data=None, error=None, request_id=None):
 async def list_jobs(
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None),
@@ -51,6 +63,10 @@ async def list_jobs(
 
     # Base query (exclude soft-deleted)
     query = db.query(Job).filter(Job.deleted_at.is_(None))
+
+    # Ownership: doctors only see own jobs, admin sees all
+    if user.role != UserRole.ADMIN:
+        query = query.filter(Job.user_id == user.id)
 
     # Filter by status if provided
     if status:
@@ -87,6 +103,7 @@ async def get_job(
     job_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     Get job status by ID.
@@ -106,6 +123,8 @@ async def get_job(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
 
     # Get case statuses
     cases = db.query(JobCase).filter(JobCase.job_id == job_uuid).order_by(
@@ -149,6 +168,7 @@ async def get_job_results(
     job_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     Get full results for a job.
@@ -168,6 +188,8 @@ async def get_job_results(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
 
     # Get all cases with full output
     cases = db.query(JobCase).filter(JobCase.job_id == job_uuid).order_by(
@@ -190,6 +212,7 @@ async def reprocess_job(
     job_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
     case_id: Optional[str] = None,
     overwrite: bool = True,
 ):
@@ -214,6 +237,8 @@ async def reprocess_job(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
 
     # Get cases to reprocess
     if case_id:
@@ -291,6 +316,7 @@ async def delete_job(
     job_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     Soft delete a job.
@@ -310,6 +336,8 @@ async def delete_job(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
 
     # Soft delete
     job.deleted_at = datetime.utcnow()
@@ -337,6 +365,7 @@ async def cancel_job(
     job_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     Cancel a running job.
@@ -356,6 +385,8 @@ async def cancel_job(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
 
     # Check if job can be cancelled
     if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING]:

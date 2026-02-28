@@ -107,6 +107,36 @@ class StreamPublisher:
         channel = get_channel_name(job_id)
         self._redis.publish(channel, json.dumps(event))
 
+    def publish_job_complete(
+        self,
+        job_id: str,
+        case_count: int,
+        success_count: int,
+    ) -> None:
+        """Publish a job completion event (all cases done)."""
+        event = {
+            "type": "complete",
+            "job_id": job_id,
+            "case_count": case_count,
+            "success_count": success_count,
+        }
+        channel = get_channel_name(job_id)
+        self._redis.publish(channel, json.dumps(event))
+
+    def publish_job_failed(
+        self,
+        job_id: str,
+        error: str,
+    ) -> None:
+        """Publish a job failure event — frontend exits processing immediately."""
+        event = {
+            "type": "job_failed",
+            "job_id": job_id,
+            "error": error,
+        }
+        channel = get_channel_name(job_id)
+        self._redis.publish(channel, json.dumps(event))
+
     def close(self):
         """Close the Redis connection."""
         self._redis.close()

@@ -1738,6 +1738,146 @@ p {
   gap: var(--space-sm);
 }
 
+/* ---- Version History ---- */
+
+.version-history-wrapper {
+  margin-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-sm);
+}
+
+.version-history-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-xs) 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.version-history-panel {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.version-item {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  transition: border-color 0.15s;
+}
+
+.version-item:hover {
+  border-color: var(--color-primary);
+}
+
+.version-item.active-version {
+  border-color: var(--color-primary);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.8rem;
+}
+
+.version-label {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.version-date {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.version-active-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.version-preview {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.version-actions {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: 4px;
+}
+
+/* ---- Tab Delete Button ---- */
+
+.tab-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-text-muted);
+  border-radius: 50%;
+  margin-left: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tab-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ---- Model Status / Health ---- */
+
+.model-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.model-status-dot.healthy {
+  background: #22c55e;
+}
+
+.model-status-dot.unhealthy {
+  background: #ef4444;
+}
+
+.model-status-dot.unknown {
+  background: #a3a3a3;
+}
+
+/* ---- Extra button sizes ---- */
+
+.btn-xs {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  line-height: 1.5;
+}
+
 /* ==========================================
    Model Management Modal
    ========================================== */
@@ -2010,6 +2150,33 @@ p {
 .sys-info-error {
   color: #fc8181;
   font-size: 0.75rem;
+}
+
+.sys-info-temp-input {
+  width: 52px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: inherit;
+  outline: none;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.sys-info-temp-input::-webkit-inner-spin-button,
+.sys-info-temp-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sys-info-temp-input:focus {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* ==========================================
@@ -2435,7 +2602,7 @@ input[type="file"].hidden {
   gap: var(--space-sm);
   margin-right: var(--space-md);
   padding-right: var(--space-md);
-  border-right: 1px solid rgba(255,255,255,0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .user-name {
@@ -2522,7 +2689,7 @@ input[type="file"].hidden {
   display: flex;
   gap: var(--space-sm);
   padding: 2px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .log-time {
@@ -2564,7 +2731,9 @@ input[type="file"].hidden {
   word-break: break-word;
 }
 
-.log-empty, .log-loading, .log-error {
+.log-empty,
+.log-loading,
+.log-error {
   text-align: center;
   padding: var(--space-xl);
   color: #888;

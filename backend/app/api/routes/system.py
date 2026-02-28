@@ -6,8 +6,10 @@ Provides system status, LLM backend info, worker count, and health info.
 
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.api.routes.auth import require_auth, require_admin
+from app.db.models import User
 from app.config import get_settings
 from app.llm import OllamaClient, VLLMClient
 from app.utils import get_logger
@@ -38,7 +40,7 @@ def _get_redis():
 
 
 @router.get("/info")
-async def get_system_info(request: Request):
+async def get_system_info(request: Request, user: User = Depends(require_auth)):
     """
     Get comprehensive system status.
 
@@ -51,10 +53,14 @@ async def get_system_info(request: Request):
     """
     request_id = getattr(request.state, "request_id", None)
 
-    # Get active model from Redis
+    # Get active model and runtime temperature from Redis
+    runtime_temperature = settings.llm_temperature
     try:
         r = _get_redis()
         active_model = r.get("snapai:active_model") or settings.llm_model
+        temp = r.get("snapai:temperature")
+        if temp is not None:
+            runtime_temperature = float(temp)
         r.close()
     except Exception:
         active_model = settings.llm_model
@@ -103,6 +109,10 @@ async def get_system_info(request: Request):
             "worker_count": worker_count,
             "environment": settings.environment,
             "version": "2.0.0",
+            # Runtime values for system info bar
+            "temperature": runtime_temperature,
+            "prompt_version": settings.prompt_version,
+            "model_version": getattr(settings, 'model_version', settings.llm_model),
         },
         request_id=request_id,
     )
@@ -193,7 +203,7 @@ async def get_workers(request: Request):
 
 
 @router.put("/workers")
-async def set_worker_concurrency(request: Request):
+async def set_worker_concurrency(request: Request, admin: User = Depends(require_admin)):
     """
     Adjust worker pool concurrency at runtime.
 
@@ -267,6 +277,18 @@ async def set_worker_concurrency(request: Request):
 
         logger.info("worker_concurrency_adjusted", target=target, action=action)
 
+        # Audit log
+        from sqlalchemy.orm import Session
+        from app.db import get_db, AuditLog
+        db = next(get_db())
+        audit = AuditLog(
+            action="worker_concurrency_changed",
+            details={"target": target, "previous": current_count, "admin": admin.username},
+        )
+        db.add(audit)
+        db.commit()
+        db.close()
+
         return create_response(
             success=True,
             data={
@@ -282,5 +304,74 @@ async def set_worker_concurrency(request: Request):
         return create_response(
             success=False,
             error=f"Failed to adjust workers: {str(e)}. May require restart for non-prefork pools.",
+            request_id=request_id,
+        )
+
+
+@router.put("/temperature")
+async def set_temperature(request: Request, admin: User = Depends(require_admin)):
+    """
+    Update runtime LLM temperature.
+
+    Stored in Redis so workers pick it up per case
+    (not per job — ensures dynamic updates take effect immediately).
+    """
+    from pydantic import BaseModel
+
+    class TemperatureConfig(BaseModel):
+        temperature: float
+
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        body = await request.json()
+        config = TemperatureConfig(**body)
+    except Exception as e:
+        return create_response(
+            success=False,
+            error=f"Invalid request: {str(e)}",
+            request_id=request_id,
+        )
+
+    if config.temperature < 0.0 or config.temperature > 2.0:
+        return create_response(
+            success=False,
+            error="Temperature must be between 0.0 and 2.0",
+            request_id=request_id,
+        )
+
+    try:
+        r = _get_redis()
+        r.set("snapai:temperature", str(config.temperature))
+        r.close()
+
+        logger.info("temperature_updated", temperature=config.temperature)
+
+        # Audit log
+        from sqlalchemy.orm import Session
+        from app.db import get_db, AuditLog
+        db = next(get_db())
+        audit = AuditLog(
+            action="temperature_changed",
+            details={"temperature": config.temperature, "admin": admin.username},
+        )
+        db.add(audit)
+        db.commit()
+        db.close()
+
+        return create_response(
+            success=True,
+            data={
+                "temperature": config.temperature,
+                "message": f"Temperature set to {config.temperature}",
+            },
+            request_id=request_id,
+        )
+
+    except Exception as e:
+        logger.error("temperature_update_failed", error=str(e))
+        return create_response(
+            success=False,
+            error=f"Failed to update temperature: {str(e)}",
             request_id=request_id,
         )

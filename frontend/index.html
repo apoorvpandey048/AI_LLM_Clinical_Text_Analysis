@@ -34,15 +34,18 @@
                     <h2>Sign In</h2>
                     <div class="form-group">
                         <label for="login-username">Username</label>
-                        <input type="text" id="login-username" placeholder="Enter username" required autocomplete="username">
+                        <input type="text" id="login-username" placeholder="Enter username" required
+                            autocomplete="username">
                     </div>
                     <div class="form-group">
                         <label for="login-password">Password</label>
-                        <input type="password" id="login-password" placeholder="Enter password" required autocomplete="current-password">
+                        <input type="password" id="login-password" placeholder="Enter password" required
+                            autocomplete="current-password">
                     </div>
                     <div id="login-error" class="auth-error hidden"></div>
                     <button type="submit" class="btn btn-primary btn-large auth-btn" id="login-btn">Sign In</button>
-                    <p class="auth-switch">Don't have an account? <a href="#" onclick="showSignup(event)">Sign Up</a></p>
+                    <p class="auth-switch">Don't have an account? <a href="#" onclick="showSignup(event)">Sign Up</a>
+                    </p>
                 </form>
 
                 <!-- Signup Form -->
@@ -54,16 +57,20 @@
                     </div>
                     <div class="form-group">
                         <label for="signup-username">Username</label>
-                        <input type="text" id="signup-username" placeholder="Choose a username" required minlength="3" autocomplete="username">
+                        <input type="text" id="signup-username" placeholder="Choose a username" required minlength="3"
+                            autocomplete="username">
                     </div>
                     <div class="form-group">
                         <label for="signup-password">Password</label>
-                        <input type="password" id="signup-password" placeholder="Min 6 characters" required minlength="6" autocomplete="new-password">
+                        <input type="password" id="signup-password" placeholder="Min 6 characters" required
+                            minlength="6" autocomplete="new-password">
                     </div>
                     <div id="signup-error" class="auth-error hidden"></div>
                     <div id="signup-success" class="auth-success hidden"></div>
-                    <button type="submit" class="btn btn-primary btn-large auth-btn" id="signup-btn">Create Account</button>
-                    <p class="auth-switch">Already have an account? <a href="#" onclick="showLogin(event)">Sign In</a></p>
+                    <button type="submit" class="btn btn-primary btn-large auth-btn" id="signup-btn">Create
+                        Account</button>
+                    <p class="auth-switch">Already have an account? <a href="#" onclick="showLogin(event)">Sign In</a>
+                    </p>
                 </form>
             </div>
         </div>
@@ -140,22 +147,23 @@
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                 stroke-linejoin="round">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                <polyline points="14 2 14 8 20 8"/>
-                                <line x1="16" y1="13" x2="8" y2="13"/>
-                                <line x1="16" y1="17" x2="8" y2="17"/>
-                                <line x1="10" y1="9" x2="8" y2="9"/>
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
+                                <line x1="10" y1="9" x2="8" y2="9" />
                             </svg>
                             Logs
                         </button>
-                        <button class="nav-btn admin-only hidden" id="nav-admin" data-page="admin" onclick="switchPage('admin')">
+                        <button class="nav-btn admin-only hidden" id="nav-admin" data-page="admin"
+                            onclick="switchPage('admin')">
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                 stroke-linejoin="round">
-                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-                                <circle cx="9" cy="7" r="4"/>
-                                <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                             </svg>
                             Admin
                         </button>
@@ -287,7 +295,8 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                             <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
                         </div>
                         <p class="progress-text" id="progress-text">0 of 0 cases completed</p>
-                        <button id="cancel-job-btn" class="btn btn-cancel btn-sm" onclick="cancelJob()" style="margin-top: var(--space-md);">
+                        <button id="cancel-job-btn" class="btn btn-cancel btn-sm" onclick="cancelJob()"
+                            style="margin-top: var(--space-md);">
                             <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
                                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -415,8 +424,10 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                             </svg>
                             Export Prompts
                         </button>
-                        <input type="file" id="import-prompts-input" class="hidden" accept=".json" onchange="importPrompts(event)">
-                        <button class="btn btn-outline btn-sm" onclick="document.getElementById('import-prompts-input').click()">
+                        <input type="file" id="import-prompts-input" class="hidden" accept=".json"
+                            onchange="importPrompts(event)">
+                        <button class="btn btn-outline btn-sm"
+                            onclick="document.getElementById('import-prompts-input').click()">
                             <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
                                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round">
@@ -456,12 +467,14 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                                     </svg>
                                     Reset to Default
                                 </button>
-                                <button id="prompt-delete-btn" class="btn btn-cancel btn-sm hidden" onclick="deleteCustomLayer()">
+                                <button id="prompt-delete-btn" class="btn btn-cancel btn-sm hidden"
+                                    onclick="deleteCustomLayer()">
                                     <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14"
                                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                         stroke-linecap="round" stroke-linejoin="round">
                                         <polyline points="3 6 5 6 21 6" />
-                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                        <path
+                                            d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                                     </svg>
                                     Delete Layer
                                 </button>
@@ -478,65 +491,74 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                             </div>
                         </div>
                     </div>
+
+                    <!-- Version History Panel -->
+                    <div class="version-history-wrapper">
+                        <h4 class="version-history-title">Version History</h4>
+                        <div id="version-history-panel" class="version-history-panel">
+                            <p class="text-muted">Select a layer to see version history.</p>
+                        </div>
+                    </div>
                 </section>
             </div>
 
-        <!-- ===================== LOGS PAGE ===================== -->
-        <div id="page-logs" class="page">
-            <section class="card">
-                <h2>
-                    <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    Application Logs
-                </h2>
-                <p class="section-description">Real-time application logs for debugging and monitoring.</p>
-                
-                <div class="log-controls">
-                    <select id="log-level-filter" class="log-filter-select" onchange="refreshLogs()">
-                        <option value="">All Levels</option>
-                        <option value="ERROR">ERROR</option>
-                        <option value="WARNING">WARNING</option>
-                        <option value="INFO">INFO</option>
-                    </select>
-                    <input type="text" id="log-search" class="log-search-input" placeholder="Search logs..." oninput="refreshLogs()">
-                    <button class="btn btn-sm btn-outline" onclick="refreshLogs()">Refresh</button>
-                    <label class="log-auto-refresh">
-                        <input type="checkbox" id="log-auto-refresh" checked onchange="toggleLogAutoRefresh()">
-                        Auto-refresh
-                    </label>
-                </div>
+            <!-- ===================== LOGS PAGE ===================== -->
+            <div id="page-logs" class="page">
+                <section class="card">
+                    <h2>
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        Application Logs
+                    </h2>
+                    <p class="section-description">Real-time application logs for debugging and monitoring.</p>
 
-                <div class="log-container" id="log-container">
-                    <div class="log-loading">Loading logs...</div>
-                </div>
-            </section>
-        </div>
+                    <div class="log-controls">
+                        <select id="log-level-filter" class="log-filter-select" onchange="refreshLogs()">
+                            <option value="">All Levels</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="INFO">INFO</option>
+                        </select>
+                        <input type="text" id="log-search" class="log-search-input" placeholder="Search logs..."
+                            oninput="refreshLogs()">
+                        <button class="btn btn-sm btn-outline" onclick="refreshLogs()">Refresh</button>
+                        <label class="log-auto-refresh">
+                            <input type="checkbox" id="log-auto-refresh" checked onchange="toggleLogAutoRefresh()">
+                            Auto-refresh
+                        </label>
+                    </div>
 
-        <!-- ===================== ADMIN PAGE ===================== -->
-        <div id="page-admin" class="page">
-            <section class="card">
-                <h2>
-                    <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                    </svg>
-                    User Management
-                </h2>
-                <p class="section-description">Approve, manage, or deactivate user accounts.</p>
+                    <div class="log-container" id="log-container">
+                        <div class="log-loading">Loading logs...</div>
+                    </div>
+                </section>
+            </div>
 
-                <div class="admin-users-list" id="admin-users-list">
-                    <div class="log-loading">Loading users...</div>
-                </div>
-            </section>
-        </div>
+            <!-- ===================== ADMIN PAGE ===================== -->
+            <div id="page-admin" class="page">
+                <section class="card">
+                    <h2>
+                        <svg class="section-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        User Management
+                    </h2>
+                    <p class="section-description">Approve, manage, or deactivate user accounts.</p>
+
+                    <div class="admin-users-list" id="admin-users-list">
+                        <div class="log-loading">Loading users...</div>
+                    </div>
+                </section>
+            </div>
 
         </main>
 

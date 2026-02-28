@@ -13,6 +13,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_auth
+from app.db.models import User
+
 from app.config import get_settings
 from app.db import get_db, Job, JobCase, AuditLog
 from app.db.models import JobStatus, CaseStatus
@@ -84,6 +87,7 @@ def extract_text_from_docx(file_path: Path) -> str:
 async def upload_cases(
     request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
 ):
@@ -166,14 +170,12 @@ async def upload_cases(
     )
 
     # Create job record
-    # Attach authenticated user if available (set by auth middleware)
-    current_user_id = getattr(request.state, "user_id", None)
     job = Job(
         status=JobStatus.QUEUED,
         case_count=len(cases),
         source_type=source_type,
         source_filename=source_filename,
-        user_id=uuid.UUID(current_user_id) if current_user_id else None,
+        user_id=user.id,
     )
     db.add(job)
     db.flush()
@@ -248,6 +250,7 @@ async def upload_text(
     request: Request,
     body: TextUploadRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
 ):
     """
     Upload clinical text directly (JSON body).
@@ -266,12 +269,11 @@ async def upload_text(
         )
 
     # Create job
-    current_user_id = getattr(request.state, "user_id", None)
     job = Job(
         status=JobStatus.QUEUED,
         case_count=len(cases),
         source_type="text",
-        user_id=uuid.UUID(current_user_id) if current_user_id else None,
+        user_id=user.id,
     )
     db.add(job)
     db.flush()
