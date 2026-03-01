@@ -115,6 +115,9 @@ const state = {
     reconnectAttempts: 0,
     maxReconnectAttempts: 5,
 
+    // Completed case tracking — prevents SSE tokens from overwriting finished outputs
+    frozenCases: new Set(),
+
     // Prompt state
     activePromptLayer: 'layer1_ctp',
     promptData: {},       // { layer: { content, source, version } }
@@ -159,6 +162,25 @@ function initApp() {
         document.getElementById('nav-admin')?.classList.remove('hidden');
         loadAdminUsers();
     }
+
+    // Auto-reload last job results if the user refreshes the page
+    const savedJobId = localStorage.getItem('snapai_last_job_id');
+    if (savedJobId) {
+        // Silently re-fetch — show results section if successful
+        authFetch(`${API_BASE}/jobs/${savedJobId}/results`).then(async res => {
+            if (!res.ok) return;
+            const json = await res.json();
+            const data = json.data || json;
+            if (data && (data.results || data.cases)) {
+                window.currentResults = data;
+                state.currentJobId = savedJobId;
+                renderResults(data);
+                document.getElementById('upload-section').classList.add('hidden');
+                document.getElementById('results-section').classList.remove('hidden');
+            }
+        }).catch(() => { /* ignore — silent reload only */ });
+    }
+
     console.log('SNAP-AI Frontend v2 initialized');
 }
 
@@ -373,6 +395,7 @@ function startStreaming(jobId) {
     state.reconnectAttempts = 0;
     state.streamingHistory = {};
     state.currentCaseNumber = 1;
+    state.frozenCases = new Set();
 
     connectSSE(jobId);
 }
@@ -413,11 +436,14 @@ function connectSSE(jobId) {
     state.eventSource.addEventListener('case_complete', (e) => {
         try {
             const data = JSON.parse(e.data);
+            const finishedCase = data.case_number || state.currentCaseNumber;
+            // Freeze this case: SSE tokens must not overwrite completed outputs
+            state.frozenCases.add(finishedCase);
             // Preserve streaming history for this case before resetting
-            preserveStreamingHistory(state.currentCaseNumber);
+            preserveStreamingHistory(finishedCase);
             resetLiveOutput();
             updateCaseProgress(data);
-            state.currentCaseNumber = (data.case_number || state.currentCaseNumber) + 1;
+            state.currentCaseNumber = finishedCase + 1;
         } catch { /* ignore */ }
     });
 
@@ -567,6 +593,9 @@ function renderDynamicLiveOutputTabs() {
 
 function appendToken(layer, token, caseNumber) {
     if (!layer || !token) return;
+
+    // Skip if this case is already marked COMPLETE — outputs are immutable
+    if (caseNumber && state.frozenCases.has(caseNumber)) return;
 
     // Map stream layer names to our keys
     const layerKey = normalizeLayerKey(layer);
@@ -775,6 +804,9 @@ async function loadResults(jobId) {
         window.currentResults = data;
         renderResults(data);
 
+        // Persist job ID so results survive a page reload
+        try { localStorage.setItem('snapai_last_job_id', jobId); } catch { /* ignore quota errors */ }
+
         document.getElementById('progress-section').classList.add('hidden');
         document.getElementById('results-section').classList.remove('hidden');
         state.isProcessing = false;
@@ -850,47 +882,45 @@ function renderResultsTable(results) {
 
 function renderResultsCards(results) {
     const container = document.getElementById('case-results');
-    container.innerHTML = results.map((r, i) => {
+
+    // Store result data BEFORE template rendering so copy buttons can access it
+    window._resultData = results;
+
+    const html = results.map((r, i) => {
         const caseNum = r.case_number ?? i + 1;
         const verdict = r.layer3_output?.verdict ?? r.final_verdict ?? '—';
         const cci = r.layer3_output?.cci_score ?? r.final_cci ?? '—';
 
         // Always use server-persisted outputs — never depend on streaming buffers
-        const l1Output = r.layer1_output ?? {};
-        const l2Output = r.layer2_output ?? {};
-        const l3Output = r.layer3_output ?? {};
-        const rawL1 = r.layer1_raw_output ?? '';
-        const rawL2 = r.layer2_raw_output ?? '';
-        const rawL3 = r.layer3_raw_output ?? '';
-
-        // Build extra layer outputs
         const extraOutputs = r.extra_layer_outputs || {};
         const extraRawOutputs = r.extra_layer_raw_outputs || {};
         const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs)])];
 
-        const extraParsedSections = allExtraKeys.map(key => {
-            const data = extraOutputs[key] ?? {};
+        // Extra layer JSON sections — IDs only, content set in post-render pass
+        const extraJsonSections = allExtraKeys.map(key => {
             const label = LAYERS[key]?.label || key;
             return `
               <details class="json-details" open>
                 <summary>
                   ${escapeHtml(label)}
-                  <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].extra_layer_outputs?.['${key}'] ?? {})">Copy JSON</button>
+                  <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].extra_layer_outputs?.['${key}'] ?? {}, this)">Copy JSON</button>
                 </summary>
-                <pre class="json-tree">${syntaxHighlightJSON(data)}</pre>
+                <div class="output-meta-row"><span class="output-char-count" id="json-charcount-extra-${key}-${i}"></span></div>
+                <pre class="json-tree" id="json-extra-${key}-${i}"></pre>
               </details>`;
         }).join('');
 
+        // Extra layer raw sections — IDs only, content set in post-render pass
         const extraRawSections = allExtraKeys.map(key => {
-            const rawContent = extraRawOutputs[key] || '';
             const label = LAYERS[key]?.label || key;
             return `
               <div class="raw-output-section">
                 <div class="raw-output-header">
                   <h4>${escapeHtml(label)}</h4>
-                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, '${key}')">Copy</button>
+                  <span class="output-char-count" id="raw-charcount-extra-${key}-${i}"></span>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'extra-${key}', this)">Copy</button>
                 </div>
-                <pre class="raw-output-text" id="raw-${key}-${i}">${escapeHtml(rawContent) || '<em>No output captured</em>'}</pre>
+                <pre class="raw-output-text" id="raw-extra-${key}-${i}"></pre>
               </div>`;
         }).join('');
 
@@ -905,97 +935,128 @@ function renderResultsCards(results) {
         </div>
         <div class="case-result-body" id="case-result-body-${i}">
           ${r.error_message ? `<div class="error-message">${escapeHtml(r.error_message)}</div>` : ''}
-          
+
           <div class="result-tabs">
-            <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">Parsed JSON</button>
-            <button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">Raw LLM Output</button>
+            <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">📋 Parsed JSON</button>
+            <button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">📄 Raw LLM Output</button>
           </div>
-          
-          <div class="result-tab-content" id="result-tab-json-${i}">
+
+          <!-- ── JSON Tab (default: active) ── -->
+          <div class="result-tab-content active output-fullscreen-panel" id="result-tab-json-${i}">
+            <div class="output-panel-toolbar">
+              <span class="output-audit-label">🔒 Audit Output (Read-only)</span>
+              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)">⛶ Fullscreen</button>
+            </div>
+
             <details class="json-details" open>
               <summary>
                 Layer 1: CTP — Clinical Text Pre-Processor
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_output ?? {})">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_output ?? {}, 'case${r.case_number ?? i + 1}_layer1_ctp.json')">Download JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_output ?? {}, this)">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_output ?? {}, 'case${caseNum}_layer1_ctp.json')">Download</button>
               </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(l1Output)}</pre>
+              <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l1-${i}"></span></div>
+              <pre class="json-tree" id="json-l1-${i}"></pre>
             </details>
+
             <details class="json-details" open>
               <summary>
                 Layer 2: CIE — Complication Info Extraction
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_output ?? {})">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_output ?? {}, 'case${r.case_number ?? i + 1}_layer2_cie.json')">Download JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_output ?? {}, this)">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_output ?? {}, 'case${caseNum}_layer2_cie.json')">Download</button>
               </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(l2Output)}</pre>
+              <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l2-${i}"></span></div>
+              <pre class="json-tree" id="json-l2-${i}"></pre>
             </details>
+
             <details class="json-details" open>
               <summary>
                 Layer 3: CCC — CCI Calculation &amp; Cross-Check
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_output ?? {})">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_output ?? {}, 'case${r.case_number ?? i + 1}_layer3_ccc.json')">Download JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_output ?? {}, this)">Copy JSON</button>
+                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_output ?? {}, 'case${caseNum}_layer3_ccc.json')">Download</button>
               </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(l3Output)}</pre>
+              <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l3-${i}"></span></div>
+              <pre class="json-tree" id="json-l3-${i}"></pre>
             </details>
-            <details class="json-details">
-              <summary>
-                Layer 1: Raw Output
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_raw_output ?? '')">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer1_raw.txt')">Download</button>
-              </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(rawL1)}</pre>
-            </details>
-            <details class="json-details">
-              <summary>
-                Layer 2: Raw Output
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_raw_output ?? '')">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer2_raw.txt')">Download</button>
-              </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(rawL2)}</pre>
-            </details>
-            <details class="json-details">
-              <summary>
-                Layer 3: Raw Output
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_raw_output ?? '')">Copy JSON</button>
-                <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_raw_output ?? '', 'case${r.case_number ?? i + 1}_layer3_raw.txt')">Download</button>
-              </summary>
-              <pre class="json-tree">${syntaxHighlightJSON(rawL3)}</pre>
-            </details>
-            ${extraParsedSections}
+
+            ${extraJsonSections}
           </div>
-          
-          <div class="result-tab-content hidden" id="result-tab-raw-${i}">
+
+          <!-- ── Raw LLM Output Tab ── -->
+          <div class="result-tab-content output-fullscreen-panel" id="result-tab-raw-${i}">
+            <div class="output-panel-toolbar">
+              <span class="output-audit-label">🔒 Audit Output (Read-only)</span>
+              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)">⛶ Fullscreen</button>
+            </div>
             <div class="raw-output-container">
               <div class="raw-output-section">
                 <div class="raw-output-header">
                   <h4>Layer 1: CTP</h4>
-                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l1')">Copy</button>
+                  <span class="output-char-count" id="raw-charcount-l1-${i}"></span>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l1', this)">Copy</button>
                 </div>
-                <pre class="raw-output-text" id="raw-l1-${i}">${escapeHtml(rawL1) || '<em>No output captured</em>'}</pre>
+                <pre class="raw-output-text" id="raw-l1-${i}"></pre>
               </div>
               <div class="raw-output-section">
                 <div class="raw-output-header">
                   <h4>Layer 2: CIE</h4>
-                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l2')">Copy</button>
+                  <span class="output-char-count" id="raw-charcount-l2-${i}"></span>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l2', this)">Copy</button>
                 </div>
-                <pre class="raw-output-text" id="raw-l2-${i}">${escapeHtml(rawL2) || '<em>No output captured</em>'}</pre>
+                <pre class="raw-output-text" id="raw-l2-${i}"></pre>
               </div>
               <div class="raw-output-section">
                 <div class="raw-output-header">
                   <h4>Layer 3: CCC</h4>
-                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l3')">Copy</button>
+                  <span class="output-char-count" id="raw-charcount-l3-${i}"></span>
+                  <button class="btn btn-sm btn-outline" onclick="copyRawOutput(${i}, 'l3', this)">Copy</button>
                 </div>
-                <pre class="raw-output-text" id="raw-l3-${i}">${escapeHtml(rawL3) || '<em>No output captured</em>'}</pre>
+                <pre class="raw-output-text" id="raw-l3-${i}"></pre>
               </div>
               ${extraRawSections}
             </div>
           </div>
+
         </div>
       </div>
     `;
     }).join('');
 
-    // Store result data on window for copy buttons to access
-    window._resultData = results;
+    container.innerHTML = html;
+
+    // ── Post-render pass: populate <pre> elements with modular functions ──
+    // This is done after innerHTML is set so we can use DOM APIs (textContent / highlighting).
+    results.forEach((r, i) => {
+        // Parsed JSON layers
+        renderParsedOutput(r.layer1_output, document.getElementById(`json-l1-${i}`));
+        renderParsedOutput(r.layer2_output, document.getElementById(`json-l2-${i}`));
+        renderParsedOutput(r.layer3_output, document.getElementById(`json-l3-${i}`));
+
+        // Char counts for parsed JSON
+        updateOutputCharCount(r.layer1_output, `json-charcount-l1-${i}`);
+        updateOutputCharCount(r.layer2_output, `json-charcount-l2-${i}`);
+        updateOutputCharCount(r.layer3_output, `json-charcount-l3-${i}`);
+
+        // Raw LLM outputs — uses textContent for safety + large-blob performance
+        renderRawOutput(r.layer1_raw_output, document.getElementById(`raw-l1-${i}`));
+        renderRawOutput(r.layer2_raw_output, document.getElementById(`raw-l2-${i}`));
+        renderRawOutput(r.layer3_raw_output, document.getElementById(`raw-l3-${i}`));
+
+        // Char counts for raw sections
+        updateOutputCharCount(r.layer1_raw_output, `raw-charcount-l1-${i}`);
+        updateOutputCharCount(r.layer2_raw_output, `raw-charcount-l2-${i}`);
+        updateOutputCharCount(r.layer3_raw_output, `raw-charcount-l3-${i}`);
+
+        // Extra layers
+        const extraOutputs = r.extra_layer_outputs || {};
+        const extraRawOutputs = r.extra_layer_raw_outputs || {};
+        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs)])];
+        allExtraKeys.forEach(key => {
+            renderParsedOutput(extraOutputs[key], document.getElementById(`json-extra-${key}-${i}`));
+            renderRawOutput(extraRawOutputs[key], document.getElementById(`raw-extra-${key}-${i}`));
+            updateOutputCharCount(extraOutputs[key], `json-charcount-extra-${key}-${i}`);
+            updateOutputCharCount(extraRawOutputs[key], `raw-charcount-extra-${key}-${i}`);
+        });
+    });
 }
 
 function switchResultTab(index, tab) {
@@ -1007,28 +1068,50 @@ function switchResultTab(index, tab) {
         btn.classList.toggle('active', (tab === 'json' && i === 0) || (tab === 'raw' && i === 1));
     });
 
-    if (jsonTab) jsonTab.classList.toggle('hidden', tab !== 'json');
-    if (rawTab) rawTab.classList.toggle('hidden', tab !== 'raw');
+    // Use the 'active' class that is controlled by CSS (.result-tab-content.active)
+    if (jsonTab) jsonTab.classList.toggle('active', tab === 'json');
+    if (rawTab) rawTab.classList.toggle('active', tab === 'raw');
 }
 
-function copyRawOutput(index, layer) {
+function copyRawOutput(index, layer, btnEl) {
     const el = document.getElementById(`raw-${layer}-${index}`);
-    if (el) {
-        navigator.clipboard.writeText(el.innerText).then(() => {
+    if (!el) return;
+    // Use textContent (not innerText) — avoids reflow, works on hidden elements
+    const text = el.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        if (btnEl) {
+            const orig = btnEl.textContent;
+            btnEl.textContent = 'Copied!';
+            btnEl.classList.add('btn-copied');
+            setTimeout(() => {
+                btnEl.textContent = orig;
+                btnEl.classList.remove('btn-copied');
+            }, 1500);
+        } else {
             showToast('Copied to clipboard', 'success');
-        }).catch(() => {
-            showToast('Failed to copy', 'error');
-        });
-    }
+        }
+    }).catch(() => showToast('Failed to copy', 'error'));
 }
 
 /**
- * Copy any object or string to clipboard as formatted JSON.
+ * Copy any object or string to clipboard.
+ * If btnEl is passed, shows inline “Copied!” feedback for 1.5 s.
+ * Without btnEl, falls back to a toast notification.
  */
-function copyToClipboard(obj) {
+function copyToClipboard(obj, btnEl) {
     const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
     navigator.clipboard.writeText(text).then(() => {
-        showToast('Copied to clipboard', 'success');
+        if (btnEl) {
+            const orig = btnEl.textContent;
+            btnEl.textContent = 'Copied!';
+            btnEl.classList.add('btn-copied');
+            setTimeout(() => {
+                btnEl.textContent = orig;
+                btnEl.classList.remove('btn-copied');
+            }, 1500);
+        } else {
+            showToast('Copied to clipboard', 'success');
+        }
     }).catch(() => {
         showToast('Failed to copy', 'error');
     });
@@ -1085,6 +1168,91 @@ function syntaxHighlightJSON(obj) {
             return `<span class="${cls}">${match}</span>`;
         }
     );
+}
+
+// ============================================
+// Output Panel Rendering (Modular)
+// ============================================
+
+/**
+ * Render parsed JSON output into a <pre> element.
+ * Applies syntax highlighting; falls back gracefully on invalid JSON.
+ * Never corrupts the DOM on parse errors.
+ */
+function renderParsedOutput(data, preEl) {
+    if (!preEl) return;
+    if (data === null || data === undefined) {
+        preEl.textContent = 'Output not available.';
+        return;
+    }
+    try {
+        const obj = typeof data === 'string' ? JSON.parse(data) : data;
+        // innerHTML is safe here: syntaxHighlightJSON only adds <span> tags to
+        // already-JSON-stringified text (no user content injected as HTML).
+        preEl.innerHTML = syntaxHighlightJSON(obj);
+    } catch (_e) {
+        // Insert warning label once before the pre, then show raw content via textContent
+        const prev = preEl.previousElementSibling;
+        if (!prev || !prev.classList.contains('json-parse-warning')) {
+            const warn = document.createElement('div');
+            warn.className = 'json-parse-warning';
+            warn.textContent = '\u26a0 Failed to parse JSON \u2014 showing raw content.';
+            preEl.parentNode && preEl.parentNode.insertBefore(warn, preEl);
+        }
+        preEl.textContent = typeof data === 'string' ? data : JSON.stringify(data);
+    }
+}
+
+/**
+ * Render raw LLM output text into a <pre> element.
+ * Uses textContent (NOT innerHTML) — safe for any content, fast for large blobs.
+ */
+function renderRawOutput(text, preEl) {
+    if (!preEl) return;
+    preEl.textContent = text || 'Output not available.';
+}
+
+/**
+ * Set a char-count label element.
+ */
+function updateOutputCharCount(text, elId) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const chars = typeof text === 'string' ? text.length
+        : text !== null && text !== undefined ? JSON.stringify(text).length : 0;
+    el.textContent = chars > 0 ? `${chars.toLocaleString()} chars` : '';
+}
+
+/**
+ * Toggle fullscreen for the nearest .output-fullscreen-panel ancestor.
+ */
+function toggleOutputFullscreen(btnEl) {
+    const panel = btnEl.closest('.output-fullscreen-panel');
+    if (!panel) return;
+    const isFs = panel.classList.toggle('output-panel-fullscreen');
+    btnEl.textContent = isFs ? '\u2715 Exit Fullscreen' : '\u26f6 Fullscreen';
+    document.body.style.overflow = isFs ? 'hidden' : '';
+}
+
+/**
+ * Fetch a single case’s full output from the database.
+ * Falls back to window._resultData cache if the data is already loaded.
+ */
+async function fetchCaseOutput(jobId, caseId) {
+    if (window._resultData && Array.isArray(window._resultData)) {
+        const cached = window._resultData.find(r => r.case_id === caseId);
+        if (cached && (cached.layer1_output || cached.layer2_output || cached.layer3_output)) {
+            return cached;
+        }
+    }
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/cases/${caseId}`);
+        if (!res.ok) return null;
+        const json = await res.json();
+        return json.data || null;
+    } catch {
+        return null;
+    }
 }
 
 // ============================================
@@ -1149,6 +1317,9 @@ function resetToUpload() {
 
     // Reset case status list (clear any error cards)
     document.getElementById('case-status-list').innerHTML = '';
+
+    // Clear the persisted last-job so reload doesn't re-show old results
+    try { localStorage.removeItem('snapai_last_job_id'); } catch { /* ignore */ }
 
     // Reset live output
     resetLiveOutput();
@@ -2613,6 +2784,9 @@ async function rejectUser(userId) {
 // Global expose for onclick handlers in HTML
 // ============================================
 
+window.toggleOutputFullscreen = toggleOutputFullscreen;
+window.fetchCaseOutput = fetchCaseOutput;
+window.updateOutputCharCount = updateOutputCharCount;
 window.switchPage = switchPage;
 window.switchView = switchView;
 window.switchPromptTab = switchPromptTab;

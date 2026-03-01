@@ -38,7 +38,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,  # Process one task at a time (LLM is heavy)
     worker_concurrency=1,  # Sequential processing for deterministic inference
     
-    # Task time limits (must exceed LLM timeout of 900s)
-    task_soft_time_limit=1200,  # 20 minutes soft limit
-    task_time_limit=1260,  # 21 minutes hard limit
+    # Task time limits – batch processes cases sequentially;
+    # CPU inference can take ~15 min/case × 3 layers, so allow 1 hour.
+    task_soft_time_limit=3600,  # 60 minutes soft limit
+    task_time_limit=3660,  # 61 minutes hard limit
 )

@@ -2408,6 +2408,129 @@ p {
 }
 
 /* ==========================================
+   Output Viewer Enhancements
+   ========================================== */
+
+/* Toolbar row: audit label + fullscreen button */
+.output-panel-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+  background: #f0f4f8;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-sm);
+  gap: var(--space-sm);
+}
+
+/* "Audit Output (Read-only)" label */
+.output-audit-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+/* Char count label beneath each section */
+.output-meta-row {
+  padding: 0 var(--space-md) var(--space-xs);
+}
+
+.output-char-count {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.75;
+}
+
+/* Inline "Copied!" button feedback */
+.btn-copied {
+  background: var(--color-success) !important;
+  color: white !important;
+  border-color: var(--color-success) !important;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+/* JSON parse failure warning */
+.json-parse-warning {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: #856404;
+  margin-bottom: var(--space-xs);
+}
+
+/* Fullscreen panel overlay */
+.output-fullscreen-panel.output-panel-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: var(--color-card);
+  overflow-y: auto;
+  padding: var(--space-lg);
+  border-radius: 0;
+  box-shadow: none;
+  display: block !important; /* force visible even if tab is inactive */
+}
+
+.output-fullscreen-panel.output-panel-fullscreen .raw-output-text,
+.output-fullscreen-panel.output-panel-fullscreen .json-tree {
+  max-height: none; /* allow full scroll in fullscreen */
+}
+
+/* Subtle ghost button variant for toolbar icons */
+.btn-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-ghost:hover {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border-color: var(--color-border);
+}
+
+/* raw-output-header: flex layout for h4 + char-count + copy btn */
+.raw-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: white;
+  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-sm);
+}
+
+.raw-output-header h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  flex: 1 1 auto;
+}
+
+.raw-output-header .output-char-count {
+  flex: 0 0 auto;
+}
+
+.raw-output-header button {
+  flex: 0 0 auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.75rem;
+}
+
+/* ==========================================
    Empty States
    ========================================== */
 

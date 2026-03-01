@@ -207,6 +207,55 @@ async def get_job_results(
     )
 
 
+@router.get("/{job_id}/cases/{case_id}")
+async def get_case_output(
+    job_id: str,
+    case_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Get full output for a single case from the database.
+
+    Returns all layer outputs, raw LLM text, and metadata.
+    Used by the frontend to load case outputs on page reload.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    try:
+        case_uuid = uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid case ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    case = db.query(JobCase).filter(
+        and_(JobCase.job_id == job_uuid, JobCase.id == case_uuid)
+    ).first()
+
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    return create_response(
+        success=True,
+        data=case.to_dict(include_outputs=True),
+        request_id=request_id,
+    )
+
+
 @router.post("/{job_id}/reprocess")
 async def reprocess_job(
     job_id: str,
