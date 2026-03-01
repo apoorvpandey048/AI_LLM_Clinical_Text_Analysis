@@ -146,9 +146,26 @@ async def generate_job_events(
                         last_status = current_status
 
                     # Check if job is complete
-                    if progress["status"] in ["completed", "failed"]:
+                    if progress["status"] in ["completed", "failed", "cancelled"]:
                         yield f"event: complete\ndata: {json.dumps(progress)}\n\n"
                         break
+
+            elif event_type == "job_failed":
+                # Worker explicitly signals job failure — forward immediately and stop stream
+                logger.error(
+                    "sse_job_failed_received",
+                    job_id=job_id,
+                    error=event.get("error"),
+                )
+                yield f"event: job_failed\ndata: {json.dumps(event)}\n\n"
+                break
+
+            elif event_type == "complete":
+                # Worker published completion directly (e.g. from publish_job_complete)
+                progress = await poll_db_status()
+                payload = progress if progress else event
+                yield f"event: complete\ndata: {json.dumps(payload)}\n\n"
+                break
 
             elif event_type == "heartbeat":
                 # Periodically poll DB status
@@ -159,7 +176,16 @@ async def generate_job_events(
                         yield f"event: progress\ndata: {json.dumps(progress)}\n\n"
                         last_status = current_status
 
-                    if progress["status"] in ["completed", "failed"]:
+                    if progress["status"] == "failed":
+                        # Job failed without an explicit job_failed event — surface it
+                        fail_event = {
+                            "job_id": job_id,
+                            "error": "Pipeline failed — see worker logs for details",
+                        }
+                        yield f"event: job_failed\ndata: {json.dumps(fail_event)}\n\n"
+                        break
+
+                    if progress["status"] in ["completed", "cancelled"]:
                         yield f"event: complete\ndata: {json.dumps(progress)}\n\n"
                         break
 

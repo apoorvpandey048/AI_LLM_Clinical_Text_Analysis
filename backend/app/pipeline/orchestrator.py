@@ -114,14 +114,18 @@ class PipelineOrchestrator:
         # ====== Layer 1: CTP ======
         if on_layer_start:
             await on_layer_start("layer1_ctp")
-        logger.info("pipeline_layer1_start")
+        logger.info("LAYER_START", event="LAYER_START", layer="layer1_ctp")
 
-        layer1_result = await self.layer1.execute(
-            raw_text=raw_text,
-            custom_prompt=custom_prompts.get("layer1_ctp"),
-            on_token=make_token_cb("layer1_ctp"),
-            temperature_override=temperature,
-        )
+        try:
+            layer1_result = await self.layer1.execute(
+                raw_text=raw_text,
+                custom_prompt=custom_prompts.get("layer1_ctp"),
+                on_token=make_token_cb("layer1_ctp"),
+                temperature_override=temperature,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer1_ctp")
+            raise
 
         total_duration_ms += layer1_result.duration_ms
         total_tokens_input += layer1_result.tokens_input
@@ -130,8 +134,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer1_ctp", layer1_result.success, layer1_result.duration_ms)
 
+        logger.info("LAYER_END", event="LAYER_END", layer="layer1_ctp", success=layer1_result.success)
         if not layer1_result.success:
-            logger.error("pipeline_layer1_failed", error=layer1_result.error)
+            logger.error("pipeline_layer1_failed", event="PIPELINE_LAYER_CRASH", layer="layer1_ctp", error=layer1_result.error)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
@@ -151,14 +156,18 @@ class PipelineOrchestrator:
         # ====== Layer 2: CIE ======
         if on_layer_start:
             await on_layer_start("layer2_cie")
-        logger.info("pipeline_layer2_start")
+        logger.info("LAYER_START", event="LAYER_START", layer="layer2_cie")
 
-        layer2_result = await self.layer2.execute(
-            clean_text=clean_text,
-            custom_prompt=custom_prompts.get("layer2_cie"),
-            on_token=make_token_cb("layer2_cie"),
-            temperature_override=temperature,
-        )
+        try:
+            layer2_result = await self.layer2.execute(
+                clean_text=clean_text,
+                custom_prompt=custom_prompts.get("layer2_cie"),
+                on_token=make_token_cb("layer2_cie"),
+                temperature_override=temperature,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer2_cie")
+            raise
 
         total_duration_ms += layer2_result.duration_ms
         total_tokens_input += layer2_result.tokens_input
@@ -167,8 +176,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer2_cie", layer2_result.success, layer2_result.duration_ms)
 
+        logger.info("LAYER_END", event="LAYER_END", layer="layer2_cie", success=layer2_result.success)
         if not layer2_result.success:
-            logger.error("pipeline_layer2_failed", error=layer2_result.error)
+            logger.error("pipeline_layer2_failed", event="PIPELINE_LAYER_CRASH", layer="layer2_cie", error=layer2_result.error)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
@@ -185,15 +195,19 @@ class PipelineOrchestrator:
         # ====== Layer 3: CCC ======
         if on_layer_start:
             await on_layer_start("layer3_ccc")
-        logger.info("pipeline_layer3_start")
+        logger.info("LAYER_START", event="LAYER_START", layer="layer3_ccc")
 
-        layer3_result = await self.layer3.execute(
-            clean_text=clean_text,
-            layer2_output=layer2_result.output,
-            custom_prompt=custom_prompts.get("layer3_ccc"),
-            on_token=make_token_cb("layer3_ccc"),
-            temperature_override=temperature,
-        )
+        try:
+            layer3_result = await self.layer3.execute(
+                clean_text=clean_text,
+                layer2_output=layer2_result.output,
+                custom_prompt=custom_prompts.get("layer3_ccc"),
+                on_token=make_token_cb("layer3_ccc"),
+                temperature_override=temperature,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer3_ccc")
+            raise
 
         total_duration_ms += layer3_result.duration_ms
         total_tokens_input += layer3_result.tokens_input
@@ -202,8 +216,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer3_ccc", layer3_result.success, layer3_result.duration_ms)
 
+        logger.info("LAYER_END", event="LAYER_END", layer="layer3_ccc", success=layer3_result.success)
         if not layer3_result.success:
-            logger.error("pipeline_layer3_failed", error=layer3_result.error)
+            logger.error("pipeline_layer3_failed", event="PIPELINE_LAYER_CRASH", layer="layer3_ccc", error=layer3_result.error)
             # Layer 3 failure is not fatal - we still have Layer 2 results
             return PipelineResult(
                 success=True,  # Partial success - L1 and L2 completed

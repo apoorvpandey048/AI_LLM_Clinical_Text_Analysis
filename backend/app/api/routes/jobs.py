@@ -163,6 +163,53 @@ async def get_job(
     )
 
 
+@router.get("/{job_id}/status")
+async def get_job_status(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Lightweight job status endpoint for frontend polling fallback.
+
+    Returns only job_id, status, completed/total counts.
+    Used when SSE drops and the UI needs to poll for current state.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    cases = db.query(JobCase).filter(JobCase.job_id == job_uuid).all()
+    completed = sum(1 for c in cases if c.status == CaseStatus.COMPLETED)
+    failed = sum(1 for c in cases if c.status == CaseStatus.FAILED)
+    total = len(cases)
+
+    return create_response(
+        success=True,
+        data={
+            "job_id": job_id,
+            "status": job.status.value,
+            "completed": completed,
+            "failed": failed,
+            "total": total,
+        },
+        request_id=request_id,
+    )
+
+
 @router.get("/{job_id}/results")
 async def get_job_results(
     job_id: str,
@@ -440,8 +487,8 @@ async def cancel_job(
     # Check if job can be cancelled
     if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING]:
         raise HTTPException(
-            status_code=400,
-            detail=f"Job cannot be cancelled - current status: {job.status.value}",
+            status_code=409,
+            detail=f"Job cannot be cancelled — current status: {job.status.value}",
         )
 
     # Revoke Celery task if available
@@ -455,8 +502,8 @@ async def cancel_job(
         except Exception as e:
             logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
 
-    # Update job status
-    job.status = JobStatus.FAILED
+    # Update job status to CANCELLED
+    job.status = JobStatus.CANCELLED
     job.completed_at = datetime.utcnow()
 
     # Update any processing cases to failed
@@ -483,11 +530,21 @@ async def cancel_job(
     db.commit()
 
     logger.info(
-        "job_cancelled",
+        "JOB_CANCELLED",
+        event="JOB_CANCELLED",
         request_id=request_id,
         job_id=job_id,
         cases_cancelled=len(processing_cases),
     )
+
+    # Emit SSE job_failed event so the frontend stops its streaming state
+    try:
+        from app.utils.stream_manager import StreamPublisher
+        pub = StreamPublisher()
+        pub.publish_job_failed(job_id, "Job cancelled by user")
+        pub.close()
+    except Exception as sse_err:
+        logger.warning("cancel_sse_emit_failed", job_id=job_id, error=str(sse_err))
 
     return create_response(
         success=True,

@@ -157,6 +157,25 @@ def _run_schema_migrations():
     finally:
         db.close()
 
+    # --- Enum value additions (must run outside a transaction) ---
+    # ALTER TYPE ... ADD VALUE cannot be run inside a transaction block in PostgreSQL.
+    # We use a raw AUTOCOMMIT connection for these.
+    try:
+        engine = db_session.engine
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Add 'cancelled' to jobstatus enum if not already present
+            exists = conn.execute(text(
+                "SELECT 1 FROM pg_enum "
+                "JOIN pg_type ON pg_enum.enumtypid = pg_type.oid "
+                "WHERE pg_type.typname = 'jobstatus' AND pg_enum.enumlabel = 'cancelled'"
+            )).fetchone()
+            if not exists:
+                conn.execute(text("ALTER TYPE jobstatus ADD VALUE 'cancelled'"))
+                logger.info("enum_value_added", type="jobstatus", value="cancelled")
+    except Exception as e:
+        # Non-fatal: if enum already has the value or type name differs, log and continue
+        logger.warning("enum_migration_warning", error=str(e))
+
 
 # Create FastAPI app
 app = FastAPI(

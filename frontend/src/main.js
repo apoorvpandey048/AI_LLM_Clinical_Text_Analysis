@@ -330,6 +330,15 @@ function updateProcessButton() {
     btn.disabled = state.isProcessing || (!hasFile && !hasText);
 }
 
+/**
+ * Enable or disable the Cancel Job button.
+ * Cancel is only valid while a job is actively RUNNING.
+ */
+function setCancelButtonEnabled(enabled) {
+    const btn = document.getElementById('cancel-job-btn');
+    if (btn) btn.disabled = !enabled;
+}
+
 // ============================================
 // API: Process File / Text
 // ============================================
@@ -396,6 +405,7 @@ function startStreaming(jobId) {
     state.streamingHistory = {};
     state.currentCaseNumber = 1;
     state.frozenCases = new Set();
+    setCancelButtonEnabled(true);
 
     connectSSE(jobId);
 }
@@ -458,6 +468,7 @@ function connectSSE(jobId) {
         // Preserve final case streaming history
         preserveStreamingHistory(state.currentCaseNumber);
         closeStream();
+        setCancelButtonEnabled(false);
         statusEl.classList.remove('streaming');
         statusEl.innerHTML = '<span class="live-dot"></span> Complete';
         updateConnectionStatus('connected');
@@ -473,7 +484,10 @@ function connectSSE(jobId) {
 
     state.eventSource.addEventListener('job_failed', (e) => {
         // Backend explicitly signals job failure — exit processing immediately
+        // Guard: ignore duplicate events
+        if (!state.isProcessing && !state.currentJobId) return;
         closeStream();
+        setCancelButtonEnabled(false);
         statusEl.classList.remove('streaming');
         statusEl.innerHTML = '<span class="live-dot error"></span> Failed';
         state.isProcessing = false;
@@ -760,19 +774,31 @@ function updateProgressUI(data) {
 
 async function pollJobStatus(jobId) {
     try {
-        const res = await authFetch(`${API_BASE}/jobs/${jobId}`);
+        // Use the lightweight /status endpoint when available (SSE fallback polling)
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/status`);
         if (!res.ok) return;
         const response = await res.json();
         const data = response.data || response;
 
         if (data.status === 'completed') {
             closeStream();
+            setCancelButtonEnabled(false);
             loadResults(jobId);
             showToast('Processing complete!', 'success');
         } else if (data.status === 'failed') {
             closeStream();
-            const errMsg = data.error || data.message || 'Processing failed';
-            showProcessingError(errMsg, data);
+            setCancelButtonEnabled(false);
+            state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
+            showProcessingError(data.error || data.message || 'Processing failed', data);
+        } else if (data.status === 'cancelled') {
+            closeStream();
+            setCancelButtonEnabled(false);
+            state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
+            showToast('Job was cancelled', 'info');
         } else {
             updateProgressUI(data);
         }
@@ -2345,12 +2371,15 @@ function escapeHtml(text) {
 // ============================================
 
 async function cancelJob() {
-    if (!state.currentJobId) {
-        showToast('No job to cancel', 'warning');
+    if (!state.currentJobId || !state.isProcessing) {
+        showToast('No active job to cancel', 'warning');
         return;
     }
 
     if (!confirm('Are you sure you want to cancel the current job?')) return;
+
+    // Disable cancel button immediately to prevent double-clicks
+    setCancelButtonEnabled(false);
 
     try {
         const res = await authFetch(`${API_BASE}/jobs/${state.currentJobId}/cancel`, {
@@ -2360,13 +2389,25 @@ async function cancelJob() {
         if (res.ok) {
             closeStream();
             state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
             showToast('Job cancelled', 'info');
             resetToUpload();
+        } else if (res.status === 409) {
+            // Job already finished — re-enable cancel button in case UI is stale
+            const err = await res.json().catch(() => ({}));
+            showToast(`Cannot cancel: ${extractErrorMessage(err)}`, 'warning');
+            // Job is already done — clean up UI
+            state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
         } else {
             const err = await res.json().catch(() => ({}));
+            setCancelButtonEnabled(true);
             showToast(`Failed to cancel: ${extractErrorMessage(err)}`, 'error');
         }
     } catch (err) {
+        setCancelButtonEnabled(true);
         showToast(`Cancel failed: ${err.message}`, 'error');
     }
 }

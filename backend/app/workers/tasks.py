@@ -214,7 +214,7 @@ def update_job_status(job_id: str, status: JobStatus) -> None:
         job = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
         if job:
             job.status = status
-            if status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+            if status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
                 job.completed_at = datetime.utcnow()
             db.commit()
     except Exception as e:
@@ -427,7 +427,8 @@ def process_batch(
         Dict with batch processing status
     """
     logger.info(
-        "batch_started",
+        "JOB_STARTED",
+        event="JOB_STARTED",
         task_id=self.request.id,
         job_id=job_id,
         case_count=len(cases),
@@ -441,6 +442,19 @@ def process_batch(
     # Create publisher for job-level events
     from app.utils.stream_manager import StreamPublisher
     job_publisher = StreamPublisher()
+
+    # Explicitly mark job as PROCESSING so DB reflects correct state
+    update_job_status(job_id, JobStatus.PROCESSING)
+    db = SessionLocal()
+    try:
+        job_start = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
+        if job_start:
+            job_start.started_at = datetime.utcnow()
+            db.commit()
+    except Exception:
+        pass
+    finally:
+        db.close()
 
     try:
         for i, case in enumerate(cases):
@@ -479,18 +493,25 @@ def process_batch(
     except Exception as e:
         # Emit JOB_FAILED SSE so frontend exits processing immediately
         logger.error(
-            "batch_failed",
+            "JOB_FAILED",
+            event="JOB_FAILED",
             task_id=self.request.id,
             job_id=job_id,
             error=str(e),
+            exc_info=True,
         )
-        job_publisher.publish_job_failed(job_id, str(e))
+        try:
+            job_publisher.publish_job_failed(job_id, str(e))
+        except Exception:
+            pass
         update_job_status(job_id, JobStatus.FAILED)
         job_publisher.close()
         loop.close()
         raise
     finally:
-        loop.close()
+        # Only close if not already closed in the except block
+        if not loop.is_closed():
+            loop.close()
 
     # Determine final job status
     success_count = sum(1 for r in results if r.get("success"))
@@ -503,12 +524,15 @@ def process_batch(
     job_publisher.publish_job_complete(job_id, len(cases), success_count)
     job_publisher.close()
 
+    lifecycle_event = "JOB_COMPLETED" if final_status == JobStatus.COMPLETED else "JOB_FAILED"
     logger.info(
-        "batch_completed",
+        lifecycle_event,
+        event=lifecycle_event,
         task_id=self.request.id,
         job_id=job_id,
         case_count=len(cases),
         success_count=success_count,
+        status=final_status.value,
     )
 
     return {

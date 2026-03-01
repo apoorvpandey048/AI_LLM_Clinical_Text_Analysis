@@ -196,8 +196,8 @@ class StreamSubscriber:
                         event = json.loads(message["data"])
                         yield event
 
-                        # Stop on job-level completion
-                        if event.get("type") == "job_complete":
+                        # Stop on job-level completion or failure
+                        if event.get("type") in ("job_complete", "complete", "job_failed"):
                             break
                     except json.JSONDecodeError:
                         continue

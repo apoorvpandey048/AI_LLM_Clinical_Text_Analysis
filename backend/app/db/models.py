@@ -59,6 +59,7 @@ class JobStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class CaseStatus(str, enum.Enum):
