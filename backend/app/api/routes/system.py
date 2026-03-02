@@ -2,14 +2,18 @@
 System Info API routes.
 
 Provides system status, LLM backend info, worker count, and health info.
+Also includes Stage 5 operations dashboard endpoints (admin-only).
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import func, case as sql_case, text
+from sqlalchemy.orm import Session
 
 from app.api.routes.auth import require_auth, require_admin
-from app.db.models import User
+from app.db import get_db
+from app.db.models import User, Job, JobStatus, LayerMetric
 from app.config import get_settings
 from app.llm import OllamaClient, VLLMClient
 from app.utils import get_logger
@@ -375,3 +379,258 @@ async def set_temperature(request: Request, admin: User = Depends(require_admin)
             error=f"Failed to update temperature: {str(e)}",
             request_id=request_id,
         )
+
+
+# ============================================
+# Stage 5 — Operations Dashboard Endpoints
+# ============================================
+
+
+@router.get("/operations-summary")
+async def operations_summary(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Aggregated operations summary for the dashboard.
+    Uses SQL aggregation — no Python loops over large datasets.
+    """
+    request_id = getattr(request.state, "request_id", None)
+    logger.info("SYSTEM_SUMMARY_FETCHED", admin=admin.username, request_id=request_id)
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Single query: counts + averages from jobs table
+    row = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE status IN ('queued','processing') AND deleted_at IS NULL) AS active_jobs,
+            COUNT(*) FILTER (WHERE created_at >= :today AND deleted_at IS NULL)               AS jobs_today,
+            COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL)               AS completed_jobs,
+            COUNT(*) FILTER (WHERE status = 'failed'    AND deleted_at IS NULL)               AS failed_jobs,
+            COUNT(*) FILTER (WHERE deleted_at IS NULL)                                        AS total_jobs,
+            ROUND(AVG(
+                EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000
+            ) FILTER (WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL AND deleted_at IS NULL))
+                AS avg_runtime_ms
+        FROM jobs
+    """), {"today": today_start}).fetchone()
+
+    total = row[4] or 0
+    completed = row[2] or 0
+    success_rate = round((completed / total) * 100, 1) if total > 0 else 0.0
+
+    return create_response(
+        success=True,
+        data={
+            "active_jobs": row[0] or 0,
+            "jobs_today": row[1] or 0,
+            "completed_jobs": completed,
+            "failed_jobs": row[3] or 0,
+            "total_jobs": total,
+            "success_rate": success_rate,
+            "avg_runtime_ms": int(row[5]) if row[5] else None,
+        },
+        request_id=request_id,
+    )
+
+
+@router.get("/failure-analytics")
+async def failure_analytics(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Error category breakdown from layer_metrics.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    rows = db.execute(text("""
+        SELECT
+            COALESCE(error_type, 'UNKNOWN') AS category,
+            COUNT(*)                        AS cnt
+        FROM layer_metrics
+        WHERE success = false
+        GROUP BY category
+        ORDER BY cnt DESC
+    """)).fetchall()
+
+    total_failures = sum(r[1] for r in rows)
+    categories = []
+    for r in rows:
+        categories.append({
+            "category": r[0],
+            "count": r[1],
+            "percentage": round((r[1] / total_failures) * 100, 1) if total_failures > 0 else 0,
+        })
+
+    return create_response(
+        success=True,
+        data={
+            "total_failures": total_failures,
+            "categories": categories,
+        },
+        request_id=request_id,
+    )
+
+
+@router.get("/determinism")
+async def determinism_check(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Lightweight determinism health check.
+    Compares replayed jobs vs their source jobs structurally:
+    - same layer count in snapshot
+    - same layer execution order
+    - same failure pattern (no mismatch in which layers failed)
+    """
+    request_id = getattr(request.state, "request_id", None)
+    logger.info("DETERMINISM_CHECK_RUN", admin=admin.username, request_id=request_id)
+
+    # Get all completed replay jobs with their source
+    replay_rows = db.execute(text("""
+        SELECT
+            r.id          AS replay_id,
+            r.pipeline_snapshot AS replay_snap,
+            r.failed_count      AS replay_fails,
+            s.pipeline_snapshot AS source_snap,
+            s.failed_count      AS source_fails
+        FROM jobs r
+        JOIN jobs s ON r.replay_source_id = s.id
+        WHERE r.replay_source_id IS NOT NULL
+          AND r.status = 'completed'
+          AND r.deleted_at IS NULL
+          AND s.deleted_at IS NULL
+    """)).fetchall()
+
+    total_replays = len(replay_rows)
+    matching = 0
+    mismatch = 0
+
+    for row in replay_rows:
+        replay_snap = row[1] or []
+        source_snap = row[3] or []
+        replay_fails = row[2] or 0
+        source_fails = row[4] or 0
+
+        # Structural comparison: layer names and order
+        replay_layers = [l.get("layer_name", "") for l in replay_snap] if isinstance(replay_snap, list) else []
+        source_layers = [l.get("layer_name", "") for l in source_snap] if isinstance(source_snap, list) else []
+
+        if replay_layers == source_layers and replay_fails == source_fails:
+            matching += 1
+        else:
+            mismatch += 1
+
+    score = round((matching / total_replays) * 100, 1) if total_replays > 0 else 100.0
+
+    return create_response(
+        success=True,
+        data={
+            "total_replays": total_replays,
+            "matching_runs": matching,
+            "mismatch_runs": mismatch,
+            "determinism_score": score,
+        },
+        request_id=request_id,
+    )
+
+
+@router.get("/runtime-status")
+async def runtime_status(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Model & infrastructure runtime status.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    # Active model from Redis
+    active_model = settings.llm_model
+    queue_size = 0
+    try:
+        r = _get_redis()
+        active_model = r.get("snapai:active_model") or settings.llm_model
+        # Celery default queue length approximation
+        queue_size = r.llen("celery") or 0
+        r.close()
+    except Exception:
+        pass
+
+    # DB stats (single query)
+    row = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) AS total_completed,
+            COUNT(*) FILTER (WHERE status = 'processing' AND deleted_at IS NULL) AS currently_processing
+        FROM jobs
+    """)).fetchone()
+
+    # Worker ping — lightweight
+    worker_alive = False
+    try:
+        from app.workers.celery_app import celery_app
+        ping = celery_app.control.ping(timeout=1.0)
+        worker_alive = len(ping) > 0
+    except Exception:
+        pass
+
+    return create_response(
+        success=True,
+        data={
+            "active_model": active_model,
+            "inference_backend": settings.llm_backend,
+            "total_completed_jobs": row[0] or 0,
+            "currently_processing": row[1] or 0,
+            "worker_alive": worker_alive,
+            "queue_size": queue_size,
+        },
+        request_id=request_id,
+    )
+
+
+@router.get("/slow-layers")
+async def slow_layers(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Top slowest layers globally by average duration.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    rows = db.execute(text("""
+        SELECT
+            layer_id,
+            ROUND(AVG(duration_ms))   AS avg_duration_ms,
+            COUNT(*)                   AS run_count,
+            ROUND(AVG(duration_ms) FILTER (WHERE success = true))  AS avg_success_ms,
+            COUNT(*) FILTER (WHERE success = false)               AS failure_count
+        FROM layer_metrics
+        GROUP BY layer_id
+        ORDER BY avg_duration_ms DESC
+        LIMIT 10
+    """)).fetchall()
+
+    layers = []
+    for r in rows:
+        layers.append({
+            "layer_id": r[0],
+            "avg_duration_ms": int(r[1]) if r[1] else 0,
+            "run_count": r[2],
+            "avg_success_ms": int(r[3]) if r[3] else None,
+            "failure_count": r[4] or 0,
+        })
+
+    return create_response(
+        success=True,
+        data={"layers": layers},
+        request_id=request_id,
+    )

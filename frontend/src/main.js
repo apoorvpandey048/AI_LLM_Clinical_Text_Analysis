@@ -166,6 +166,7 @@ function initApp() {
     initLogViewer();
     if (authState.user && authState.user.role === 'admin') {
         document.getElementById('nav-admin')?.classList.remove('hidden');
+        document.getElementById('nav-ops')?.classList.remove('hidden');
         loadAdminUsers();
     }
 
@@ -214,11 +215,13 @@ function showToast(message, type = 'info') {
 // ============================================
 
 function switchPage(page) {
-    // Role guard: block non-admin from admin page
-    if (page === 'admin' && authState.user?.role !== 'admin') {
+    // Role guard: block non-admin from admin/ops pages
+    if ((page === 'admin' || page === 'operations') && authState.user?.role !== 'admin') {
         showToast('Admin access required', 'warning');
         return;
     }
+    // Load operations dashboard data on page switch
+    if (page === 'operations') loadOperationsDashboard();
 
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -3398,6 +3401,140 @@ function toggleLogAutoRefresh() {
 }
 
 // ============================================
+// Operations Dashboard (Stage 5)
+// ============================================
+
+/**
+ * Load the full operations dashboard.
+ * Fires all 4 API calls in parallel for fast rendering.
+ */
+async function loadOperationsDashboard() {
+    logger_info('OPERATIONS_VIEW_LOADED');
+    // Fire all requests in parallel
+    const [summaryP, runtimeP, failuresP, slowP, detP] = [
+        authFetch(`${API_BASE}/system/operations-summary`).then(r => r.ok ? r.json() : null).catch(() => null),
+        authFetch(`${API_BASE}/system/runtime-status`).then(r => r.ok ? r.json() : null).catch(() => null),
+        authFetch(`${API_BASE}/system/failure-analytics`).then(r => r.ok ? r.json() : null).catch(() => null),
+        authFetch(`${API_BASE}/system/slow-layers`).then(r => r.ok ? r.json() : null).catch(() => null),
+        authFetch(`${API_BASE}/system/determinism`).then(r => r.ok ? r.json() : null).catch(() => null),
+    ];
+    const [summary, runtime, failures, slowLayers, determinism] = await Promise.all([summaryP, runtimeP, failuresP, slowP, detP]);
+
+    // Section 1: Health Summary KPIs
+    if (summary?.data) {
+        const d = summary.data;
+        setText('ops-active-jobs', d.active_jobs);
+        setText('ops-jobs-today', d.jobs_today);
+        setText('ops-success-rate', d.success_rate != null ? `${d.success_rate}%` : '—');
+        setText('ops-failed-jobs', d.failed_jobs);
+        setText('ops-total-jobs', d.total_jobs);
+        setText('ops-avg-runtime', d.avg_runtime_ms != null ? opsFormatMs(d.avg_runtime_ms) : '—');
+        // Color code success rate
+        const srEl = document.getElementById('ops-success-rate');
+        if (srEl) srEl.classList.add(d.success_rate >= 95 ? 'ops-good' : d.success_rate >= 80 ? 'ops-warn' : 'ops-bad');
+    }
+
+    // Section 2: Runtime Status
+    if (runtime?.data) {
+        const d = runtime.data;
+        setText('ops-model', d.active_model || '—');
+        setText('ops-backend', (d.inference_backend || '—').toUpperCase());
+        const wEl = document.getElementById('ops-worker-status');
+        if (wEl) {
+            wEl.textContent = d.worker_alive ? 'Online' : 'Offline';
+            wEl.classList.add(d.worker_alive ? 'ops-good' : 'ops-bad');
+        }
+        setText('ops-queue-size', d.queue_size ?? '—');
+    }
+
+    // Section 3: Failure Analytics
+    renderFailureAnalytics(failures?.data);
+
+    // Section 4: Slow Layers
+    renderSlowLayers(slowLayers?.data);
+
+    // Section 5: Determinism
+    renderDeterminism(determinism?.data);
+}
+
+function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+}
+
+function opsFormatMs(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${(ms / 60000).toFixed(1)}m`;
+}
+
+function logger_info() { /* lightweight client-side log stub */ }
+
+function renderFailureAnalytics(data) {
+    const container = document.getElementById('ops-failure-content');
+    if (!container) return;
+    if (!data || !data.categories?.length) {
+        container.innerHTML = '<div class="ops-empty">No failures recorded.</div>';
+        return;
+    }
+    let html = `<div class="ops-failure-total">Total failures: <strong>${data.total_failures}</strong></div>`;
+    html += '<table class="ops-table"><thead><tr><th>Category</th><th>Count</th><th>%</th><th></th></tr></thead><tbody>';
+    data.categories.forEach(c => {
+        const barW = Math.max(c.percentage, 2);
+        html += `<tr>
+            <td class="ops-mono">${escapeHtml(c.category)}</td>
+            <td>${c.count}</td>
+            <td>${c.percentage}%</td>
+            <td class="ops-bar-cell"><div class="ops-bar" style="width:${barW}%"></div></td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function renderSlowLayers(data) {
+    const container = document.getElementById('ops-slow-layers-content');
+    if (!container) return;
+    if (!data || !data.layers?.length) {
+        container.innerHTML = '<div class="ops-empty">No layer metrics yet.</div>';
+        return;
+    }
+    let html = '<table class="ops-table"><thead><tr><th>Layer</th><th>Avg Time</th><th>Runs</th><th>Failures</th></tr></thead><tbody>';
+    data.layers.forEach(l => {
+        const warn = l.avg_duration_ms > 30000;
+        html += `<tr${warn ? ' class="ops-row-warn"' : ''}>
+            <td class="ops-mono">${escapeHtml(l.layer_id)}</td>
+            <td>${opsFormatMs(l.avg_duration_ms)}</td>
+            <td>${l.run_count}</td>
+            <td class="${l.failure_count > 0 ? 'ops-bad' : ''}">${l.failure_count}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function renderDeterminism(data) {
+    const container = document.getElementById('ops-determinism-content');
+    if (!container) return;
+    if (!data || data.total_replays === 0) {
+        container.innerHTML = '<div class="ops-empty">No replay runs found. Run a replay to see determinism metrics.</div>';
+        return;
+    }
+    const scoreCls = data.determinism_score >= 95 ? 'ops-good' : data.determinism_score >= 80 ? 'ops-warn' : 'ops-bad';
+    let html = `<div class="ops-determinism-score">
+        <span class="ops-det-number ${scoreCls}">${data.determinism_score}%</span>
+        <span class="ops-det-label">Determinism Score</span>
+    </div>
+    <div class="ops-det-details">
+        <span>Total Replays: <strong>${data.total_replays}</strong></span>
+        <span>Matching: <strong>${data.matching_runs}</strong></span>
+        <span>Mismatches: <strong class="${data.mismatch_runs > 0 ? 'ops-bad' : ''}">${data.mismatch_runs}</strong></span>
+    </div>`;
+    container.innerHTML = html;
+}
+
+// ============================================
 // Admin Panel
 // ============================================
 
@@ -3545,3 +3682,5 @@ window.toggleLogAutoRefresh = toggleLogAutoRefresh;
 window.approveUser = approveUser;
 window.rejectUser = rejectUser;
 window.loadAdminUsers = loadAdminUsers;
+// Operations Dashboard
+window.loadOperationsDashboard = loadOperationsDashboard;
