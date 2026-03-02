@@ -61,12 +61,14 @@ class StreamPublisher:
         label: str | None = None,
     ) -> None:
         """Publish a layer start event."""
+        from datetime import datetime, timezone
         event = {
             "type": "layer_start",
             "job_id": job_id,
             "case_number": case_number,
             "layer": layer,
             "label": label or layer,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         channel = get_channel_name(job_id)
         self._redis.publish(channel, json.dumps(event))
@@ -79,8 +81,10 @@ class StreamPublisher:
         success: bool,
         duration_ms: int = 0,
         label: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         """Publish a layer completion event."""
+        from datetime import datetime, timezone
         event = {
             "type": "layer_complete",
             "job_id": job_id,
@@ -89,7 +93,10 @@ class StreamPublisher:
             "label": label or layer,
             "success": success,
             "duration_ms": duration_ms,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if error_message:
+            event["error_message"] = error_message
         channel = get_channel_name(job_id)
         self._redis.publish(channel, json.dumps(event))
 

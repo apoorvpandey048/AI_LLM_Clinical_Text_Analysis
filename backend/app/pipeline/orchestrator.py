@@ -462,6 +462,15 @@ class PipelineOrchestrator:
         Returns:
             PipelineResult (backward-compatible with legacy fields)
         """
+        # Wrap on_layer_complete to accept optional error_message kwarg
+        _on_layer_complete_orig = on_layer_complete
+
+        async def _on_layer_complete_with_error(name: str, success: bool, duration_ms: int, error_message: str | None = None):
+            if _on_layer_complete_orig:
+                try:
+                    await _on_layer_complete_orig(name, success, duration_ms, error_message=error_message)
+                except TypeError:
+                    await _on_layer_complete_orig(name, success, duration_ms)
         layer_count = len(pipeline_layers)
         logger.info(
             "pipeline_dynamic_start",
@@ -562,8 +571,8 @@ class PipelineOrchestrator:
             total_tokens_input += result.tokens_input
             total_tokens_output += result.tokens_output
 
-            if on_layer_complete:
-                await on_layer_complete(name, result.success, result.duration_ms)
+            if _on_layer_complete_orig:
+                await _on_layer_complete_with_error(name, result.success, result.duration_ms, error_message=result.error if not result.success else None)
             logger.info("LAYER_END", event="LAYER_END", layer=name, success=result.success)
 
             # Failure handling

@@ -248,6 +248,10 @@ async def get_job_results(
         data={
             "job_id": str(job.id),
             "status": job.status.value,
+            "pipeline_snapshot": job.pipeline_snapshot,
+            "model_name": job.model_name,
+            "created_at": job.created_at.isoformat() + "Z" if job.created_at else None,
+            "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
             "results": [c.to_dict(include_outputs=True) for c in cases],
         },
         request_id=request_id,

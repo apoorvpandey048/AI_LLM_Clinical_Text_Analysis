@@ -388,10 +388,11 @@ def _process_case_impl(
                 label=layer_labels.get(layer),
             )
 
-        async def on_layer_complete(layer: str, success: bool, duration_ms: int):
+        async def on_layer_complete(layer: str, success: bool, duration_ms: int, error_message: str | None = None):
             publisher.publish_layer_complete(
                 job_id, case_number, layer, success, duration_ms,
                 label=layer_labels.get(layer),
+                error_message=error_message,
             )
 
         # Run pipeline with streaming and per-case temperature

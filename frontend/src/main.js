@@ -118,6 +118,12 @@ const state = {
     // Completed case tracking — prevents SSE tokens from overwriting finished outputs
     frozenCases: new Set(),
 
+    // Execution timeline per case — keyed by layer_id, never by index
+    // { layer_id: { label, status, startTime, endTime, durationMs, errorMessage } }
+    layerTimeline: {},
+    // Pipeline snapshot fetched from server after job completes
+    pipelineSnapshot: null,
+
     // Prompt state
     activePromptLayer: 'layer1_ctp',
     promptData: {},       // { layer: { content, source, version } }
@@ -405,7 +411,22 @@ function startStreaming(jobId) {
     state.streamingHistory = {};
     state.currentCaseNumber = 1;
     state.frozenCases = new Set();
+    state.layerTimeline = {};
+    state.pipelineSnapshot = null;
     setCancelButtonEnabled(true);
+
+    // Pre-populate timeline with PENDING entries for all known layers
+    Object.keys(LAYERS).forEach(key => {
+        state.layerTimeline[key] = {
+            label: LAYERS[key].label || key,
+            status: 'PENDING',
+            startTime: null,
+            endTime: null,
+            durationMs: null,
+            errorMessage: null,
+        };
+    });
+    renderExecutionTimeline();
 
     connectSSE(jobId);
 }
@@ -448,6 +469,16 @@ function connectSSE(jobId) {
                     LAYERS[layerKey].shortLabel = data.label.split('—')[0]?.trim() || data.label.substring(0, 20);
                 }
             }
+            // Timeline: mark layer as RUNNING
+            if (layerKey) {
+                if (!state.layerTimeline[layerKey]) {
+                    state.layerTimeline[layerKey] = { label: data.label || layerKey, status: 'PENDING', startTime: null, endTime: null, durationMs: null, errorMessage: null };
+                }
+                state.layerTimeline[layerKey].status = 'RUNNING';
+                state.layerTimeline[layerKey].startTime = data.timestamp ? new Date(data.timestamp) : new Date();
+                state.layerTimeline[layerKey].label = data.label || state.layerTimeline[layerKey].label;
+                updateTimelineRow(layerKey);
+            }
             setActiveLayer(layerKey);
             updateCurrentCaseInfo(data.case_number, null, layerKey);
         } catch { /* ignore */ }
@@ -460,6 +491,15 @@ function connectSSE(jobId) {
             const layerKey = normalizeLayerKey(data.layer);
             if (data.label && layerKey && LAYERS[layerKey]) {
                 LAYERS[layerKey].label = data.label;
+            }
+            // Timeline: mark layer as COMPLETED or FAILED
+            if (layerKey && state.layerTimeline[layerKey]) {
+                const entry = state.layerTimeline[layerKey];
+                entry.status = data.success === false ? 'FAILED' : 'COMPLETED';
+                entry.endTime = data.timestamp ? new Date(data.timestamp) : new Date();
+                entry.durationMs = data.duration_ms || (entry.startTime ? (entry.endTime - entry.startTime) : null);
+                if (data.error_message) entry.errorMessage = data.error_message;
+                updateTimelineRow(layerKey);
             }
             markLayerComplete(data.layer);
         } catch { /* ignore */ }
@@ -495,12 +535,12 @@ function connectSSE(jobId) {
         statusEl.innerHTML = '<span class="live-dot"></span> Complete';
         updateConnectionStatus('connected');
 
+        let resolvedJobId = jobId;
         try {
             const data = JSON.parse(e.data);
-            loadResults(data.job_id || jobId);
-        } catch {
-            loadResults(jobId);
-        }
+            resolvedJobId = data.job_id || jobId;
+        } catch { /* use outer jobId */ }
+        loadResults(resolvedJobId);
         showToast('Processing complete!', 'success');
     });
 
@@ -768,6 +808,174 @@ function markLayerComplete(layer) {
     if (el) el.className = 'layer-step completed';
 }
 
+// ============================================
+// Execution Timeline
+// ============================================
+
+const TIMELINE_STATUS_ICONS = {
+    PENDING:   '○',
+    RUNNING:   '●',
+    COMPLETED: '✓',
+    FAILED:    '✗',
+    SKIPPED:   '–',
+};
+
+/**
+ * Format milliseconds into a human-readable duration.
+ */
+function formatDuration(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Full re-render of the execution timeline panel.
+ * Called once at job start and when new layers appear.
+ */
+function renderExecutionTimeline() {
+    const container = document.getElementById('execution-timeline');
+    if (!container) return;
+
+    const entries = Object.entries(state.layerTimeline);
+    if (!entries.length) {
+        container.innerHTML = '<div class="timeline-empty">No layers yet</div>';
+        return;
+    }
+
+    const html = entries.map(([layerId, t]) => {
+        const statusClass = (t.status || 'PENDING').toLowerCase();
+        const icon = TIMELINE_STATUS_ICONS[t.status] || '○';
+        const dur = formatDuration(t.durationMs);
+        const errorHtml = t.errorMessage
+            ? `<details class="timeline-error-details"><summary class="timeline-error-summary">⚠ Error details</summary><pre class="timeline-error-msg">${escapeHtml(t.errorMessage)}</pre></details>`
+            : '';
+        return `<div class="timeline-row timeline-${statusClass}" id="tl-${layerId}" data-layer="${layerId}">
+            <span class="timeline-icon">${icon}</span>
+            <span class="timeline-label">${escapeHtml(t.label || layerId)}</span>
+            <span class="timeline-duration">${dur}</span>
+            <span class="timeline-status-badge">${t.status}</span>
+            ${errorHtml}
+        </div>`;
+    }).join('');
+
+    container.innerHTML = html;
+
+    // Also mirror into the results-section timeline (if visible)
+    const resultsTimeline = document.getElementById('results-execution-timeline');
+    if (resultsTimeline) resultsTimeline.innerHTML = html;
+}
+
+/**
+ * Surgically update a single timeline row without full re-render.
+ * Falls back to full re-render if the row doesn't exist yet.
+ */
+function updateTimelineRow(layerId) {
+    const row = document.getElementById(`tl-${layerId}`);
+    if (!row) {
+        renderExecutionTimeline();
+        return;
+    }
+    const t = state.layerTimeline[layerId];
+    if (!t) return;
+
+    const statusClass = (t.status || 'PENDING').toLowerCase();
+    const icon = TIMELINE_STATUS_ICONS[t.status] || '○';
+    const dur = formatDuration(t.durationMs);
+
+    row.className = `timeline-row timeline-${statusClass}`;
+    row.querySelector('.timeline-icon').textContent = icon;
+    row.querySelector('.timeline-label').textContent = t.label || layerId;
+    row.querySelector('.timeline-duration').textContent = dur;
+    row.querySelector('.timeline-status-badge').textContent = t.status;
+
+    // Error details
+    const existingErr = row.querySelector('.timeline-error-details');
+    if (t.errorMessage && !existingErr) {
+        row.insertAdjacentHTML('beforeend',
+            `<details class="timeline-error-details"><summary class="timeline-error-summary">⚠ Error details</summary><pre class="timeline-error-msg">${escapeHtml(t.errorMessage)}</pre></details>`
+        );
+    } else if (!t.errorMessage && existingErr) {
+        existingErr.remove();
+    }
+}
+
+/**
+ * Build a summary line for the timeline header badge.
+ */
+function getTimelineSummaryBadge() {
+    const entries = Object.values(state.layerTimeline);
+    const failed = entries.filter(t => t.status === 'FAILED').length;
+    const completed = entries.filter(t => t.status === 'COMPLETED').length;
+    const running = entries.filter(t => t.status === 'RUNNING').length;
+    if (running > 0) return { text: 'Running', cls: 'running' };
+    if (failed > 0) return { text: `${failed} failed`, cls: 'failed' };
+    if (completed === entries.length && completed > 0) return { text: 'All passed', cls: 'passed' };
+    return { text: 'Pending', cls: 'pending' };
+}
+
+// ============================================
+// Pipeline Snapshot Viewer
+// ============================================
+
+/**
+ * Render the read-only snapshot viewer panel.
+ * Data comes from the job results after completion or page reload.
+ */
+function renderSnapshotViewer(snapshot, jobData) {
+    const container = document.getElementById('snapshot-viewer');
+    if (!container) return;
+
+    if (!snapshot || !snapshot.length) {
+        container.innerHTML = '<div class="snapshot-empty">No snapshot available for this job.</div>';
+        return;
+    }
+
+    // Check if current layer config differs from the snapshot
+    const mismatch = detectSnapshotMismatch(snapshot);
+
+    const modelName = jobData?.model_name || '—';
+    const jobTime = jobData?.created_at ? new Date(jobData.created_at).toLocaleString() : '—';
+
+    let html = `<div class="snapshot-header">
+        <span class="snapshot-title">🔒 Pipeline Snapshot</span>
+        <span class="snapshot-meta">Run: ${escapeHtml(jobTime)} · Model: ${escapeHtml(modelName)}</span>
+        ${mismatch ? '<span class="snapshot-mismatch-badge">⚠ Configuration changed after this run</span>' : ''}
+    </div>`;
+
+    html += '<div class="snapshot-table-wrap"><table class="snapshot-table"><thead><tr>'
+        + '<th>#</th><th>Layer</th><th>ID</th><th>Version</th><th>Builtin</th>'
+        + '</tr></thead><tbody>';
+
+    snapshot.forEach((layer, i) => {
+        html += `<tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(layer.label || layer.layer_name)}</td>
+            <td class="snapshot-mono">${escapeHtml(layer.layer_name)}</td>
+            <td>${escapeHtml(layer.prompt_version || layer.version || '—')}</td>
+            <td>${layer.is_builtin ? '✓' : '—'}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+/**
+ * Compare snapshot layers with current LAYERS config.
+ * Returns true if there is a mismatch.
+ */
+function detectSnapshotMismatch(snapshot) {
+    if (!snapshot || !snapshot.length) return false;
+    const snapshotNames = snapshot.map(l => l.layer_name);
+    const currentNames = Object.keys(LAYERS);
+    if (snapshotNames.length !== currentNames.length) return true;
+    for (let i = 0; i < snapshotNames.length; i++) {
+        if (snapshotNames[i] !== currentNames[i]) return true;
+    }
+    return false;
+}
+
 function updateCurrentCaseInfo(caseNum, total, layerKey) {
     const caseLabel = document.getElementById('current-case-label');
     const layerLabel = document.getElementById('current-layer-label');
@@ -851,6 +1059,25 @@ async function loadResults(jobId) {
         const data = json.data || json;
         window.currentResults = data;
         renderResults(data);
+
+        // Render snapshot viewer with frozen pipeline config
+        state.pipelineSnapshot = data.pipeline_snapshot || null;
+        renderSnapshotViewer(data.pipeline_snapshot, data);
+
+        // If timeline is empty (page reload), reconstruct from snapshot
+        if (data.pipeline_snapshot && !Object.keys(state.layerTimeline).length) {
+            data.pipeline_snapshot.forEach(layer => {
+                state.layerTimeline[layer.layer_name] = {
+                    label: layer.label || layer.layer_name,
+                    status: 'COMPLETED',
+                    startTime: null,
+                    endTime: null,
+                    durationMs: null,
+                    errorMessage: null,
+                };
+            });
+        }
+        renderExecutionTimeline();
 
         // Persist job ID so results survive a page reload
         try { localStorage.setItem('snapai_last_job_id', jobId); } catch { /* ignore quota errors */ }
@@ -3026,6 +3253,8 @@ window.loadVersionHistory = loadVersionHistory;
 window.loadLayers = loadLayers;
 window.reorderLayersDrag = reorderLayersDrag;
 window.startRenameLayer = startRenameLayer;
+window.renderExecutionTimeline = renderExecutionTimeline;
+window.renderSnapshotViewer = renderSnapshotViewer;
 // Auth
 window.handleLogin = handleLogin;
 window.handleSignup = handleSignup;
