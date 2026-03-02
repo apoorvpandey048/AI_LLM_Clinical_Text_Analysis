@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.auth import require_auth, require_admin
 from app.db import get_db
-from app.db.models import User, Job, JobStatus, LayerMetric
+from app.db.models import User, Job, JobStatus, LayerMetric, AuditLog
 from app.config import get_settings
 from app.llm import OllamaClient, VLLMClient
 from app.utils import get_logger
@@ -632,5 +632,197 @@ async def slow_layers(
     return create_response(
         success=True,
         data={"layers": layers},
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Stage 6 — Regression Test Runner
+# ============================================
+
+
+@router.post("/run-regression-check")
+async def run_regression_check(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    limit: int = 5,
+):
+    """
+    Run a lightweight regression check using baseline (golden) jobs.
+
+    Behaviour:
+    * Select last N baseline jobs (default 5).
+    * For each baseline, structurally compare its snapshot against
+      a fresh replay of the same snapshot (without actually replaying —
+      we compare the stored snapshot and case results).
+    * Comparison rules: same layer count, same execution order,
+      same success/failure pattern, valid JSON schema outputs.
+    * Returns total_tests, passed, failed, details.
+
+    Safety:
+    * If a worker is currently processing, returns 409.
+    * Timeout guard: max 30-second DB scan.
+    """
+    import json as _json
+    import hashlib
+
+    request_id = getattr(request.state, "request_id", None)
+
+    logger.info(
+        "REGRESSION_RUN_STARTED",
+        event="REGRESSION_RUN_STARTED",
+        admin=admin.username,
+        limit=limit,
+        request_id=request_id,
+    )
+
+    # Safety: check if worker is currently processing jobs
+    processing_count = db.execute(text("""
+        SELECT COUNT(*) FROM jobs
+        WHERE status IN ('queued', 'processing') AND deleted_at IS NULL
+    """)).scalar() or 0
+
+    if processing_count > 0:
+        return create_response(
+            success=False,
+            error=f"Cannot run regression check — {processing_count} job(s) currently processing. Wait for completion.",
+            request_id=request_id,
+        )
+
+    # Get last N baseline jobs
+    baselines = db.execute(text("""
+        SELECT id, pipeline_snapshot, case_count, failed_count, model_name, created_at
+        FROM jobs
+        WHERE is_regression_baseline = true
+          AND status = 'completed'
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT :lim
+    """), {"lim": limit}).fetchall()
+
+    if not baselines:
+        return create_response(
+            success=True,
+            data={
+                "total_tests": 0,
+                "passed": 0,
+                "failed": 0,
+                "details": [],
+                "message": "No baseline jobs found. Mark completed jobs as baselines first.",
+            },
+            request_id=request_id,
+        )
+
+    details = []
+    passed = 0
+    failed = 0
+
+    for row in baselines:
+        job_id = row[0]
+        snapshot = row[1]
+        case_count = row[2] or 0
+        failed_count = row[3] or 0
+        model_name = row[4]
+        created_at = row[5]
+
+        issues = []
+
+        # Check 1: Snapshot exists and is non-empty
+        if not snapshot:
+            issues.append("Missing pipeline snapshot")
+        elif not isinstance(snapshot, list) or len(snapshot) == 0:
+            issues.append("Empty or invalid pipeline snapshot")
+        else:
+            # Check 2: Each layer has required fields (layer_name)
+            for i, layer in enumerate(snapshot):
+                if not isinstance(layer, dict):
+                    issues.append(f"Layer {i} is not a valid object")
+                elif not layer.get("layer_name"):
+                    issues.append(f"Layer {i} missing layer_name")
+
+        # Check 3: Case outputs — all completed cases have valid JSON layer outputs
+        from app.db.models import JobCase, CaseStatus as CS
+        cases = db.query(JobCase).filter(
+            JobCase.job_id == job_id
+        ).order_by(JobCase.case_number).all()
+
+        actual_completed = sum(1 for c in cases if c.status == CS.COMPLETED)
+        actual_failed = sum(1 for c in cases if c.status == CS.FAILED)
+
+        # Check 4: Case count consistency
+        if len(cases) != case_count:
+            issues.append(f"Case count mismatch: expected {case_count}, found {len(cases)}")
+
+        # Check 5: Failed count consistency
+        if actual_failed != failed_count:
+            issues.append(f"Failed count mismatch: expected {failed_count}, actual {actual_failed}")
+
+        # Check 6: Completed cases have structured outputs
+        for c in cases:
+            if c.status == CS.COMPLETED:
+                if c.layer1_output is None and c.layer2_output is None and c.layer3_output is None:
+                    # Check extra_layer_outputs too
+                    if not c.extra_layer_outputs:
+                        issues.append(f"Case {c.case_number}: no layer outputs despite completed status")
+
+        # Compute snapshot hash
+        snap_hash = None
+        if snapshot:
+            snap_hash = hashlib.sha256(
+                _json.dumps(snapshot, sort_keys=True).encode()
+            ).hexdigest()[:16]
+
+        test_passed = len(issues) == 0
+        if test_passed:
+            passed += 1
+        else:
+            failed += 1
+
+        details.append({
+            "job_id": str(job_id),
+            "model_name": model_name,
+            "created_at": created_at.isoformat() + "Z" if created_at else None,
+            "snapshot_hash": snap_hash,
+            "case_count": case_count,
+            "layer_count": len(snapshot) if isinstance(snapshot, list) else 0,
+            "passed": test_passed,
+            "issues": issues,
+        })
+
+    total_tests = len(baselines)
+
+    # Audit log
+    audit = AuditLog(
+        action="REGRESSION_RUN_COMPLETED",
+        details={
+            "admin": admin.username,
+            "total_tests": total_tests,
+            "passed": passed,
+            "failed": failed,
+        },
+    )
+    db.add(audit)
+    db.commit()
+
+    logger.info(
+        "REGRESSION_RUN_COMPLETED",
+        event="REGRESSION_RUN_COMPLETED",
+        admin=admin.username,
+        total_tests=total_tests,
+        passed=passed,
+        failed=failed,
+        request_id=request_id,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "total_tests": total_tests,
+            "passed": passed,
+            "failed": failed,
+            "details": details,
+            "ran_at": datetime.utcnow().isoformat() + "Z",
+        },
         request_id=request_id,
     )

@@ -907,3 +907,180 @@ async def compare_jobs(
         },
         request_id=request_id,
     )
+
+
+# ============================================
+# Regression Baseline
+# ============================================
+
+
+@router.post("/{job_id}/mark-baseline")
+async def mark_baseline(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Mark or unmark a completed job as a regression baseline (golden case).
+
+    Admin only. Only completed jobs with a pipeline snapshot can be baselines.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only completed jobs can be baselines — current status: {job.status.value}",
+        )
+
+    if not job.pipeline_snapshot:
+        raise HTTPException(
+            status_code=409,
+            detail="Job has no pipeline snapshot — cannot be used as baseline",
+        )
+
+    # Toggle baseline flag
+    new_val = not job.is_regression_baseline
+    job.is_regression_baseline = new_val
+    db.flush()
+
+    # Audit log
+    audit = AuditLog(
+        request_id=uuid.UUID(request_id) if request_id else None,
+        job_id=job.id,
+        action="BASELINE_MARKED" if new_val else "BASELINE_UNMARKED",
+        details={"admin": admin.username, "is_baseline": new_val},
+    )
+    db.add(audit)
+    db.commit()
+
+    logger.info(
+        "BASELINE_TOGGLED",
+        event="BASELINE_TOGGLED",
+        request_id=request_id,
+        job_id=job_id,
+        is_baseline=new_val,
+        admin=admin.username,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "job_id": job_id,
+            "is_regression_baseline": new_val,
+            "message": f"Job {'marked' if new_val else 'unmarked'} as regression baseline",
+        },
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Audit Export Package
+# ============================================
+
+
+@router.get("/{job_id}/audit-export")
+async def audit_export(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Produce a deterministic, read-only audit export package for a job.
+
+    Contains: job metadata, pipeline snapshot, model name, timeline events,
+    case outputs (parsed + raw), metrics, and replay source info.
+    """
+    import hashlib
+    import json as _json
+    from app.db.models import LayerMetric
+
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    # Cases
+    cases = db.query(JobCase).filter(
+        JobCase.job_id == job_uuid
+    ).order_by(JobCase.case_number).all()
+
+    # Metrics
+    metrics = db.query(LayerMetric).filter(
+        LayerMetric.job_id == job_uuid
+    ).order_by(LayerMetric.case_number, LayerMetric.created_at).all()
+
+    # Audit log entries
+    audit_events = db.query(AuditLog).filter(
+        AuditLog.job_id == job_uuid
+    ).order_by(AuditLog.timestamp).all()
+
+    # Snapshot hash
+    snapshot_hash = None
+    if job.pipeline_snapshot:
+        snap_str = _json.dumps(job.pipeline_snapshot, sort_keys=True)
+        snapshot_hash = hashlib.sha256(snap_str.encode()).hexdigest()
+
+    package = {
+        "audit_version": 1,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "job": {
+            **job.to_dict(),
+            "is_regression_baseline": job.is_regression_baseline,
+        },
+        "snapshot": job.pipeline_snapshot,
+        "snapshot_hash": snapshot_hash,
+        "cases": [c.to_dict(include_outputs=True) for c in cases],
+        "metrics": [m.to_dict() for m in metrics],
+        "timeline_events": [e.to_dict() for e in audit_events],
+        "replay_source_id": str(job.replay_source_id) if job.replay_source_id else None,
+    }
+
+    # Log the export
+    export_audit = AuditLog(
+        request_id=uuid.UUID(request_id) if request_id else None,
+        job_id=job.id,
+        action="AUDIT_EXPORT_GENERATED",
+        details={"user": user.username, "case_count": len(cases), "metric_count": len(metrics)},
+    )
+    db.add(export_audit)
+    db.commit()
+
+    logger.info(
+        "AUDIT_EXPORT_GENERATED",
+        event="AUDIT_EXPORT_GENERATED",
+        request_id=request_id,
+        job_id=job_id,
+        user=user.username,
+    )
+
+    return create_response(
+        success=True,
+        data=package,
+        request_id=request_id,
+    )

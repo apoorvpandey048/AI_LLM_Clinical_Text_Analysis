@@ -149,6 +149,9 @@ class Job(Base):
     # Replay provenance — links replay jobs back to their source
     replay_source_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
+    # Regression baseline flag — admin marks golden jobs for regression testing
+    is_regression_baseline = Column(Boolean, default=False, nullable=False)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -179,6 +182,7 @@ class Job(Base):
             "source_filename": self.source_filename,
             "model_name": self.model_name,
             "replay_source_id": str(self.replay_source_id) if self.replay_source_id else None,
+            "is_regression_baseline": self.is_regression_baseline,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
             "started_at": self.started_at.isoformat() + "Z" if self.started_at else None,

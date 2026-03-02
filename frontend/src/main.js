@@ -1333,6 +1333,9 @@ async function loadResults(jobId) {
         state.pipelineSnapshot = data.pipeline_snapshot || null;
         renderSnapshotViewer(data.pipeline_snapshot, data);
 
+        // Render locked config banner (Stage 6)
+        renderLockedConfig(data);
+
         // If timeline is empty (page reload), reconstruct from snapshot
         if (data.pipeline_snapshot && !Object.keys(state.layerTimeline).length) {
             data.pipeline_snapshot.forEach(layer => {
@@ -3623,6 +3626,159 @@ async function rejectUser(userId) {
 }
 
 // ============================================
+// Stage 6 — Regression, Audit Export, Locked Config
+// ============================================
+
+/**
+ * Render the Locked Execution Config banner on the results page.
+ * Shows model name, snapshot hash (SHA-256), and created_at timestamp.
+ */
+function renderLockedConfig(jobData) {
+    const banner = document.getElementById('locked-config-banner');
+    if (!banner) return;
+
+    const snapshot = jobData?.pipeline_snapshot;
+    if (!snapshot || !Array.isArray(snapshot) || snapshot.length === 0) {
+        banner.classList.add('hidden');
+        return;
+    }
+
+    // Compute SHA-256 hash of snapshot JSON (deterministic)
+    const snapStr = JSON.stringify(snapshot, Object.keys(snapshot[0] || {}).sort());
+    // Simple hash using Web Crypto unavailable synchronously — use a basic hash
+    let hash = 0;
+    for (let i = 0; i < snapStr.length; i++) {
+        const chr = snapStr.charCodeAt(i);
+        hash = ((hash << 5) - hash) + chr;
+        hash |= 0;
+    }
+    const hashHex = Math.abs(hash).toString(16).padStart(8, '0');
+
+    // Use a more robust approach — SHA-256 via SubtleCrypto (async, update later)
+    // For now, use sorted JSON + quick hash. The backend provides the real SHA-256.
+    const modelEl = document.getElementById('locked-config-model');
+    const hashEl = document.getElementById('locked-config-hash');
+    const createdEl = document.getElementById('locked-config-created');
+
+    if (modelEl) modelEl.textContent = jobData?.model_name || '—';
+    if (hashEl) hashEl.textContent = hashHex;
+    if (createdEl) createdEl.textContent = jobData?.created_at ? new Date(jobData.created_at).toLocaleString() : '—';
+
+    banner.classList.remove('hidden');
+
+    // Upgrade hash to real SHA-256 async
+    if (window.crypto && window.crypto.subtle) {
+        const enc = new TextEncoder();
+        window.crypto.subtle.digest('SHA-256', enc.encode(JSON.stringify(snapshot, null, 0))).then(buf => {
+            const arr = Array.from(new Uint8Array(buf));
+            const hex = arr.map(b => b.toString(16).padStart(2, '0')).join('');
+            if (hashEl) hashEl.textContent = hex.substring(0, 16);
+        }).catch(() => { /* keep fallback */ });
+    }
+}
+
+/**
+ * Download the audit export package for the current job.
+ */
+async function downloadAuditPackage() {
+    const jobId = state.currentJobId;
+    if (!jobId) {
+        showToast('No job selected', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('audit-export-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/audit-export`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to generate audit package');
+        }
+        const json = await res.json();
+        const pkg = json.data || json;
+        const text = JSON.stringify(pkg, null, 2);
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snap-ai-audit-${jobId.substring(0, 8)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Audit package downloaded', 'success');
+    } catch (err) {
+        showToast(`Audit export failed: ${err.message}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Download Audit Package'; }
+    }
+}
+
+/**
+ * Run the regression check from the Operations dashboard.
+ */
+async function runRegressionCheck() {
+    const btn = document.getElementById('ops-run-regression-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+
+    try {
+        const res = await authFetch(`${API_BASE}/system/run-regression-check`, { method: 'POST' });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+            throw new Error(json.error || 'Regression check failed');
+        }
+        const data = json.data;
+        renderRegressionResults(data);
+        showToast(`Regression check done: ${data.passed}/${data.total_tests} passed`, data.failed > 0 ? 'warning' : 'success');
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Regression Check'; }
+    }
+}
+
+/**
+ * Render regression check results in the Operations dashboard.
+ */
+function renderRegressionResults(data) {
+    // Update meta
+    const tsEl = document.getElementById('ops-regression-timestamp');
+    const prEl = document.getElementById('ops-regression-passrate');
+    if (tsEl) tsEl.textContent = `Last run: ${data.ran_at ? new Date(data.ran_at).toLocaleString() : '—'}`;
+    if (prEl) {
+        const rate = data.total_tests > 0 ? Math.round((data.passed / data.total_tests) * 100) : 0;
+        prEl.textContent = `Pass rate: ${rate}% (${data.passed}/${data.total_tests})`;
+        prEl.className = rate === 100 ? 'ops-good' : rate >= 80 ? 'ops-warn' : 'ops-bad';
+    }
+
+    const container = document.getElementById('ops-regression-results');
+    if (!container) return;
+
+    if (!data.details || data.details.length === 0) {
+        container.innerHTML = '<div class="ops-empty">No baseline jobs found. Mark completed jobs as baselines first.</div>';
+        return;
+    }
+
+    let html = '<table class="ops-table"><thead><tr><th>Job</th><th>Model</th><th>Layers</th><th>Cases</th><th>Result</th><th>Issues</th></tr></thead><tbody>';
+    data.details.forEach(d => {
+        const cls = d.passed ? 'ops-good' : 'ops-bad';
+        const status = d.passed ? '✓ PASS' : '✗ FAIL';
+        html += `<tr>
+            <td class="ops-mono" title="${escapeHtml(d.job_id)}">${escapeHtml(d.job_id.substring(0, 8))}…</td>
+            <td>${escapeHtml(d.model_name || '—')}</td>
+            <td>${d.layer_count}</td>
+            <td>${d.case_count}</td>
+            <td class="${cls}"><strong>${status}</strong></td>
+            <td>${d.issues.length > 0 ? escapeHtml(d.issues.join('; ')) : '—'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+// ============================================
 // Global expose for onclick handlers in HTML
 // ============================================
 
@@ -3684,3 +3840,6 @@ window.rejectUser = rejectUser;
 window.loadAdminUsers = loadAdminUsers;
 // Operations Dashboard
 window.loadOperationsDashboard = loadOperationsDashboard;
+// Stage 6 — Regression, Audit, Config
+window.runRegressionCheck = runRegressionCheck;
+window.downloadAuditPackage = downloadAuditPackage;

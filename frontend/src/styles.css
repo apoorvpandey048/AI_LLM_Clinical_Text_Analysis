@@ -3685,3 +3685,75 @@ input[type="file"].hidden {
   .ops-det-details { flex-direction: column; gap: var(--space-xs); align-items: center; }
   .ops-bar-cell { display: none; }
 }
+
+/* ============================================
+   Stage 6 — Locked Config Banner
+   ============================================ */
+
+.locked-config-banner {
+  background: var(--color-surface-elevated, #1e1e2e);
+  border: 1px solid var(--color-border, #333);
+  border-left: 3px solid var(--color-accent, #6c8aff);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  margin-bottom: var(--space-md, 12px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 6px);
+}
+
+.locked-config-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  font-weight: 600;
+  font-size: var(--font-size-sm, 0.85rem);
+  color: var(--color-accent, #6c8aff);
+}
+
+.locked-config-details {
+  display: flex;
+  gap: var(--space-lg, 16px);
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-text-muted, #999);
+}
+
+.locked-config-details code {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  background: rgba(255,255,255,0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+}
+
+/* ============================================
+   Stage 6 — Regression Safety Panel
+   ============================================ */
+
+.ops-regression-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm, 8px);
+  margin-bottom: var(--space-md, 12px);
+}
+
+.ops-regression-meta {
+  display: flex;
+  gap: var(--space-lg, 16px);
+  font-size: var(--font-size-sm, 0.85rem);
+  color: var(--color-text-muted, #999);
+}
+
+.ops-empty {
+  font-size: var(--font-size-sm, 0.85rem);
+  color: var(--color-text-muted, #999);
+  padding: var(--space-md, 12px) 0;
+}
+
+@media (max-width: 640px) {
+  .locked-config-details { flex-direction: column; gap: var(--space-xs, 4px); }
+  .ops-regression-header { flex-direction: column; align-items: flex-start; }
+}
