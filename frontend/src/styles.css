@@ -1847,6 +1847,42 @@ p {
   background: rgba(239, 68, 68, 0.1);
 }
 
+/* ---- Drag-and-Drop Reorder ---- */
+
+.prompt-tab.dragging {
+  opacity: 0.4;
+}
+
+.prompt-tab.drag-over {
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--space-md) - 3px);
+}
+
+/* ---- Inline Rename ---- */
+
+.editable-label {
+  cursor: default;
+}
+
+.editable-label:hover {
+  text-decoration: underline dotted var(--color-text-muted);
+  cursor: text;
+}
+
+.inline-rename-input {
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  width: 100%;
+  max-width: 400px;
+  outline: none;
+}
+
 /* ---- Model Status / Health ---- */
 
 .model-status-dot {

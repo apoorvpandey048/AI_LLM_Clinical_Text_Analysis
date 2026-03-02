@@ -136,6 +136,19 @@ class SetDefaultRequest(BaseModel):
     set_default: bool = True
 
 
+class ReorderRequest(BaseModel):
+    """Request body for reordering pipeline layers."""
+    order: list[dict] = Field(
+        ...,
+        description="List of {layer_name, display_order} dicts.",
+    )
+
+
+class RenameLayerRequest(BaseModel):
+    """Request body for renaming a layer's display label."""
+    label: str = Field(..., min_length=1, max_length=200)
+
+
 class PromptImportRequest(BaseModel):
     """Request body for importing prompts."""
     prompts: dict
@@ -490,6 +503,99 @@ async def create_custom_layer(
     )
 
 
+@router.post("/reorder")
+async def reorder_layers(
+    body: ReorderRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Reorder pipeline layers by setting display_order on each.
+
+    Accepts a list of {layer_name, display_order} dicts.
+    Validates that all active layers are included.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    if not body.order:
+        raise HTTPException(status_code=400, detail="Order list is empty")
+
+    if len(body.order) > 50:
+        raise HTTPException(status_code=400, detail="Too many layers (max 50)")
+
+    # Validate no duplicate layer_names
+    names = [item.get("layer_name") for item in body.order]
+    if len(set(names)) != len(names):
+        raise HTTPException(status_code=400, detail="Duplicate layer_name in order list")
+
+    # Load all active templates
+    active_templates = db.query(PromptTemplate).filter(
+        PromptTemplate.is_active == True
+    ).all()
+    active_map = {t.layer_name: t for t in active_templates}
+
+    # Validate all submitted names exist and are active
+    for item in body.order:
+        name = item.get("layer_name")
+        order = item.get("display_order")
+        if name not in active_map and name not in BUILTIN_LAYERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Layer '{name}' not found or not active",
+            )
+        if order is None or not isinstance(order, (int, float)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid display_order for layer '{name}'",
+            )
+
+    # Apply new order
+    updated = []
+    for item in body.order:
+        name = item["layer_name"]
+        order = int(item["display_order"])
+
+        template = active_map.get(name)
+        if template:
+            template.display_order = order
+            updated.append(name)
+        elif name in BUILTIN_LAYERS:
+            # Built-in layer without a DB record yet — create a minimal
+            # record so display_order is persisted.  The prompt content
+            # stays as the on-disk default; this row only carries metadata.
+            default_content = _load_default_prompt(name)
+            new_template = PromptTemplate(
+                layer_name=name,
+                label=LAYER_LABELS.get(name, name),
+                content=default_content,
+                version="1.3",
+                is_active=True,
+                is_builtin=True,
+                display_order=order,
+                is_default_prompt=True,
+            )
+            db.add(new_template)
+            updated.append(name)
+
+    db.commit()
+
+    logger.info(
+        "layers_reordered",
+        updated=updated,
+        request_id=request_id,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "message": f"Reordered {len(updated)} layer(s)",
+            "updated": updated,
+        },
+        request_id=request_id,
+    )
+
+
 # ============================================
 # Parameterised /{layer_name} routes
 # ============================================
@@ -667,6 +773,63 @@ async def delete_custom_layer(
     return create_response(
         success=True,
         data={"message": f"Layer '{layer_name}' deleted"},
+        request_id=request_id,
+    )
+
+
+@router.put("/{layer_name}/rename")
+async def rename_layer(
+    layer_name: str,
+    body: RenameLayerRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Rename a layer's display label."""
+    request_id = getattr(request.state, "request_id", None)
+
+    template = db.query(PromptTemplate).filter(
+        PromptTemplate.layer_name == layer_name,
+        PromptTemplate.is_active == True,
+    ).first()
+
+    if not template:
+        if layer_name in BUILTIN_LAYERS:
+            # Create a DB record for the built-in layer so we can store the label
+            template = PromptTemplate(
+                layer_name=layer_name,
+                content=_load_default_prompt(layer_name),
+                label=body.label,
+                version="custom",
+                is_active=True,
+                is_builtin=True,
+                display_order=BUILTIN_LAYERS.index(layer_name),
+                is_default_prompt=True,
+            )
+            db.add(template)
+            db.commit()
+            db.refresh(template)
+        else:
+            raise HTTPException(status_code=404, detail=f"Layer '{layer_name}' not found")
+    else:
+        template.label = body.label
+        template.updated_at = datetime.utcnow()
+        db.commit()
+
+    logger.info(
+        "layer_renamed",
+        layer=layer_name,
+        new_label=body.label,
+        request_id=request_id,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "message": f"Layer renamed to '{body.label}'",
+            "layer_name": layer_name,
+            "label": body.label,
+        },
         request_id=request_id,
     )
 

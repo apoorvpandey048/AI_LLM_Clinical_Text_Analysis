@@ -140,6 +140,9 @@ class Job(Base):
     source_type = Column(String(50))  # "file" or "text"
     source_filename = Column(String(255), nullable=True)
 
+    # Pipeline snapshot — frozen layer config at job start (deterministic execution)
+    pipeline_snapshot = Column(PortableJSON, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -171,6 +174,7 @@ class Job(Base):
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
             "started_at": self.started_at.isoformat() + "Z" if self.started_at else None,
             "completed_at": self.completed_at.isoformat() + "Z" if self.completed_at else None,
+            "pipeline_snapshot": self.pipeline_snapshot,
         }
 
 

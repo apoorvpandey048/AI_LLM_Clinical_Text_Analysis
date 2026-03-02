@@ -142,6 +142,8 @@ def _run_schema_migrations():
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(50) NULL",
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS model_version VARCHAR(200) NULL",
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP NULL",
+        # jobs — pipeline snapshot for deterministic execution
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_snapshot JSONB NULL",
     ]
 
     db = db_session.SessionLocal()

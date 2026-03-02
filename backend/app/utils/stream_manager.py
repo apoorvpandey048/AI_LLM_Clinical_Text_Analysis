@@ -39,6 +39,7 @@ class StreamPublisher:
         case_number: int,
         layer: str,
         token: str,
+        label: str | None = None,
     ) -> None:
         """Publish a single token to the stream."""
         event = {
@@ -46,6 +47,7 @@ class StreamPublisher:
             "job_id": job_id,
             "case_number": case_number,
             "layer": layer,
+            "label": label or layer,
             "token": token,
         }
         channel = get_channel_name(job_id)
@@ -56,6 +58,7 @@ class StreamPublisher:
         job_id: str,
         case_number: int,
         layer: str,
+        label: str | None = None,
     ) -> None:
         """Publish a layer start event."""
         event = {
@@ -63,6 +66,7 @@ class StreamPublisher:
             "job_id": job_id,
             "case_number": case_number,
             "layer": layer,
+            "label": label or layer,
         }
         channel = get_channel_name(job_id)
         self._redis.publish(channel, json.dumps(event))
@@ -74,6 +78,7 @@ class StreamPublisher:
         layer: str,
         success: bool,
         duration_ms: int = 0,
+        label: str | None = None,
     ) -> None:
         """Publish a layer completion event."""
         event = {
@@ -81,6 +86,7 @@ class StreamPublisher:
             "job_id": job_id,
             "case_number": case_number,
             "layer": layer,
+            "label": label or layer,
             "success": success,
             "duration_ms": duration_ms,
         }

@@ -134,6 +134,89 @@ def _get_extra_layers() -> list[dict]:
         db.close()
 
 
+def _build_pipeline_snapshot() -> list[dict]:
+    """Build a deterministic snapshot of the current pipeline configuration.
+
+    Combines built-in layers (with optional DB overrides) and custom layers,
+    sorted by display_order.  This snapshot is frozen at job start so that
+    prompt edits during execution cannot affect a running job.
+
+    Returns:
+        Sorted list of layer config dicts:
+        [{layer_name, label, prompt, is_builtin, display_order}, ...]
+    """
+    from app.db.models import PromptTemplate, PromptVersion
+    from app.api.routes.prompts import BUILTIN_LAYERS, LAYER_LABELS, _load_default_prompt
+
+    db = SessionLocal()
+    try:
+        layers: list[dict] = []
+
+        # Built-in layers
+        for idx, name in enumerate(BUILTIN_LAYERS):
+            template = db.query(PromptTemplate).filter(
+                PromptTemplate.layer_name == name,
+                PromptTemplate.is_active == True,
+            ).first()
+
+            if template:
+                content = template.content
+                if template.active_version_id:
+                    version = db.query(PromptVersion).filter(
+                        PromptVersion.id == template.active_version_id
+                    ).first()
+                    if version:
+                        content = version.content
+
+                layers.append({
+                    "layer_name": name,
+                    "label": template.label or LAYER_LABELS.get(name, name),
+                    "prompt": content,
+                    "is_builtin": True,
+                    "display_order": template.display_order if template.display_order != 99 else idx,
+                })
+            else:
+                layers.append({
+                    "layer_name": name,
+                    "label": LAYER_LABELS.get(name, name),
+                    "prompt": _load_default_prompt(name),
+                    "is_builtin": True,
+                    "display_order": idx,
+                })
+
+        # Custom layers
+        custom_templates = db.query(PromptTemplate).filter(
+            PromptTemplate.is_active == True,
+            PromptTemplate.layer_name.notin_(BUILTIN_LAYERS),
+        ).order_by(PromptTemplate.display_order).all()
+
+        for tmpl in custom_templates:
+            content = tmpl.content
+            if tmpl.active_version_id:
+                version = db.query(PromptVersion).filter(
+                    PromptVersion.id == tmpl.active_version_id
+                ).first()
+                if version:
+                    content = version.content
+
+            layers.append({
+                "layer_name": tmpl.layer_name,
+                "label": tmpl.label or tmpl.layer_name,
+                "prompt": content,
+                "is_builtin": False,
+                "display_order": tmpl.display_order,
+            })
+
+        # Sort by display_order for deterministic execution
+        layers.sort(key=lambda l: l["display_order"])
+        return layers
+    except Exception:
+        logger.warning("pipeline_snapshot_build_failed", exc_info=True)
+        return []
+    finally:
+        db.close()
+
+
 def save_case_result(job_id: str, case_number: int, result: dict) -> None:
     """
     Save a case result to the database.
@@ -231,6 +314,7 @@ def _process_case_impl(
     case_number: int = 1,
     task_id: str = None,
     loop: asyncio.AbstractEventLoop = None,
+    pipeline_layers: list[dict] | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation for processing a single clinical case.
@@ -241,6 +325,8 @@ def _process_case_impl(
     Args:
         loop: Optional event loop to reuse. If None, creates and closes one.
               When called from process_batch, pass a shared loop.
+        pipeline_layers: Frozen pipeline snapshot. When provided, the dynamic
+              execution path is used. When None, legacy path is used.
     """
     from app.utils.stream_manager import StreamPublisher
 
@@ -263,9 +349,21 @@ def _process_case_impl(
     try:
         # Get active model, custom prompts, and runtime temperature — all per case
         active_model = _get_active_model()
-        custom_prompts = _get_custom_prompts()
-        extra_layers = _get_extra_layers()
         runtime_temperature = _get_runtime_temperature()
+
+        # Build label lookup from snapshot (for streaming events)
+        layer_labels: dict[str, str] = {}
+        if pipeline_layers:
+            layer_labels = {
+                l["layer_name"]: l.get("label", l["layer_name"]) for l in pipeline_layers
+            }
+
+        # Legacy params — only needed when no snapshot
+        custom_prompts = None
+        extra_layers = None
+        if not pipeline_layers:
+            custom_prompts = _get_custom_prompts()
+            extra_layers = _get_extra_layers()
 
         # Create LLM client via factory (respects llm_backend setting)
         llm_client = get_llm_client()
@@ -278,19 +376,29 @@ def _process_case_impl(
         def make_token_callback():
             """Create sync wrapper for token publishing."""
             async def on_token(layer: str, token: str):
-                publisher.publish_token(job_id, case_number, layer, token)
+                publisher.publish_token(
+                    job_id, case_number, layer, token,
+                    label=layer_labels.get(layer),
+                )
             return on_token
 
         async def on_layer_start(layer: str):
-            publisher.publish_layer_start(job_id, case_number, layer)
+            publisher.publish_layer_start(
+                job_id, case_number, layer,
+                label=layer_labels.get(layer),
+            )
 
         async def on_layer_complete(layer: str, success: bool, duration_ms: int):
-            publisher.publish_layer_complete(job_id, case_number, layer, success, duration_ms)
+            publisher.publish_layer_complete(
+                job_id, case_number, layer, success, duration_ms,
+                label=layer_labels.get(layer),
+            )
 
         # Run pipeline with streaming and per-case temperature
         result = loop.run_until_complete(
             orchestrator.execute(
                 raw_text=raw_text,
+                pipeline_layers=pipeline_layers,
                 custom_prompts=custom_prompts if custom_prompts else None,
                 extra_layers=extra_layers if extra_layers else None,
                 on_token=make_token_callback(),
@@ -445,11 +553,23 @@ def process_batch(
 
     # Explicitly mark job as PROCESSING so DB reflects correct state
     update_job_status(job_id, JobStatus.PROCESSING)
+
+    # ── Build pipeline snapshot (frozen at job start) ──
+    pipeline_snapshot = _build_pipeline_snapshot()
+    logger.info(
+        "PIPELINE_SNAPSHOT",
+        event="PIPELINE_SNAPSHOT",
+        job_id=job_id,
+        layer_count=len(pipeline_snapshot),
+        layers=[l["layer_name"] for l in pipeline_snapshot],
+    )
+
     db = SessionLocal()
     try:
         job_start = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
         if job_start:
             job_start.started_at = datetime.utcnow()
+            job_start.pipeline_snapshot = pipeline_snapshot
             db.commit()
     except Exception:
         pass
@@ -475,8 +595,12 @@ def process_batch(
             finally:
                 db.close()
 
-            # Process each case — reuse the shared event loop
-            result = _process_case_impl(case_id, job_id, text, case_number, loop=loop)
+            # Process each case — reuse the shared event loop + frozen snapshot
+            result = _process_case_impl(
+                case_id, job_id, text, case_number,
+                loop=loop,
+                pipeline_layers=pipeline_snapshot if pipeline_snapshot else None,
+            )
 
             results.append(result)
 

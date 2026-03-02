@@ -422,6 +422,12 @@ function connectSSE(jobId) {
     state.eventSource.addEventListener('token', (e) => {
         try {
             const data = JSON.parse(e.data);
+            // Update LAYERS metadata from SSE label if available
+            const layerKey = normalizeLayerKey(data.layer);
+            if (data.label && layerKey && LAYERS[layerKey]) {
+                LAYERS[layerKey].label = data.label;
+                LAYERS[layerKey].shortLabel = data.label.split('—')[0]?.trim() || data.label.substring(0, 20);
+            }
             appendToken(data.layer, data.token, data.case_number);
         } catch { /* ignore parse errors */ }
     });
@@ -431,6 +437,17 @@ function connectSSE(jobId) {
             const data = JSON.parse(e.data);
             const layerKey = normalizeLayerKey(data.layer);
             state.currentCaseNumber = data.case_number || state.currentCaseNumber;
+            // Update LAYERS metadata from SSE label
+            if (data.label && layerKey) {
+                if (!LAYERS[layerKey]) {
+                    LAYERS[layerKey] = { label: data.label, shortLabel: data.label.split('—')[0]?.trim() || data.label.substring(0, 20), number: Object.keys(LAYERS).length + 1, is_builtin: false };
+                    renderDynamicLiveOutputTabs();
+                    renderDynamicLayerSteps();
+                } else {
+                    LAYERS[layerKey].label = data.label;
+                    LAYERS[layerKey].shortLabel = data.label.split('—')[0]?.trim() || data.label.substring(0, 20);
+                }
+            }
             setActiveLayer(layerKey);
             updateCurrentCaseInfo(data.case_number, null, layerKey);
         } catch { /* ignore */ }
@@ -439,6 +456,11 @@ function connectSSE(jobId) {
     state.eventSource.addEventListener('layer_complete', (e) => {
         try {
             const data = JSON.parse(e.data);
+            // Update LAYERS metadata from SSE label
+            const layerKey = normalizeLayerKey(data.layer);
+            if (data.label && layerKey && LAYERS[layerKey]) {
+                LAYERS[layerKey].label = data.label;
+            }
             markLayerComplete(data.layer);
         } catch { /* ignore */ }
     });
@@ -1782,13 +1804,96 @@ function renderDynamicPromptTabs() {
         const deleteBtn = (!layer.is_builtin && authState.user?.role === 'admin')
             ? `<span class="tab-delete-btn" onclick="event.stopPropagation(); deleteCustomLayer('${key}')" title="Delete layer">&times;</span>`
             : '';
-        html += `<button class="prompt-tab ${isActive ? 'active' : ''}" data-layer="${key}" onclick="switchPromptTab('${key}')">${layer.shortLabel || key}${deleteBtn}</button>`;
+        html += `<button class="prompt-tab ${isActive ? 'active' : ''}" data-layer="${key}" draggable="true" onclick="switchPromptTab('${key}')">${layer.shortLabel || key}${deleteBtn}</button>`;
     });
 
     // "Add Layer" button
     html += `<button class="prompt-tab add-layer-tab" onclick="showCreateLayerModal()" title="Create a new custom layer">+ Add Layer</button>`;
 
     container.innerHTML = html;
+
+    // ── Drag-and-drop reorder ──
+    const tabs = container.querySelectorAll('.prompt-tab[draggable="true"]');
+    let dragSrcEl = null;
+
+    tabs.forEach(tab => {
+        tab.addEventListener('dragstart', (e) => {
+            dragSrcEl = tab;
+            tab.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', tab.dataset.layer);
+        });
+        tab.addEventListener('dragend', () => {
+            tab.classList.remove('dragging');
+            tabs.forEach(t => t.classList.remove('drag-over'));
+        });
+        tab.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            tab.classList.add('drag-over');
+        });
+        tab.addEventListener('dragleave', () => {
+            tab.classList.remove('drag-over');
+        });
+        tab.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            tabs.forEach(t => t.classList.remove('drag-over'));
+            if (!dragSrcEl || dragSrcEl === tab) return;
+
+            const srcLayer = dragSrcEl.dataset.layer;
+            const dstLayer = tab.dataset.layer;
+            reorderLayersDrag(srcLayer, dstLayer);
+        });
+    });
+}
+
+/**
+ * Reorder layers by moving srcLayer to the position of dstLayer.
+ * Computes new display_order values and sends them to the backend.
+ */
+async function reorderLayersDrag(srcLayer, dstLayer) {
+    const keys = Object.keys(LAYERS);
+    const srcIdx = keys.indexOf(srcLayer);
+    const dstIdx = keys.indexOf(dstLayer);
+    if (srcIdx === -1 || dstIdx === -1 || srcIdx === dstIdx) return;
+
+    // Reorder keys array
+    keys.splice(srcIdx, 1);
+    keys.splice(dstIdx, 0, srcLayer);
+
+    // Build new LAYERS object in reordered sequence
+    const newLayers = {};
+    keys.forEach((k, i) => {
+        newLayers[k] = { ...LAYERS[k], number: i + 1 };
+    });
+    LAYERS = newLayers;
+
+    // Re-render all dynamic UIs
+    renderDynamicPromptTabs();
+    renderDynamicLiveOutputTabs();
+    renderDynamicLayerSteps();
+
+    // Send to backend
+    const order = keys.map((k, i) => ({ layer_name: k, display_order: i }));
+    try {
+        const res = await authFetch(`${API_BASE}/prompts/reorder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order }),
+        });
+        if (res.ok) {
+            showToast('Layer order updated', 'success');
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Reorder failed: ${extractErrorMessage(err)}`, 'error');
+            // Reload original order
+            await loadLayers();
+        }
+    } catch (err) {
+        showToast(`Reorder failed: ${err.message}`, 'error');
+        await loadLayers();
+    }
 }
 
 // ============================================
@@ -1913,8 +2018,10 @@ function switchPromptTab(layer) {
         t.classList.toggle('active', t.dataset.layer === layer);
     });
 
-    const layerName = document.getElementById('prompt-layer-name');
-    layerName.textContent = LAYERS[layer]?.label || layer;
+    const layerNameEl = document.getElementById('prompt-layer-name');
+    const currentLabel = LAYERS[layer]?.label || layer;
+    // Render editable label (double-click to rename)
+    layerNameEl.innerHTML = `<span class="editable-label" title="Double-click to rename" ondblclick="startRenameLayer('${layer}')">${escapeHtml(currentLabel)}</span>`;
 
     // Update reset button visibility (only for built-in layers)
     const resetBtn = document.getElementById('prompt-reset-btn');
@@ -1931,6 +2038,65 @@ function switchPromptTab(layer) {
 
     // Load version history for this layer
     loadVersionHistory(layer);
+}
+
+/**
+ * Start inline rename of a layer's display label.
+ */
+function startRenameLayer(layerKey) {
+    const layerNameEl = document.getElementById('prompt-layer-name');
+    const currentLabel = LAYERS[layerKey]?.label || layerKey;
+
+    layerNameEl.innerHTML = `<input type="text" class="inline-rename-input" id="rename-layer-input" value="${escapeHtml(currentLabel)}" maxlength="200">`;
+    const input = document.getElementById('rename-layer-input');
+    input.focus();
+    input.select();
+
+    const finishRename = async () => {
+        const newLabel = input.value.trim();
+        if (!newLabel || newLabel === currentLabel) {
+            // No change — restore display
+            layerNameEl.innerHTML = `<span class="editable-label" title="Double-click to rename" ondblclick="startRenameLayer('${layerKey}')">${escapeHtml(currentLabel)}</span>`;
+            return;
+        }
+
+        try {
+            const res = await authFetch(`${API_BASE}/prompts/${layerKey}/rename`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label: newLabel }),
+            });
+            if (res.ok) {
+                // Update local state
+                if (LAYERS[layerKey]) {
+                    LAYERS[layerKey].label = newLabel;
+                    LAYERS[layerKey].shortLabel = newLabel.split('—')[0]?.trim() || newLabel.substring(0, 20);
+                }
+                renderDynamicPromptTabs();
+                renderDynamicLiveOutputTabs();
+                renderDynamicLayerSteps();
+                showToast(`Renamed to "${newLabel}"`, 'success');
+            } else {
+                const err = await res.json().catch(() => ({}));
+                showToast(`Rename failed: ${extractErrorMessage(err)}`, 'error');
+            }
+        } catch (err) {
+            showToast(`Rename failed: ${err.message}`, 'error');
+        }
+
+        // Restore display with new or old label
+        const displayLabel = LAYERS[layerKey]?.label || layerKey;
+        layerNameEl.innerHTML = `<span class="editable-label" title="Double-click to rename" ondblclick="startRenameLayer('${layerKey}')">${escapeHtml(displayLabel)}</span>`;
+    };
+
+    input.addEventListener('blur', finishRename);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') {
+            input.value = currentLabel; // reset
+            input.blur();
+        }
+    });
 }
 
 async function loadAllPrompts() {
@@ -2858,6 +3024,8 @@ window.setActiveVersion = setActiveVersion;
 window.rollbackToVersion = rollbackToVersion;
 window.loadVersionHistory = loadVersionHistory;
 window.loadLayers = loadLayers;
+window.reorderLayersDrag = reorderLayersDrag;
+window.startRenameLayer = startRenameLayer;
 // Auth
 window.handleLogin = handleLogin;
 window.handleSignup = handleSignup;
