@@ -144,6 +144,9 @@ def _run_schema_migrations():
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP NULL",
         # jobs — pipeline snapshot for deterministic execution
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_snapshot JSONB NULL",
+        # jobs — model name + replay provenance (Stage 4)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_name VARCHAR(200) NULL",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS replay_source_id UUID NULL",
     ]
 
     db = db_session.SessionLocal()

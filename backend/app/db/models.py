@@ -143,6 +143,12 @@ class Job(Base):
     # Pipeline snapshot — frozen layer config at job start (deterministic execution)
     pipeline_snapshot = Column(PortableJSON, nullable=True)
 
+    # Model used for this job
+    model_name = Column(String(200), nullable=True)
+
+    # Replay provenance — links replay jobs back to their source
+    replay_source_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -152,6 +158,7 @@ class Job(Base):
 
     # Relationships
     cases = relationship("JobCase", back_populates="job", cascade="all, delete-orphan")
+    metrics = relationship("LayerMetric", back_populates="job", cascade="all, delete-orphan")
     user = relationship("User", back_populates="jobs")
 
     # Indexes
@@ -170,6 +177,8 @@ class Job(Base):
             "failed_count": self.failed_count,
             "source_type": self.source_type,
             "source_filename": self.source_filename,
+            "model_name": self.model_name,
+            "replay_source_id": str(self.replay_source_id) if self.replay_source_id else None,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
             "started_at": self.started_at.isoformat() + "Z" if self.started_at else None,
@@ -439,5 +448,48 @@ class PromptVersion(Base):
             "template_id": str(self.template_id),
             "content": self.content,
             "version_label": self.version_label,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+
+
+class LayerMetric(Base):
+    """
+    Per-layer execution metrics.
+
+    One row per layer per case per job.  Written once at layer_complete —
+    never during token streaming, so it does not slow the pipeline.
+    """
+
+    __tablename__ = "layer_metrics"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False, index=True)
+    case_number = Column(Integer, nullable=False)
+    layer_id = Column(String(100), nullable=False)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    success = Column(Boolean, nullable=False, default=True)
+    error_type = Column(String(50), nullable=True)  # LLM_ERROR, PARSE_ERROR, TIMEOUT, SCHEMA_ERROR, UNKNOWN
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    job = relationship("Job", back_populates="metrics")
+
+    __table_args__ = (
+        Index("ix_layer_metrics_job_layer", "job_id", "layer_id"),
+        Index("ix_layer_metrics_layer", "layer_id"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "id": str(self.id),
+            "job_id": str(self.job_id),
+            "case_number": self.case_number,
+            "layer_id": self.layer_id,
+            "duration_ms": self.duration_ms,
+            "success": self.success,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }

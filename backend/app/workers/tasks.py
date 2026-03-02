@@ -22,6 +22,56 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 
+def _classify_error(error_msg: str | None) -> str | None:
+    """Classify an error message into a standard error type.
+
+    Categories: LLM_ERROR, PARSE_ERROR, TIMEOUT, SCHEMA_ERROR, UNKNOWN
+    Simple heuristic classification is acceptable per spec.
+    """
+    if not error_msg:
+        return None
+    e = error_msg.lower()
+    if "timeout" in e or "timed out" in e:
+        return "TIMEOUT"
+    if "json" in e or "parse" in e or "decode" in e:
+        return "PARSE_ERROR"
+    if "schema" in e or "validation" in e or "required field" in e:
+        return "SCHEMA_ERROR"
+    if "llm" in e or "model" in e or "generate" in e or "ollama" in e or "vllm" in e or "connection" in e:
+        return "LLM_ERROR"
+    return "UNKNOWN"
+
+
+def save_layer_metric(
+    job_id: str,
+    case_number: int,
+    layer_id: str,
+    duration_ms: int,
+    success: bool,
+    error_message: str | None = None,
+) -> None:
+    """Persist a single layer metric row. Called once per layer completion."""
+    from app.db.models import LayerMetric
+    db = SessionLocal()
+    try:
+        metric = LayerMetric(
+            job_id=uuid.UUID(job_id),
+            case_number=case_number,
+            layer_id=layer_id,
+            duration_ms=duration_ms,
+            success=success,
+            error_type=_classify_error(error_message),
+            error_message=error_message[:500] if error_message else None,
+        )
+        db.add(metric)
+        db.commit()
+    except Exception as e:
+        logger.warning("save_layer_metric_failed", layer_id=layer_id, error=str(e))
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _get_or_create_event_loop():
     """Get the current event loop or create a new one for the thread."""
     try:
@@ -394,6 +444,15 @@ def _process_case_impl(
                 label=layer_labels.get(layer),
                 error_message=error_message,
             )
+            # Persist metric (one write per layer, not per token)
+            save_layer_metric(
+                job_id=job_id,
+                case_number=case_number,
+                layer_id=layer,
+                duration_ms=duration_ms,
+                success=success,
+                error_message=error_message,
+            )
 
         # Run pipeline with streaming and per-case temperature
         result = loop.run_until_complete(
@@ -556,21 +615,36 @@ def process_batch(
     update_job_status(job_id, JobStatus.PROCESSING)
 
     # ── Build pipeline snapshot (frozen at job start) ──
-    pipeline_snapshot = _build_pipeline_snapshot()
-    logger.info(
-        "PIPELINE_SNAPSHOT",
-        event="PIPELINE_SNAPSHOT",
-        job_id=job_id,
-        layer_count=len(pipeline_snapshot),
-        layers=[l["layer_name"] for l in pipeline_snapshot],
-    )
-
+    # For replay jobs, the snapshot is already set on the Job record — use it directly.
     db = SessionLocal()
     try:
         job_start = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
+        if job_start and job_start.pipeline_snapshot:
+            # Replay path: use the pre-set snapshot
+            pipeline_snapshot = job_start.pipeline_snapshot
+            logger.info(
+                "PIPELINE_SNAPSHOT_REPLAY",
+                event="PIPELINE_SNAPSHOT_REPLAY",
+                job_id=job_id,
+                layer_count=len(pipeline_snapshot),
+            )
+        else:
+            # Normal path: build a fresh snapshot
+            pipeline_snapshot = _build_pipeline_snapshot()
+            if job_start:
+                job_start.pipeline_snapshot = pipeline_snapshot
+            logger.info(
+                "PIPELINE_SNAPSHOT",
+                event="PIPELINE_SNAPSHOT",
+                job_id=job_id,
+                layer_count=len(pipeline_snapshot),
+                layers=[l["layer_name"] for l in pipeline_snapshot],
+            )
+        # Always set started_at and model_name
         if job_start:
             job_start.started_at = datetime.utcnow()
-            job_start.pipeline_snapshot = pipeline_snapshot
+            if not job_start.model_name:
+                job_start.model_name = _get_active_model()
             db.commit()
     except Exception:
         pass

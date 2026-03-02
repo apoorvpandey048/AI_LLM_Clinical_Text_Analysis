@@ -826,7 +826,8 @@ const TIMELINE_STATUS_ICONS = {
 function formatDuration(ms) {
     if (ms == null) return '—';
     if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${(ms / 60000).toFixed(1)}m`;
 }
 
 /**
@@ -937,10 +938,18 @@ function renderSnapshotViewer(snapshot, jobData) {
     const modelName = jobData?.model_name || '—';
     const jobTime = jobData?.created_at ? new Date(jobData.created_at).toLocaleString() : '—';
 
+    const replaySourceId = jobData?.replay_source_id;
+    const jobId = jobData?.id || jobData?.job_id;
+    const replayBadge = replaySourceId
+        ? `<span class="snapshot-replay-badge" title="Replayed from ${replaySourceId}">🔁 Replay</span>`
+        : '';
+
     let html = `<div class="snapshot-header">
         <span class="snapshot-title">🔒 Pipeline Snapshot</span>
         <span class="snapshot-meta">Run: ${escapeHtml(jobTime)} · Model: ${escapeHtml(modelName)}</span>
+        ${replayBadge}
         ${mismatch ? '<span class="snapshot-mismatch-badge">⚠ Configuration changed after this run</span>' : ''}
+        ${jobId ? `<button class="btn btn-sm btn-replay" onclick="replayJob('${jobId}')" title="Re-run with the same frozen snapshot">🔄 Replay This Run</button>` : ''}
     </div>`;
 
     html += '<div class="snapshot-table-wrap"><table class="snapshot-table"><thead><tr>'
@@ -974,6 +983,263 @@ function detectSnapshotMismatch(snapshot) {
         if (snapshotNames[i] !== currentNames[i]) return true;
     }
     return false;
+}
+
+// ============================================
+// Replay, Metrics & Comparison
+// ============================================
+
+/**
+ * Replay a completed job using its frozen pipeline snapshot.
+ * Creates a new job on the backend and starts streaming it.
+ */
+async function replayJob(jobId) {
+    if (!jobId) return;
+    if (!confirm('Replay this run with the same frozen snapshot? A new job will be created.')) return;
+
+    try {
+        showToast('Starting replay…', 'info');
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/replay`, { method: 'POST' });
+        if (!res.ok) {
+            const body = await safeJson(res);
+            throw new Error(body?.detail || `Replay failed (${res.status})`);
+        }
+        const data = await res.json();
+        const newJobId = data.new_job_id;
+        showToast(`Replay started → Job ${newJobId.substring(0, 8)}…`, 'success');
+
+        // Navigate to progress view and start streaming the new job
+        state.currentJobId = newJobId;
+        state.isProcessing = true;
+        document.getElementById('results-section').classList.add('hidden');
+        document.getElementById('progress-section').classList.remove('hidden');
+        startStreaming(newJobId);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+/**
+ * Load per-layer execution metrics for a specific job and render them.
+ */
+async function loadJobMetrics(jobId) {
+    const container = document.getElementById('metrics-viewer');
+    if (!container) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/metrics`);
+        if (!res.ok) {
+            container.innerHTML = '<div class="metrics-empty">No metrics available.</div>';
+            return;
+        }
+        const json = await res.json();
+        const metrics = json.metrics || json.data || [];
+        renderJobMetrics(metrics, container);
+    } catch {
+        container.innerHTML = '<div class="metrics-empty">Failed to load metrics.</div>';
+    }
+}
+
+/**
+ * Render per-layer metrics table for a single job.
+ */
+function renderJobMetrics(metrics, container) {
+    if (!metrics.length) {
+        container.innerHTML = '<div class="metrics-empty">No layer metrics recorded for this job.</div>';
+        return;
+    }
+
+    // Aggregate by layer_id
+    const byLayer = {};
+    metrics.forEach(m => {
+        if (!byLayer[m.layer_id]) {
+            byLayer[m.layer_id] = { total: 0, success: 0, fail: 0, totalMs: 0, errors: [] };
+        }
+        const b = byLayer[m.layer_id];
+        b.total++;
+        if (m.success) b.success++; else b.fail++;
+        b.totalMs += m.duration_ms || 0;
+        if (m.error_type) b.errors.push(m.error_type);
+    });
+
+    let html = '<table class="metrics-table"><thead><tr>'
+        + '<th>Layer</th><th>Runs</th><th>Avg Time</th><th>Successes</th><th>Failures</th><th>Success %</th>'
+        + '</tr></thead><tbody>';
+
+    Object.entries(byLayer).forEach(([layerId, b]) => {
+        const avgMs = b.total ? Math.round(b.totalMs / b.total) : 0;
+        const pct = b.total ? ((b.success / b.total) * 100).toFixed(1) : '—';
+        const pctCls = b.fail > 0 ? 'metrics-warn' : 'metrics-ok';
+        html += `<tr>
+            <td class="snapshot-mono">${escapeHtml(layerId)}</td>
+            <td>${b.total}</td>
+            <td>${formatDuration(avgMs)}</td>
+            <td>${b.success}</td>
+            <td class="${b.fail > 0 ? 'metrics-fail-cell' : ''}">${b.fail}</td>
+            <td class="${pctCls}">${pct}%</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+/**
+ * Load aggregate metrics across all of the user's jobs.
+ */
+async function loadAggregateMetrics() {
+    const container = document.getElementById('metrics-viewer');
+    if (!container) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/metrics/aggregate`);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderAggregateMetrics(data.layers || [], container);
+    } catch { /* non-fatal */ }
+}
+
+function renderAggregateMetrics(layers, container) {
+    if (!layers.length) return;
+
+    let html = '<h4 class="metrics-section-title">Aggregate Metrics (All Jobs)</h4>';
+    html += '<table class="metrics-table"><thead><tr>'
+        + '<th>Layer</th><th>Avg Time</th><th>Total Runs</th><th>Failures</th><th>Success %</th>'
+        + '</tr></thead><tbody>';
+
+    layers.forEach(l => {
+        const pctCls = l.success_rate < 100 ? 'metrics-warn' : 'metrics-ok';
+        html += `<tr>
+            <td class="snapshot-mono">${escapeHtml(l.layer_id)}</td>
+            <td>${formatDuration(Math.round(l.avg_duration_ms))}</td>
+            <td>${l.total_runs}</td>
+            <td class="${l.failures > 0 ? 'metrics-fail-cell' : ''}">${l.failures}</td>
+            <td class="${pctCls}">${l.success_rate.toFixed(1)}%</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML += html;
+}
+
+/**
+ * Populate the comparison job selector with completed jobs.
+ */
+async function populateCompareSelect(currentJobId) {
+    const select = document.getElementById('compare-job-select');
+    if (!select) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/jobs`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const jobs = (json.data || json.jobs || []).filter(
+            j => j.status === 'completed' && j.id !== currentJobId
+        );
+        select.innerHTML = '<option value="">— Select job —</option>';
+        jobs.forEach(j => {
+            const date = j.created_at ? new Date(j.created_at).toLocaleString() : '';
+            const model = j.model_name || '—';
+            const src = j.source_type || '';
+            const label = `${date} · ${model} · ${src} (${j.id.substring(0, 8)}…)`;
+            const opt = document.createElement('option');
+            opt.value = j.id;
+            opt.textContent = label;
+            select.appendChild(opt);
+        });
+    } catch { /* non-fatal */ }
+}
+
+/**
+ * Run a side-by-side comparison between the current job and the selected job.
+ */
+async function runComparison() {
+    const select = document.getElementById('compare-job-select');
+    const resultsDiv = document.getElementById('compare-results');
+    if (!select || !resultsDiv) return;
+
+    const jobB = select.value;
+    const jobA = state.currentJobId || localStorage.getItem('snapai_last_job_id');
+    if (!jobA || !jobB) {
+        showToast('Select a job to compare against', 'info');
+        return;
+    }
+
+    try {
+        resultsDiv.innerHTML = '<div class="compare-loading">Loading comparison…</div>';
+        const res = await authFetch(`${API_BASE}/jobs/compare?job_a=${jobA}&job_b=${jobB}`);
+        if (!res.ok) {
+            const body = await safeJson(res);
+            throw new Error(body?.detail || `Compare failed (${res.status})`);
+        }
+        const data = await res.json();
+        renderCompareResults(data, resultsDiv);
+    } catch (err) {
+        resultsDiv.innerHTML = `<div class="compare-error">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+/**
+ * Render comparison results as a side-by-side table.
+ */
+function renderCompareResults(data, container) {
+    const a = data.job_a || {};
+    const b = data.job_b || {};
+    const aMetrics = a.layer_metrics || {};
+    const bMetrics = b.layer_metrics || {};
+
+    // Collect all layer IDs from both jobs
+    const allLayers = [...new Set([...Object.keys(aMetrics), ...Object.keys(bMetrics)])];
+
+    let html = '<table class="compare-table"><thead><tr>'
+        + '<th>Layer</th>'
+        + `<th colspan="3">Job A <span class="compare-id">${(a.job_id || '').substring(0, 8)}…</span></th>`
+        + `<th colspan="3">Job B <span class="compare-id">${(b.job_id || '').substring(0, 8)}…</span></th>`
+        + '<th>Δ Avg</th>'
+        + '</tr><tr class="compare-subheader">'
+        + '<th></th><th>Avg</th><th>Runs</th><th>Fail</th><th>Avg</th><th>Runs</th><th>Fail</th><th></th>'
+        + '</tr></thead><tbody>';
+
+    allLayers.forEach(layerId => {
+        const la = aMetrics[layerId] || {};
+        const lb = bMetrics[layerId] || {};
+        const avgA = la.avg_duration_ms != null ? Math.round(la.avg_duration_ms) : null;
+        const avgB = lb.avg_duration_ms != null ? Math.round(lb.avg_duration_ms) : null;
+        let delta = '';
+        if (avgA != null && avgB != null) {
+            const diff = avgB - avgA;
+            const cls = diff > 0 ? 'compare-slower' : diff < 0 ? 'compare-faster' : '';
+            delta = `<span class="${cls}">${diff > 0 ? '+' : ''}${formatDuration(Math.abs(diff))}</span>`;
+        }
+        html += `<tr>
+            <td class="snapshot-mono">${escapeHtml(layerId)}</td>
+            <td>${avgA != null ? formatDuration(avgA) : '—'}</td>
+            <td>${la.total_runs ?? '—'}</td>
+            <td>${la.failures ?? '—'}</td>
+            <td>${avgB != null ? formatDuration(avgB) : '—'}</td>
+            <td>${lb.total_runs ?? '—'}</td>
+            <td>${lb.failures ?? '—'}</td>
+            <td>${delta || '—'}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+
+    // Snapshot diff
+    const snapshotDiff = data.snapshot_diff || {};
+    if (snapshotDiff.only_in_a?.length || snapshotDiff.only_in_b?.length) {
+        html += '<div class="compare-snapshot-diff">';
+        html += '<h4>Snapshot Differences</h4>';
+        if (snapshotDiff.only_in_a?.length) {
+            html += `<div class="compare-diff-section"><strong>Only in Job A:</strong> ${snapshotDiff.only_in_a.map(escapeHtml).join(', ')}</div>`;
+        }
+        if (snapshotDiff.only_in_b?.length) {
+            html += `<div class="compare-diff-section"><strong>Only in Job B:</strong> ${snapshotDiff.only_in_b.map(escapeHtml).join(', ')}</div>`;
+        }
+        html += '</div>';
+    }
+
+    container.innerHTML = html;
 }
 
 function updateCurrentCaseInfo(caseNum, total, layerKey) {
@@ -1078,6 +1344,11 @@ async function loadResults(jobId) {
             });
         }
         renderExecutionTimeline();
+
+        // Load per-layer execution metrics for this job
+        loadJobMetrics(jobId);
+        // Populate comparison selector with other completed jobs
+        populateCompareSelect(jobId);
 
         // Persist job ID so results survive a page reload
         try { localStorage.setItem('snapai_last_job_id', jobId); } catch { /* ignore quota errors */ }
@@ -3255,6 +3526,12 @@ window.reorderLayersDrag = reorderLayersDrag;
 window.startRenameLayer = startRenameLayer;
 window.renderExecutionTimeline = renderExecutionTimeline;
 window.renderSnapshotViewer = renderSnapshotViewer;
+// Replay, Metrics & Compare
+window.replayJob = replayJob;
+window.loadJobMetrics = loadJobMetrics;
+window.loadAggregateMetrics = loadAggregateMetrics;
+window.runComparison = runComparison;
+window.populateCompareSelect = populateCompareSelect;
 // Auth
 window.handleLogin = handleLogin;
 window.handleSignup = handleSignup;

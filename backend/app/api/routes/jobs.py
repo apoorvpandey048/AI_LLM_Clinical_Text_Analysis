@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
-from sqlalchemy import desc, and_
+from sqlalchemy import desc, and_, Integer
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import require_auth, require_admin
@@ -557,6 +557,353 @@ async def cancel_job(
             "job_id": job_id,
             "celery_revoked": revoked,
             "cases_cancelled": len(processing_cases),
+        },
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Replay
+# ============================================
+
+
+@router.post("/{job_id}/replay")
+async def replay_job(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Replay a completed job using its frozen pipeline snapshot.
+
+    Creates a NEW job that executes with the exact same layer config,
+    prompts, and order as the original run.  The original job is never
+    mutated.  Current prompt edits do NOT affect the replay.
+
+    Safety rules:
+    - Cannot replay a job that is still running (QUEUED / PROCESSING)
+    - Cannot replay a job without a pipeline_snapshot
+    - Cannot replay a job that is itself a replay of a running source
+    """
+    import hashlib
+
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    source_job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not source_job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(source_job, user)
+
+    # ── Safety checks ──
+    if source_job.status in (JobStatus.QUEUED, JobStatus.PROCESSING):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot replay a job that is still running",
+        )
+
+    if not source_job.pipeline_snapshot:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot replay — job has no pipeline snapshot",
+        )
+
+    # Prevent duplicate replay loops: if there is already a QUEUED/PROCESSING
+    # replay of this exact source, block a second one.
+    existing_replay = db.query(Job).filter(
+        Job.replay_source_id == source_job.id,
+        Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING]),
+        Job.deleted_at.is_(None),
+    ).first()
+    if existing_replay:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A replay of this job is already running (job {existing_replay.id})",
+        )
+
+    # ── Get original cases ──
+    source_cases = db.query(JobCase).filter(
+        JobCase.job_id == job_uuid
+    ).order_by(JobCase.case_number).all()
+
+    if not source_cases:
+        raise HTTPException(status_code=409, detail="Source job has no cases to replay")
+
+    # ── Create new job ──
+    new_job = Job(
+        status=JobStatus.QUEUED,
+        case_count=len(source_cases),
+        source_type=f"replay:{source_job.source_type or 'unknown'}",
+        source_filename=source_job.source_filename,
+        pipeline_snapshot=source_job.pipeline_snapshot,
+        model_name=source_job.model_name,
+        replay_source_id=source_job.id,
+        user_id=user.id,
+    )
+    db.add(new_job)
+    db.flush()
+
+    # Create case records (copy input_text from source)
+    for sc in source_cases:
+        new_case = JobCase(
+            job_id=new_job.id,
+            case_number=sc.case_number,
+            case_label=sc.case_label,
+            status=CaseStatus.QUEUED,
+            input_text=sc.input_text,
+        )
+        db.add(new_case)
+
+    # Compute snapshot hash for audit
+    import json as _json
+    snapshot_str = _json.dumps(source_job.pipeline_snapshot, sort_keys=True)
+    snapshot_hash = hashlib.sha256(snapshot_str.encode()).hexdigest()[:16]
+
+    # Audit logs
+    for action, details in [
+        ("REPLAY_STARTED", {"source_job_id": str(source_job.id), "new_job_id": str(new_job.id), "snapshot_hash": snapshot_hash}),
+        ("REPLAY_SOURCE_JOB", {"source_job_id": str(source_job.id), "case_count": len(source_cases)}),
+        ("REPLAY_NEW_JOB", {"new_job_id": str(new_job.id), "snapshot_hash": snapshot_hash}),
+    ]:
+        audit = AuditLog(
+            request_id=uuid.UUID(request_id) if request_id else None,
+            job_id=new_job.id,
+            action=action,
+            details=details,
+        )
+        db.add(audit)
+
+    db.commit()
+
+    # ── Queue for processing ──
+    from app.workers.tasks import process_batch
+
+    db_cases = db.query(JobCase).filter(
+        JobCase.job_id == new_job.id
+    ).order_by(JobCase.case_number).all()
+
+    task = process_batch.delay(
+        str(new_job.id),
+        [{"case_id": str(c.id), "case_number": c.case_number, "text": c.input_text} for c in db_cases],
+    )
+
+    new_job.celery_task_id = task.id
+    new_job.status = JobStatus.PROCESSING
+    new_job.started_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(
+        "REPLAY_STARTED",
+        event="REPLAY_STARTED",
+        request_id=request_id,
+        source_job_id=job_id,
+        new_job_id=str(new_job.id),
+        case_count=len(source_cases),
+        snapshot_hash=snapshot_hash,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "job_id": str(new_job.id),
+            "source_job_id": job_id,
+            "status": "processing",
+            "case_count": len(source_cases),
+            "snapshot_hash": snapshot_hash,
+            "message": f"Replaying {len(source_cases)} case(s) from job {job_id[:8]}...",
+        },
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Metrics API
+# ============================================
+
+
+@router.get("/{job_id}/metrics")
+async def get_job_metrics(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Get per-layer execution metrics for a job.
+
+    Returns all LayerMetric rows for the given job.
+    """
+    from app.db.models import LayerMetric
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    metrics = db.query(LayerMetric).filter(
+        LayerMetric.job_id == job_uuid
+    ).order_by(LayerMetric.case_number, LayerMetric.created_at).all()
+
+    return create_response(
+        success=True,
+        data={
+            "job_id": job_id,
+            "metrics": [m.to_dict() for m in metrics],
+        },
+        request_id=request_id,
+    )
+
+
+@router.get("/metrics/aggregate")
+async def get_aggregate_metrics(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Get aggregated execution metrics across all jobs for the current user.
+
+    Returns per-layer: avg_duration_ms, total_runs, failures, success_rate.
+    """
+    from app.db.models import LayerMetric
+    from sqlalchemy import func
+    request_id = getattr(request.state, "request_id", None)
+
+    # Build base query scoped to user's jobs
+    base = db.query(LayerMetric).join(Job, LayerMetric.job_id == Job.id).filter(
+        Job.deleted_at.is_(None),
+    )
+    if user.role != UserRole.ADMIN:
+        base = base.filter(Job.user_id == user.id)
+
+    rows = base.with_entities(
+        LayerMetric.layer_id,
+        func.avg(LayerMetric.duration_ms).label("avg_duration_ms"),
+        func.count().label("total_runs"),
+        func.sum(func.cast(LayerMetric.success == False, Integer)).label("failures"),
+    ).group_by(LayerMetric.layer_id).all()
+
+    result = []
+    for row in rows:
+        total = row.total_runs or 1
+        failures = row.failures or 0
+        result.append({
+            "layer_id": row.layer_id,
+            "avg_duration_ms": round(row.avg_duration_ms) if row.avg_duration_ms else 0,
+            "total_runs": total,
+            "failures": failures,
+            "success_rate": round(((total - failures) / total) * 100, 1),
+        })
+
+    return create_response(
+        success=True,
+        data={"layers": result},
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Run Comparison
+# ============================================
+
+
+@router.get("/compare")
+async def compare_jobs(
+    request: Request,
+    job_a: str = Query(..., description="First job ID"),
+    job_b: str = Query(..., description="Second job ID"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Compare two job executions side-by-side.
+
+    Returns layer durations, success/failure diffs, and snapshot diffs.
+    """
+    from app.db.models import LayerMetric
+    request_id = getattr(request.state, "request_id", None)
+
+    def _load_job(jid_str):
+        try:
+            jid = uuid.UUID(jid_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid job ID: {jid_str}")
+        job = db.query(Job).filter(and_(Job.id == jid, Job.deleted_at.is_(None))).first()
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job not found: {jid_str}")
+        _check_job_ownership(job, user)
+        return job
+
+    ja = _load_job(job_a)
+    jb = _load_job(job_b)
+
+    def _metrics_by_layer(job_uuid):
+        rows = db.query(LayerMetric).filter(LayerMetric.job_id == job_uuid).all()
+        grouped = {}
+        for m in rows:
+            grouped.setdefault(m.layer_id, []).append(m)
+        summary = {}
+        for lid, ms in grouped.items():
+            total = len(ms)
+            fails = sum(1 for m in ms if not m.success)
+            avg_dur = sum(m.duration_ms for m in ms) / total if total else 0
+            summary[lid] = {
+                "avg_duration_ms": round(avg_dur),
+                "total_runs": total,
+                "failures": fails,
+                "success_rate": round(((total - fails) / total) * 100, 1) if total else 0,
+            }
+        return summary
+
+    ma = _metrics_by_layer(ja.id)
+    mb = _metrics_by_layer(jb.id)
+    all_layers = sorted(set(list(ma.keys()) + list(mb.keys())))
+
+    comparisons = []
+    for lid in all_layers:
+        a_data = ma.get(lid, {})
+        b_data = mb.get(lid, {})
+        comparisons.append({
+            "layer_id": lid,
+            "job_a": a_data,
+            "job_b": b_data,
+        })
+
+    # Snapshot diff
+    snap_a = ja.pipeline_snapshot or []
+    snap_b = jb.pipeline_snapshot or []
+    snap_a_names = [l.get("layer_name") for l in snap_a]
+    snap_b_names = [l.get("layer_name") for l in snap_b]
+    snapshot_same = snap_a_names == snap_b_names
+
+    return create_response(
+        success=True,
+        data={
+            "job_a": {"job_id": str(ja.id), "status": ja.status.value, "created_at": ja.created_at.isoformat() + "Z" if ja.created_at else None, "model_name": ja.model_name},
+            "job_b": {"job_id": str(jb.id), "status": jb.status.value, "created_at": jb.created_at.isoformat() + "Z" if jb.created_at else None, "model_name": jb.model_name},
+            "layers": comparisons,
+            "snapshot_same": snapshot_same,
+            "snapshot_a_layers": snap_a_names,
+            "snapshot_b_layers": snap_b_names,
         },
         request_id=request_id,
     )

@@ -365,6 +365,37 @@ Cases should be separated by headers like 'Case #1', 'Case #2', etc." rows="12">
                         </div>
                     </details>
 
+                    <!-- Execution Metrics -->
+                    <details class="metrics-details" id="metrics-details-wrap">
+                        <summary class="metrics-summary">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+                            Execution Metrics
+                        </summary>
+                        <div id="metrics-viewer">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </details>
+
+                    <!-- Run Comparison -->
+                    <details class="compare-details" id="compare-details-wrap">
+                        <summary class="compare-summary">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+                            Compare Runs
+                        </summary>
+                        <div id="compare-viewer">
+                            <div class="compare-controls">
+                                <label class="compare-label">Select a completed job to compare against:</label>
+                                <select id="compare-job-select" class="compare-select">
+                                    <option value="">— Select job —</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="runComparison()">Compare</button>
+                            </div>
+                            <div id="compare-results">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </details>
+
                     <!-- View Toggle -->
                     <div class="view-toggle">
                         <button class="view-toggle-btn active" data-view="table" onclick="switchView('table')">
