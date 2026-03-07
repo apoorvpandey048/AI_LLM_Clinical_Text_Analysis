@@ -60,16 +60,9 @@ async function safeJson(res) {
  * Handles: string, {error: "..."}, {detail: "..."}, {message: "..."},
  * {error: {message: "..."}}, and prevents [object Object].
  */
-function extractErrorMessage(val) {
-    if (val == null) return '';
-    if (typeof val === 'string') return val;
-    if (typeof val.error === 'string') return val.error;
-    if (typeof val.detail === 'string') return val.detail;
-    if (typeof val.message === 'string') return val.message;
-    if (val.error && typeof val.error.message === 'string') return val.error.message;
-    if (val.error && typeof val.error === 'object') return JSON.stringify(val.error);
-    return String(val);
-}
+// `extractErrorMessage` implementation appears later in the file with a
+// more comprehensive handler (validation arrays, nested error objects, etc.).
+// Keep the single comprehensive implementation to avoid duplicate declarations.
 
 /**
  * Safely attempt to parse JSON, returning null on failure.
