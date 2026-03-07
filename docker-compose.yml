@@ -43,6 +43,12 @@ services:
     networks:
       - snapai-network
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
 
   # ===================
   # Celery Worker
@@ -157,9 +163,9 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-    # ===================
-    # Frontend
-    # ===================
+  # ===================
+  # Frontend
+  # ===================
   frontend:
     build:
       context: ./frontend

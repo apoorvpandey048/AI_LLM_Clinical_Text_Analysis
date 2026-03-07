@@ -139,7 +139,7 @@ class PipelineOrchestrator:
         # ====== Layer 1: CTP ======
         if on_layer_start:
             await on_layer_start("layer1_ctp")
-        logger.info("LAYER_START", event="LAYER_START", layer="layer1_ctp")
+        logger.info("LAYER_START", layer="layer1_ctp")
 
         try:
             layer1_result = await self.layer1.execute(
@@ -149,7 +149,7 @@ class PipelineOrchestrator:
                 temperature_override=temperature,
             )
         except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer1_ctp")
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer1_ctp")
             raise
 
         total_duration_ms += layer1_result.duration_ms
@@ -159,9 +159,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer1_ctp", layer1_result.success, layer1_result.duration_ms)
 
-        logger.info("LAYER_END", event="LAYER_END", layer="layer1_ctp", success=layer1_result.success)
+        logger.info("LAYER_END", layer="layer1_ctp", success=layer1_result.success)
         if not layer1_result.success:
-            logger.error("pipeline_layer1_failed", event="PIPELINE_LAYER_CRASH", layer="layer1_ctp", error=layer1_result.error)
+            logger.error("pipeline_layer1_failed", layer="layer1_ctp", error=layer1_result.error)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
@@ -181,7 +181,7 @@ class PipelineOrchestrator:
         # ====== Layer 2: CIE ======
         if on_layer_start:
             await on_layer_start("layer2_cie")
-        logger.info("LAYER_START", event="LAYER_START", layer="layer2_cie")
+        logger.info("LAYER_START", layer="layer2_cie")
 
         try:
             layer2_result = await self.layer2.execute(
@@ -191,7 +191,7 @@ class PipelineOrchestrator:
                 temperature_override=temperature,
             )
         except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer2_cie")
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer2_cie")
             raise
 
         total_duration_ms += layer2_result.duration_ms
@@ -201,9 +201,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer2_cie", layer2_result.success, layer2_result.duration_ms)
 
-        logger.info("LAYER_END", event="LAYER_END", layer="layer2_cie", success=layer2_result.success)
+        logger.info("LAYER_END", layer="layer2_cie", success=layer2_result.success)
         if not layer2_result.success:
-            logger.error("pipeline_layer2_failed", event="PIPELINE_LAYER_CRASH", layer="layer2_cie", error=layer2_result.error)
+            logger.error("pipeline_layer2_failed", layer="layer2_cie", error=layer2_result.error)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
@@ -220,7 +220,7 @@ class PipelineOrchestrator:
         # ====== Layer 3: CCC ======
         if on_layer_start:
             await on_layer_start("layer3_ccc")
-        logger.info("LAYER_START", event="LAYER_START", layer="layer3_ccc")
+        logger.info("LAYER_START", layer="layer3_ccc")
 
         try:
             layer3_result = await self.layer3.execute(
@@ -231,7 +231,7 @@ class PipelineOrchestrator:
                 temperature_override=temperature,
             )
         except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer="layer3_ccc")
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer3_ccc")
             raise
 
         total_duration_ms += layer3_result.duration_ms
@@ -241,9 +241,9 @@ class PipelineOrchestrator:
         if on_layer_complete:
             await on_layer_complete("layer3_ccc", layer3_result.success, layer3_result.duration_ms)
 
-        logger.info("LAYER_END", event="LAYER_END", layer="layer3_ccc", success=layer3_result.success)
+        logger.info("LAYER_END", layer="layer3_ccc", success=layer3_result.success)
         if not layer3_result.success:
-            logger.error("pipeline_layer3_failed", event="PIPELINE_LAYER_CRASH", layer="layer3_ccc", error=layer3_result.error)
+            logger.error("pipeline_layer3_failed", layer="layer3_ccc", error=layer3_result.error)
             # Layer 3 failure is not fatal - we still have Layer 2 results
             return PipelineResult(
                 success=True,  # Partial success - L1 and L2 completed
@@ -512,7 +512,7 @@ class PipelineOrchestrator:
 
             if on_layer_start:
                 await on_layer_start(name)
-            logger.info("LAYER_START", event="LAYER_START", layer=name)
+            logger.info("LAYER_START", layer=name)
 
             try:
                 if is_builtin and name == "layer1_ctp":
@@ -564,7 +564,7 @@ class PipelineOrchestrator:
                     extra_results[name] = result
 
             except Exception:
-                logger.exception("PIPELINE_LAYER_CRASH", event="PIPELINE_LAYER_CRASH", layer=name)
+                logger.exception("PIPELINE_LAYER_CRASH", layer=name)
                 raise
 
             total_duration_ms += result.duration_ms
@@ -573,7 +573,7 @@ class PipelineOrchestrator:
 
             if _on_layer_complete_orig:
                 await _on_layer_complete_with_error(name, result.success, result.duration_ms, error_message=result.error if not result.success else None)
-            logger.info("LAYER_END", event="LAYER_END", layer=name, success=result.success)
+            logger.info("LAYER_END", layer=name, success=result.success)
 
             # Failure handling
             if not result.success:
@@ -581,7 +581,6 @@ class PipelineOrchestrator:
                     # Fatal: L1/L2 failure stops pipeline
                     logger.error(
                         "pipeline_layer_failed",
-                        event="PIPELINE_LAYER_CRASH",
                         layer=name,
                         error=result.error,
                     )
@@ -600,7 +599,6 @@ class PipelineOrchestrator:
                     # Non-fatal — partial success
                     logger.error(
                         "pipeline_layer_failed",
-                        event="PIPELINE_LAYER_CRASH",
                         layer=name,
                         error=result.error,
                     )

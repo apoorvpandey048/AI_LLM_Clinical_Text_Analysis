@@ -312,6 +312,34 @@ async def set_worker_concurrency(request: Request, admin: User = Depends(require
         )
 
 
+@router.post("/restart-workers")
+async def restart_workers(request: Request, admin: User = Depends(require_admin)):
+    """
+    Gracefully restart all Celery workers.
+
+    Broadcasts a shutdown signal to all workers. Docker's restart policy
+    brings them back automatically, picking up any code changes from volume mounts.
+    """
+    request_id = getattr(request.state, "request_id", None)
+    try:
+        from app.workers.celery_app import celery_app
+        # Broadcast shutdown — Docker restart policy will restart the containers
+        celery_app.control.broadcast("shutdown")
+        logger.info("workers_shutdown_broadcast", admin=admin.username)
+        return create_response(
+            success=True,
+            data={"message": "Shutdown signal sent to all workers. Docker will restart them automatically."},
+            request_id=request_id,
+        )
+    except Exception as e:
+        logger.error("worker_restart_failed", error=str(e))
+        return create_response(
+            success=False,
+            error=f"Failed to send shutdown signal: {str(e)}",
+            request_id=request_id,
+        )
+
+
 @router.put("/temperature")
 async def set_temperature(request: Request, admin: User = Depends(require_admin)):
     """
@@ -405,14 +433,14 @@ async def operations_summary(
     # Single query: counts + averages from jobs table
     row = db.execute(text("""
         SELECT
-            COUNT(*) FILTER (WHERE status IN ('queued','processing') AND deleted_at IS NULL) AS active_jobs,
+            COUNT(*) FILTER (WHERE status IN ('QUEUED','PROCESSING') AND deleted_at IS NULL) AS active_jobs,
             COUNT(*) FILTER (WHERE created_at >= :today AND deleted_at IS NULL)               AS jobs_today,
-            COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL)               AS completed_jobs,
-            COUNT(*) FILTER (WHERE status = 'failed'    AND deleted_at IS NULL)               AS failed_jobs,
+            COUNT(*) FILTER (WHERE status = 'COMPLETED' AND deleted_at IS NULL)               AS completed_jobs,
+            COUNT(*) FILTER (WHERE status = 'FAILED'    AND deleted_at IS NULL)               AS failed_jobs,
             COUNT(*) FILTER (WHERE deleted_at IS NULL)                                        AS total_jobs,
             ROUND(AVG(
                 EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000
-            ) FILTER (WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL AND deleted_at IS NULL))
+            ) FILTER (WHERE status = 'COMPLETED' AND started_at IS NOT NULL AND completed_at IS NOT NULL AND deleted_at IS NULL))
                 AS avg_runtime_ms
         FROM jobs
     """), {"today": today_start}).fetchone()
@@ -503,7 +531,7 @@ async def determinism_check(
         FROM jobs r
         JOIN jobs s ON r.replay_source_id = s.id
         WHERE r.replay_source_id IS NOT NULL
-          AND r.status = 'completed'
+          AND r.status = 'COMPLETED'
           AND r.deleted_at IS NULL
           AND s.deleted_at IS NULL
     """)).fetchall()
@@ -565,12 +593,20 @@ async def runtime_status(
         pass
 
     # DB stats (single query)
-    row = db.execute(text("""
-        SELECT
-            COUNT(*) FILTER (WHERE status = 'completed' AND deleted_at IS NULL) AS total_completed,
-            COUNT(*) FILTER (WHERE status = 'processing' AND deleted_at IS NULL) AS currently_processing
-        FROM jobs
-    """)).fetchone()
+    total_completed = 0
+    currently_processing = 0
+    try:
+        row = db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS total_completed,
+                COUNT(*) FILTER (WHERE status = 'PROCESSING' AND deleted_at IS NULL) AS currently_processing
+            FROM jobs
+        """)).fetchone()
+        if row:
+            total_completed = row[0] or 0
+            currently_processing = row[1] or 0
+    except Exception as e:
+        logger.warning("runtime_status_db_query_failed", error=str(e))
 
     # Worker ping — lightweight
     worker_alive = False
@@ -586,8 +622,8 @@ async def runtime_status(
         data={
             "active_model": active_model,
             "inference_backend": settings.llm_backend,
-            "total_completed_jobs": row[0] or 0,
-            "currently_processing": row[1] or 0,
+            "total_completed_jobs": total_completed,
+            "currently_processing": currently_processing,
             "worker_alive": worker_alive,
             "queue_size": queue_size,
         },
@@ -671,7 +707,6 @@ async def run_regression_check(
 
     logger.info(
         "REGRESSION_RUN_STARTED",
-        event="REGRESSION_RUN_STARTED",
         admin=admin.username,
         limit=limit,
         request_id=request_id,
@@ -680,7 +715,7 @@ async def run_regression_check(
     # Safety: check if worker is currently processing jobs
     processing_count = db.execute(text("""
         SELECT COUNT(*) FROM jobs
-        WHERE status IN ('queued', 'processing') AND deleted_at IS NULL
+        WHERE status IN ('QUEUED', 'PROCESSING') AND deleted_at IS NULL
     """)).scalar() or 0
 
     if processing_count > 0:
@@ -695,7 +730,7 @@ async def run_regression_check(
         SELECT id, pipeline_snapshot, case_count, failed_count, model_name, created_at
         FROM jobs
         WHERE is_regression_baseline = true
-          AND status = 'completed'
+          AND status = 'COMPLETED'
           AND deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT :lim
@@ -807,7 +842,6 @@ async def run_regression_check(
 
     logger.info(
         "REGRESSION_RUN_COMPLETED",
-        event="REGRESSION_RUN_COMPLETED",
         admin=admin.username,
         total_tests=total_tests,
         passed=passed,

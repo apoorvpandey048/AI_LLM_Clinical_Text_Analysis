@@ -37,9 +37,45 @@ function getAuthHeaders() {
 }
 
 /**
- * Safely parse JSON from a response, returning null if it fails.
+ * Unwrap API response envelope.
+ * Backend wraps data in { success, data, error, meta }.
+ * Extracts the `data` field or returns the raw response for backward compatibility.
+ */
+function unwrapApiResponse(json) {
+    return json?.data || json;
+}
+
+/**
+ * Parse JSON, check HTTP status, and unwrap API response in one step.
+ * Throws on non-OK responses with the server's error message.
  */
 async function safeJson(res) {
+    const json = await res.json();
+    if (!res.ok) throw new Error(extractErrorMessage(json) || `API Error (${res.status})`);
+    return unwrapApiResponse(json);
+}
+
+/**
+ * Extract a human-readable error string from any API error shape.
+ * Handles: string, {error: "..."}, {detail: "..."}, {message: "..."},
+ * {error: {message: "..."}}, and prevents [object Object].
+ */
+function extractErrorMessage(val) {
+    if (val == null) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val.error === 'string') return val.error;
+    if (typeof val.detail === 'string') return val.detail;
+    if (typeof val.message === 'string') return val.message;
+    if (val.error && typeof val.error.message === 'string') return val.error.message;
+    if (val.error && typeof val.error === 'object') return JSON.stringify(val.error);
+    return String(val);
+}
+
+/**
+ * Safely attempt to parse JSON, returning null on failure.
+ * Use for extracting error bodies from known-failed responses.
+ */
+async function tryJson(res) {
     try {
         return await res.json();
     } catch {
@@ -176,12 +212,33 @@ function initApp() {
         // Silently re-fetch — show results section if successful
         authFetch(`${API_BASE}/jobs/${savedJobId}/results`).then(async res => {
             if (!res.ok) return;
-            const json = await res.json();
-            const data = json.data || json;
+            const data = unwrapApiResponse(await res.json());
             if (data && (data.results || data.cases)) {
                 window.currentResults = data;
                 state.currentJobId = savedJobId;
                 renderResults(data);
+
+                // Restore full UI state (snapshot, locked config, timeline, metrics, compare)
+                state.pipelineSnapshot = data.pipeline_snapshot || null;
+                renderSnapshotViewer(data.pipeline_snapshot, data);
+                renderLockedConfig(data);
+
+                if (data.pipeline_snapshot && !Object.keys(state.layerTimeline).length) {
+                    data.pipeline_snapshot.forEach(layer => {
+                        state.layerTimeline[layer.layer_name] = {
+                            label: layer.label || layer.layer_name,
+                            status: 'COMPLETED',
+                            startTime: null,
+                            endTime: null,
+                            durationMs: null,
+                            errorMessage: null,
+                        };
+                    });
+                }
+                renderExecutionTimeline();
+                loadJobMetrics(savedJobId);
+                populateCompareSelect(savedJobId);
+
                 document.getElementById('upload-section').classList.add('hidden');
                 document.getElementById('results-section').classList.remove('hidden');
             }
@@ -203,7 +260,7 @@ function showToast(message, type = 'info') {
     toast.className = `toast toast-${type}`;
     toast.innerHTML = `
     <span class="toast-icon">${icons[type] || icons.info}</span>
-    <span class="toast-message">${message}</span>
+    <span class="toast-message">${escapeHtml(message)}</span>
     <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
   `;
     container.appendChild(toast);
@@ -364,8 +421,7 @@ async function processFile(file) {
         const res = await authFetch(`${API_BASE}/upload`, { method: 'POST', body: formData });
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
 
-        const response = await res.json();
-        const data = response.data || response;
+        const data = unwrapApiResponse(await res.json());
         state.currentJobId = data.job_id;
         initializeProgressUI(data.case_count || 1);
         startStreaming(data.job_id);
@@ -390,8 +446,7 @@ async function processText(text) {
         });
         if (!res.ok) throw new Error(`Processing failed: ${res.status}`);
 
-        const response = await res.json();
-        const data = response.data || response;
+        const data = unwrapApiResponse(await res.json());
         state.currentJobId = data.job_id;
         initializeProgressUI(data.case_count || 1);
         startStreaming(data.job_id);
@@ -538,6 +593,13 @@ function connectSSE(jobId) {
         statusEl.innerHTML = '<span class="live-dot"></span> Complete';
         updateConnectionStatus('connected');
 
+        // Reset processing state BEFORE delegating to loadResults
+        // (defense-in-depth: loadResults is async and may fail)
+        console.debug('[SSE_RECV complete] resetting processing state');
+        state.isProcessing = false;
+        state.currentJobId = null;
+        updateProcessButton();
+
         let resolvedJobId = jobId;
         try {
             const data = JSON.parse(e.data);
@@ -545,6 +607,7 @@ function connectSSE(jobId) {
         } catch { /* use outer jobId */ }
         loadResults(resolvedJobId);
         showToast('Processing complete!', 'success');
+        scheduleStallCheck();
     });
 
     state.eventSource.addEventListener('job_failed', (e) => {
@@ -564,6 +627,7 @@ function connectSSE(jobId) {
         } catch {
             showProcessingError('Pipeline failed — check server logs');
         }
+        scheduleStallCheck();
     });
 
     state.eventSource.addEventListener('error', () => {
@@ -638,6 +702,28 @@ function closeStream() {
 function startLegacyPolling(jobId) {
     if (state.pollInterval) clearInterval(state.pollInterval);
     state.pollInterval = setInterval(() => pollJobStatus(jobId), POLL_INTERVAL_MS);
+}
+
+/**
+ * Stall safety net.
+ * If state.isProcessing is true but no SSE/poll is active, something went wrong.
+ * Called after job transitions to a terminal state (complete/failed/cancelled).
+ * Waits briefly then forces a UI reset if still stuck.
+ */
+let _stallCheckTimer = null;
+function scheduleStallCheck() {
+    if (_stallCheckTimer) clearTimeout(_stallCheckTimer);
+    _stallCheckTimer = setTimeout(() => {
+        _stallCheckTimer = null;
+        if (state.isProcessing) {
+            console.warn('[STALL_SAFETY] processing still true after terminal event — forcing reset');
+            state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
+            setCancelButtonEnabled(false);
+            closeStream();
+        }
+    }, 10000);
 }
 
 // ============================================
@@ -836,10 +922,23 @@ function formatDuration(ms) {
 /**
  * Full re-render of the execution timeline panel.
  * Called once at job start and when new layers appear.
+ * Uses requestAnimationFrame to batch heavy DOM updates.
  */
+let _timelineRafPending = false;
 function renderExecutionTimeline() {
     const container = document.getElementById('execution-timeline');
     if (!container) return;
+
+    // Debounce rapid successive calls via rAF
+    if (_timelineRafPending) return;
+    _timelineRafPending = true;
+    requestAnimationFrame(() => {
+        _timelineRafPending = false;
+        _renderTimelineImpl(container);
+    });
+}
+
+function _renderTimelineImpl(container) {
 
     const entries = Object.entries(state.layerTimeline);
     if (!entries.length) {
@@ -868,6 +967,27 @@ function renderExecutionTimeline() {
     // Also mirror into the results-section timeline (if visible)
     const resultsTimeline = document.getElementById('results-execution-timeline');
     if (resultsTimeline) resultsTimeline.innerHTML = html;
+}
+
+// ============================================
+// Lightweight In-Memory API Cache
+// ============================================
+
+const _apiCache = new Map();
+const CACHE_TTL_MS = 30000; // 30 seconds
+
+function getCached(key) {
+    const entry = _apiCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > CACHE_TTL_MS) {
+        _apiCache.delete(key);
+        return null;
+    }
+    return entry.data;
+}
+
+function setCache(key, data) {
+    _apiCache.set(key, { data, ts: Date.now() });
 }
 
 /**
@@ -1004,11 +1124,12 @@ async function replayJob(jobId) {
         showToast('Starting replay…', 'info');
         const res = await authFetch(`${API_BASE}/jobs/${jobId}/replay`, { method: 'POST' });
         if (!res.ok) {
-            const body = await safeJson(res);
+            const body = await tryJson(res);
             throw new Error(body?.detail || `Replay failed (${res.status})`);
         }
-        const data = await res.json();
-        const newJobId = data.new_job_id;
+        const data = unwrapApiResponse(await res.json());
+        const newJobId = data.job_id;
+        if (!newJobId) throw new Error('No job ID returned from replay');
         showToast(`Replay started → Job ${newJobId.substring(0, 8)}…`, 'success');
 
         // Navigate to progress view and start streaming the new job
@@ -1029,14 +1150,22 @@ async function loadJobMetrics(jobId) {
     const container = document.getElementById('metrics-viewer');
     if (!container) return;
 
+    // Check cache first
+    const cached = getCached(`metrics_${jobId}`);
+    if (cached) {
+        renderJobMetrics(cached, container);
+        return;
+    }
+
     try {
         const res = await authFetch(`${API_BASE}/jobs/${jobId}/metrics`);
         if (!res.ok) {
             container.innerHTML = '<div class="metrics-empty">No metrics available.</div>';
             return;
         }
-        const json = await res.json();
-        const metrics = json.metrics || json.data || [];
+        const data = unwrapApiResponse(await res.json());
+        const metrics = data.metrics || [];
+        setCache(`metrics_${jobId}`, metrics);
         renderJobMetrics(metrics, container);
     } catch {
         container.innerHTML = '<div class="metrics-empty">Failed to load metrics.</div>';
@@ -1047,7 +1176,7 @@ async function loadJobMetrics(jobId) {
  * Render per-layer metrics table for a single job.
  */
 function renderJobMetrics(metrics, container) {
-    if (!metrics.length) {
+    if (!metrics || !metrics.length) {
         container.innerHTML = '<div class="metrics-empty">No layer metrics recorded for this job.</div>';
         return;
     }
@@ -1097,13 +1226,13 @@ async function loadAggregateMetrics() {
     try {
         const res = await authFetch(`${API_BASE}/jobs/metrics/aggregate`);
         if (!res.ok) return;
-        const data = await res.json();
+        const data = unwrapApiResponse(await res.json());
         renderAggregateMetrics(data.layers || [], container);
     } catch { /* non-fatal */ }
 }
 
 function renderAggregateMetrics(layers, container) {
-    if (!layers.length) return;
+    if (!layers || !layers.length) return;
 
     let html = '<h4 class="metrics-section-title">Aggregate Metrics (All Jobs)</h4>';
     html += '<table class="metrics-table"><thead><tr>'
@@ -1133,20 +1262,29 @@ async function populateCompareSelect(currentJobId) {
     if (!select) return;
 
     try {
-        const res = await authFetch(`${API_BASE}/jobs`);
-        if (!res.ok) return;
-        const json = await res.json();
-        const jobs = (json.data || json.jobs || []).filter(
-            j => j.status === 'completed' && j.id !== currentJobId
+        // Use cached job list if available
+        let allJobs = getCached('jobList');
+        if (!allJobs) {
+            const res = await authFetch(`${API_BASE}/jobs`);
+            if (!res.ok) return;
+            const data = unwrapApiResponse(await res.json());
+            allJobs = data.jobs || [];
+            setCache('jobList', allJobs);
+        }
+        const jobs = allJobs.filter(
+            j => j.status === 'completed' && j.job_id !== currentJobId
         );
         select.innerHTML = '<option value="">— Select job —</option>';
         jobs.forEach(j => {
-            const date = j.created_at ? new Date(j.created_at).toLocaleString() : '';
-            const model = j.model_name || '—';
-            const src = j.source_type || '';
-            const label = `${date} · ${model} · ${src} (${j.id.substring(0, 8)}…)`;
+            const d = j.created_at ? new Date(j.created_at) : null;
+            const datePart = d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+            const timePart = d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+            const shortModel = (j.model_name || '—').replace(/:.*$/, '').replace(/-instruct.*$/i, '');
+            const src = j.source_type || 'direct';
+            const shortId = j.job_id.substring(0, 8);
+            const label = `Run: ${datePart} — ${timePart}  |  Model: ${shortModel}  |  Source: ${src}  |  ID: ${shortId}`;
             const opt = document.createElement('option');
-            opt.value = j.id;
+            opt.value = j.job_id;
             opt.textContent = label;
             select.appendChild(opt);
         });
@@ -1172,10 +1310,10 @@ async function runComparison() {
         resultsDiv.innerHTML = '<div class="compare-loading">Loading comparison…</div>';
         const res = await authFetch(`${API_BASE}/jobs/compare?job_a=${jobA}&job_b=${jobB}`);
         if (!res.ok) {
-            const body = await safeJson(res);
+            const body = await tryJson(res);
             throw new Error(body?.detail || `Compare failed (${res.status})`);
         }
-        const data = await res.json();
+        const data = unwrapApiResponse(await res.json());
         renderCompareResults(data, resultsDiv);
     } catch (err) {
         resultsDiv.innerHTML = `<div class="compare-error">${escapeHtml(err.message)}</div>`;
@@ -1190,6 +1328,15 @@ function renderCompareResults(data, container) {
     const b = data.job_b || {};
     const aMetrics = a.layer_metrics || {};
     const bMetrics = b.layer_metrics || {};
+
+    // Also support the flat layers array from backend
+    const layersArr = data.layers || [];
+    if (!Object.keys(aMetrics).length && layersArr.length) {
+        layersArr.forEach(l => {
+            if (l.layer_id && l.job_a) aMetrics[l.layer_id] = l.job_a;
+            if (l.layer_id && l.job_b) bMetrics[l.layer_id] = l.job_b;
+        });
+    }
 
     // Collect all layer IDs from both jobs
     const allLayers = [...new Set([...Object.keys(aMetrics), ...Object.keys(bMetrics)])];
@@ -1230,14 +1377,19 @@ function renderCompareResults(data, container) {
 
     // Snapshot diff
     const snapshotDiff = data.snapshot_diff || {};
-    if (snapshotDiff.only_in_a?.length || snapshotDiff.only_in_b?.length) {
+    const snapALayers = data.snapshot_a_layers || [];
+    const snapBLayers = data.snapshot_b_layers || [];
+    // Build diff from backend arrays if snapshot_diff is empty
+    const onlyInA = snapshotDiff.only_in_a || snapALayers.filter(n => !snapBLayers.includes(n));
+    const onlyInB = snapshotDiff.only_in_b || snapBLayers.filter(n => !snapALayers.includes(n));
+    if (onlyInA.length || onlyInB.length) {
         html += '<div class="compare-snapshot-diff">';
         html += '<h4>Snapshot Differences</h4>';
-        if (snapshotDiff.only_in_a?.length) {
-            html += `<div class="compare-diff-section"><strong>Only in Job A:</strong> ${snapshotDiff.only_in_a.map(escapeHtml).join(', ')}</div>`;
+        if (onlyInA.length) {
+            html += `<div class="compare-diff-section"><strong>Only in Job A:</strong> ${onlyInA.map(escapeHtml).join(', ')}</div>`;
         }
-        if (snapshotDiff.only_in_b?.length) {
-            html += `<div class="compare-diff-section"><strong>Only in Job B:</strong> ${snapshotDiff.only_in_b.map(escapeHtml).join(', ')}</div>`;
+        if (onlyInB.length) {
+            html += `<div class="compare-diff-section"><strong>Only in Job B:</strong> ${onlyInB.map(escapeHtml).join(', ')}</div>`;
         }
         html += '</div>';
     }
@@ -1276,14 +1428,18 @@ async function pollJobStatus(jobId) {
         // Use the lightweight /status endpoint when available (SSE fallback polling)
         const res = await authFetch(`${API_BASE}/jobs/${jobId}/status`);
         if (!res.ok) return;
-        const response = await res.json();
-        const data = response.data || response;
+        const data = unwrapApiResponse(await res.json());
 
         if (data.status === 'completed') {
+            console.debug('[POLL_STATUS completed] resetting processing state');
             closeStream();
             setCancelButtonEnabled(false);
+            state.isProcessing = false;
+            state.currentJobId = null;
+            updateProcessButton();
             loadResults(jobId);
             showToast('Processing complete!', 'success');
+            scheduleStallCheck();
         } else if (data.status === 'failed') {
             closeStream();
             setCancelButtonEnabled(false);
@@ -1324,8 +1480,7 @@ async function loadResults(jobId) {
     try {
         const res = await authFetch(`${API_BASE}/jobs/${jobId}/results`);
         if (!res.ok) throw new Error('Failed to load results');
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
         window.currentResults = data;
         renderResults(data);
 
@@ -1353,8 +1508,8 @@ async function loadResults(jobId) {
 
         // Load per-layer execution metrics for this job
         loadJobMetrics(jobId);
-        // Populate comparison selector with other completed jobs
-        populateCompareSelect(jobId);
+        // Defer compare dropdown population (lazy-load)
+        setTimeout(() => populateCompareSelect(jobId), 300);
 
         // Persist job ID so results survive a page reload
         try { localStorage.setItem('snapai_last_job_id', jobId); } catch { /* ignore quota errors */ }
@@ -1364,6 +1519,11 @@ async function loadResults(jobId) {
         state.isProcessing = false;
         updateProcessButton();
     } catch (err) {
+        // CRITICAL: always reset processing state even if results fail to load
+        console.warn('[loadResults] failed, forcing state reset:', err.message);
+        state.isProcessing = false;
+        state.currentJobId = null;
+        updateProcessButton();
         showError(err.message);
     }
 }
@@ -1942,8 +2102,7 @@ async function loadModels() {
     try {
         const res = await authFetch(`${API_BASE}/models`);
         if (!res.ok) throw new Error('Failed to load models');
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
 
         state.availableModels = data.models || [];
         state.activeModel = data.active_model || null;
@@ -2267,8 +2426,7 @@ async function loadLayers() {
     try {
         const res = await authFetch(`${API_BASE}/prompts/layers`);
         if (!res.ok) return;
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
         const layers = data.layers || [];
 
         // Rebuild LAYERS dict
@@ -2476,8 +2634,8 @@ async function createCustomLayer() {
             throw new Error(extractErrorMessage(err));
         }
 
-        const json = await res.json();
-        showToast(json.data?.message || `Layer '${label}' created`, 'success');
+        const data = unwrapApiResponse(await res.json());
+        showToast(data.message || `Layer '${label}' created`, 'success');
 
         // Remove modal
         document.getElementById('create-layer-modal')?.remove();
@@ -2612,8 +2770,7 @@ async function loadAllPrompts() {
     try {
         const res = await authFetch(`${API_BASE}/prompts`);
         if (!res.ok) throw new Error('Failed to load prompts');
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
         const prompts = data.prompts || [];
 
         if (prompts.length === 0) {
@@ -2680,8 +2837,7 @@ async function loadPrompt(layer) {
     try {
         const res = await authFetch(`${API_BASE}/prompts/${layer}`);
         if (!res.ok) throw new Error('Failed to load prompt');
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
 
         // Extract prompt content correctly from response
         const prompt = data.prompt || {};
@@ -2718,8 +2874,7 @@ async function savePrompt() {
         });
 
         if (res.ok) {
-            const json = await res.json();
-            const data = json.data || json;
+            const data = unwrapApiResponse(await res.json());
             const prompt = data.prompt || {};
 
             // Update cache with saved content
@@ -2777,8 +2932,7 @@ async function loadVersionHistory(layerName) {
     try {
         const res = await authFetch(`${API_BASE}/prompts/${layerName}/history`);
         if (!res.ok) { panel.innerHTML = '<p class="text-muted">No version history available.</p>'; return; }
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
         const versions = data.versions || [];
 
         if (versions.length === 0) {
@@ -2880,8 +3034,7 @@ async function loadSystemInfo() {
         const res = await authFetch(`${API_BASE}/system/info`);
         if (!res.ok) throw new Error('Failed to load system info');
 
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
 
         const backendLabel = (data.llm_backend || 'ollama').toUpperCase();
         const activeModel = data.active_model || 'Not set';
@@ -3029,11 +3182,11 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
 
+const _escDiv = document.createElement('div');
 function escapeHtml(text) {
     if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    _escDiv.textContent = text;
+    return _escDiv.innerHTML;
 }
 
 // ============================================
@@ -3091,8 +3244,7 @@ async function exportPrompts() {
         const res = await authFetch(`${API_BASE}/prompts/export`);
         if (!res.ok) throw new Error('Failed to export prompts');
 
-        const json = await res.json();
-        const data = json.data || json;
+        const data = unwrapApiResponse(await res.json());
 
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -3371,8 +3523,8 @@ async function refreshLogs() {
 
         const res = await authFetch(url);
         if (!res.ok) throw new Error('Failed to fetch logs');
-        const data = await res.json();
-        const logs = data.data?.logs || [];
+        const data = unwrapApiResponse(await res.json());
+        const logs = data.logs || [];
 
         if (logs.length === 0) {
             container.innerHTML = '<div class="log-empty">No logs found</div>';
@@ -3548,8 +3700,8 @@ async function loadAdminUsers() {
     try {
         const res = await authFetch(`${API_BASE}/auth/users`);
         if (!res.ok) throw new Error('Failed to load users');
-        const data = await res.json();
-        const users = data.data?.users || [];
+        const data = unwrapApiResponse(await res.json());
+        const users = data.users || [];
 
         if (users.length === 0) {
             container.innerHTML = '<div class="log-empty">No users found</div>';
@@ -3645,7 +3797,6 @@ function renderLockedConfig(jobData) {
 
     // Compute SHA-256 hash of snapshot JSON (deterministic)
     const snapStr = JSON.stringify(snapshot, Object.keys(snapshot[0] || {}).sort());
-    // Simple hash using Web Crypto unavailable synchronously — use a basic hash
     let hash = 0;
     for (let i = 0; i < snapStr.length; i++) {
         const chr = snapStr.charCodeAt(i);
@@ -3654,15 +3805,18 @@ function renderLockedConfig(jobData) {
     }
     const hashHex = Math.abs(hash).toString(16).padStart(8, '0');
 
-    // Use a more robust approach — SHA-256 via SubtleCrypto (async, update later)
-    // For now, use sorted JSON + quick hash. The backend provides the real SHA-256.
     const modelEl = document.getElementById('locked-config-model');
     const hashEl = document.getElementById('locked-config-hash');
     const createdEl = document.getElementById('locked-config-created');
+    const descEl = document.getElementById('locked-config-description');
 
     if (modelEl) modelEl.textContent = jobData?.model_name || '—';
-    if (hashEl) hashEl.textContent = hashHex;
+    if (hashEl) {
+        hashEl.textContent = hashHex;
+        hashEl.title = 'Hash of the pipeline configuration used for this run. Ensures deterministic reproducibility.';
+    }
     if (createdEl) createdEl.textContent = jobData?.created_at ? new Date(jobData.created_at).toLocaleString() : '—';
+    if (descEl) descEl.classList.remove('hidden');
 
     banner.classList.remove('hidden');
 
@@ -3681,7 +3835,7 @@ function renderLockedConfig(jobData) {
  * Download the audit export package for the current job.
  */
 async function downloadAuditPackage() {
-    const jobId = state.currentJobId;
+    const jobId = state.currentJobId || localStorage.getItem('snapai_last_job_id');
     if (!jobId) {
         showToast('No job selected', 'warning');
         return;
@@ -3693,11 +3847,10 @@ async function downloadAuditPackage() {
     try {
         const res = await authFetch(`${API_BASE}/jobs/${jobId}/audit-export`);
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'Failed to generate audit package');
+            const body = await tryJson(res);
+            throw new Error(extractErrorMessage(body) || `Failed to generate audit package (${res.status})`);
         }
-        const json = await res.json();
-        const pkg = json.data || json;
+        const pkg = unwrapApiResponse(await res.json());
         const text = JSON.stringify(pkg, null, 2);
         const blob = new Blob([text], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -3710,7 +3863,8 @@ async function downloadAuditPackage() {
         URL.revokeObjectURL(url);
         showToast('Audit package downloaded', 'success');
     } catch (err) {
-        showToast(`Audit export failed: ${err.message}`, 'error');
+        const msg = err instanceof Error ? err.message : extractErrorMessage(err);
+        showToast(`Failed to export audit package. Reason: ${msg || 'Unknown error'}`, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Download Audit Package'; }
     }
@@ -3725,15 +3879,21 @@ async function runRegressionCheck() {
 
     try {
         const res = await authFetch(`${API_BASE}/system/run-regression-check`, { method: 'POST' });
-        const json = await res.json();
+        const json = await tryJson(res) || {};
         if (!res.ok || !json.success) {
-            throw new Error(json.error || 'Regression check failed');
+            throw new Error(extractErrorMessage(json) || `Regression check failed (${res.status})`);
         }
-        const data = json.data;
+        const data = unwrapApiResponse(json);
+        if (!data.details || data.details.length === 0) {
+            showToast('No baseline runs marked yet. Mark a run as baseline before running regression checks.', 'info');
+        } else {
+            const rate = data.total_tests > 0 ? Math.round((data.passed / data.total_tests) * 100) : 0;
+            showToast(`Regression check complete — Pass rate: ${rate}% — Baseline runs tested: ${data.total_tests}`, data.failed > 0 ? 'warning' : 'success');
+        }
         renderRegressionResults(data);
-        showToast(`Regression check done: ${data.passed}/${data.total_tests} passed`, data.failed > 0 ? 'warning' : 'success');
     } catch (err) {
-        showToast(`Error: ${err.message}`, 'error');
+        const msg = err instanceof Error ? err.message : extractErrorMessage(err);
+        showToast(`Regression check failed: ${msg || 'Unknown error'}`, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Run Regression Check'; }
     }

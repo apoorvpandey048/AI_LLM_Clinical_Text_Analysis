@@ -147,6 +147,12 @@ def _run_schema_migrations():
         # jobs — model name + replay provenance (Stage 4)
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_name VARCHAR(200) NULL",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS replay_source_id UUID NULL",
+        # jobs — regression baseline flag
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_regression_baseline BOOLEAN NOT NULL DEFAULT FALSE",
+        # jobs — soft delete (replaces is_deleted column)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+        # prompt_templates — active version for multi-version prompts
+        "ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS active_version_id UUID NULL",
     ]
 
     db = db_session.SessionLocal()
@@ -191,10 +197,12 @@ app = FastAPI(
 )
 
 # CORS middleware (allow all origins for remote access)
+_cors_settings = get_settings()
+cors_origins = [o.strip() for o in _cors_settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=("*" not in cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -438,10 +446,7 @@ async def readiness_check():
     try:
         from app.llm import get_llm_client
         client = get_llm_client()
-        import asyncio
-        loop = asyncio.new_event_loop()
-        healthy = loop.run_until_complete(client.health_check())
-        loop.close()
+        healthy = await client.health_check()
         llm_status = "healthy" if healthy else "unhealthy"
     except Exception:
         llm_status = "unhealthy"

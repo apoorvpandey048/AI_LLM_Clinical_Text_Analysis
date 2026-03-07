@@ -269,6 +269,7 @@ class JobCase(Base):
             "case_number": self.case_number,
             "case_label": self.case_label,
             "status": self.status.value,
+            "input_text": self.input_text,
             "final_verdict": self.final_verdict,
             "final_cci": self.final_cci,
             "total_duration_ms": self.total_duration_ms,

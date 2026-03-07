@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     admin_email: str = "admin@snapai.local"
     admin_password: str = "snapai-admin-2026"
 
+    # CORS
+    cors_origins: str = "*"  # Comma-separated origins, or "*" for dev
+
     # Logging
     log_level: str = "INFO"
 
