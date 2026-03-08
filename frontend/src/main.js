@@ -403,6 +403,12 @@ function setCancelButtonEnabled(enabled) {
 // ============================================
 
 async function processFile(file) {
+    // GPU safety check
+    if (state.systemInfo?.gpu_busy) {
+        showToast('GPU resources currently busy. Please retry shortly.', 'warning');
+        return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
@@ -427,6 +433,12 @@ async function processFile(file) {
 }
 
 async function processText(text) {
+    // GPU safety check
+    if (state.systemInfo?.gpu_busy) {
+        showToast('GPU resources currently busy. Please retry shortly.', 'warning');
+        return;
+    }
+
     try {
         state.isProcessing = true;
         updateProcessButton();
@@ -665,10 +677,22 @@ function updateConnectionStatus(status) {
     state.connectionStatus = status;
     const indicator = document.getElementById('connection-status-indicator');
     if (indicator) {
-        indicator.className = `connection-indicator ${status}`;
-        indicator.title = status === 'connected' ? 'Connected to server'
-            : status === 'reconnecting' ? 'Reconnecting...'
-                : 'Disconnected - Using polling';
+        const labels = {
+            connected: 'Backend Connected',
+            reconnecting: 'Reconnecting...',
+            disconnected: 'Backend Offline',
+        };
+        const tooltips = {
+            connected: 'API, Redis, and Model backend all healthy',
+            reconnecting: 'Attempting to reconnect to server...',
+            disconnected: 'Cannot reach backend — using polling',
+        };
+        indicator.innerHTML = `
+            <span class="connection-indicator ${status}" title="${tooltips[status] || ''}">
+                <span class="status-dot"></span>
+                ${labels[status] || status}
+            </span>
+        `;
     }
 }
 
@@ -895,11 +919,11 @@ function markLayerComplete(layer) {
 // ============================================
 
 const TIMELINE_STATUS_ICONS = {
-    PENDING:   '○',
-    RUNNING:   '●',
+    PENDING: '○',
+    RUNNING: '●',
     COMPLETED: '✓',
-    FAILED:    '✗',
-    SKIPPED:   '–',
+    FAILED: '✗',
+    SKIPPED: '–',
 };
 
 /**
@@ -2952,11 +2976,11 @@ async function loadVersionHistory(layerName) {
                     <div class="version-preview">${escapeHtml(preview)}...</div>
                     <div class="version-actions">
                         ${isCurrent
-                            ? (isActive ? '<span class="text-muted">Currently active</span>'
-                                        : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', null)">Use Current</button>`)
-                            : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', '${v.id}')">Use This</button>
+                    ? (isActive ? '<span class="text-muted">Currently active</span>'
+                        : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', null)">Use Current</button>`)
+                    : `<button class="btn btn-xs btn-outline" onclick="setActiveVersion('${layerName}', '${v.id}')">Use This</button>
                                <button class="btn btn-xs btn-outline" onclick="rollbackToVersion('${layerName}', '${v.id}')">Rollback</button>`
-                        }
+                }
                     </div>
                 </div>`;
         });
@@ -3032,16 +3056,45 @@ async function loadSystemInfo() {
         const backendLabel = (data.llm_backend || 'ollama').toUpperCase();
         const activeModel = data.active_model || 'Not set';
         const workerCount = data.worker_count || 1;
-        const isConnected = data.llm_connected;
-        const statusClass = isConnected ? 'sys-info-connected' : 'sys-info-disconnected';
-        const statusText = isConnected ? 'Connected' : 'Disconnected';
+        const llmOk = data.llm_connected;
+        const redisOk = data.redis_connected !== false; // default true for backward compat
         const temperature = data.temperature ?? 0.0;
         const promptVersion = data.prompt_version || '—';
-        const modelVersion = data.model_version || data.active_model || '—';
+        const supportsTemp = data.supports_temperature_override !== false;
+
+        // Tri-state status logic: API+Redis+Model
+        let statusClass, statusLabel, statusTooltip;
+        if (llmOk && redisOk) {
+            statusClass = 'connected';
+            statusLabel = 'Backend Connected';
+            statusTooltip = 'API, Redis, and Model backend all healthy';
+        } else if (!llmOk && redisOk) {
+            statusClass = 'reconnecting';
+            statusLabel = 'Backend Degraded';
+            statusTooltip = `Redis: OK | Model: Down`;
+        } else {
+            statusClass = 'disconnected';
+            statusLabel = 'Backend Degraded';
+            statusTooltip = `Redis: ${redisOk ? 'OK' : 'Down'} | Model: ${llmOk ? 'OK' : 'Down'}`;
+        }
+
+        // Conditional temperature control: slider if supported, label if not
+        const tempHtml = supportsTemp
+            ? `<input type="range" class="sys-info-temp-slider" id="sys-info-temp"
+                     value="${temperature}" min="0" max="1" step="0.05"
+                     title="LLM Temperature (0.0 = deterministic)"
+                     oninput="document.getElementById('sys-info-temp-display').textContent = this.value"
+                     onchange="updateTemperature(this.value)">
+               <span class="sys-info-temp-value" id="sys-info-temp-display">${temperature}</span>`
+            : `<span class="sys-info-value">${temperature}</span>
+               <span class="sys-info-hint">(Model Default)</span>`;
 
         bar.innerHTML = `
-            <div class="sys-info-item" id="connection-status-indicator" title="Connection status">
-                <span class="connection-indicator ${isConnected ? 'connected' : 'disconnected'}"></span>
+            <div class="sys-info-item" id="connection-status-indicator">
+                <span class="connection-indicator ${statusClass}" title="${statusTooltip}">
+                    <span class="status-dot"></span>
+                    ${statusLabel}
+                </span>
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Backend:</span>
@@ -3053,10 +3106,7 @@ async function loadSystemInfo() {
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Temp:</span>
-                <input type="number" class="sys-info-temp-input" id="sys-info-temp"
-                       value="${temperature}" min="0" max="2" step="0.1"
-                       title="LLM Temperature (0.0 = deterministic)"
-                       onchange="updateTemperature(this.value)">
+                ${tempHtml}
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Prompt:</span>
@@ -3065,10 +3115,6 @@ async function loadSystemInfo() {
             <div class="sys-info-item">
                 <span class="sys-info-label">Workers:</span>
                 <span class="sys-info-value" id="sys-info-workers">${workerCount}</span>
-            </div>
-            <div class="sys-info-item">
-                <span class="sys-info-label">LLM:</span>
-                <span class="sys-info-value ${statusClass}">${statusText}</span>
             </div>
             ${data.llm_error ? `
             <div class="sys-info-item sys-info-error">
@@ -3081,30 +3127,50 @@ async function loadSystemInfo() {
 
         // Store system info in state for later use
         state.systemInfo = data;
-        updateConnectionStatus(isConnected ? 'connected' : 'disconnected');
+        updateConnectionStatus(statusClass);
+        updateFooterStatus(redisOk, llmOk);
     } catch (err) {
         console.error('System info load failed:', err);
         bar.innerHTML = `
-            <div class="sys-info-item" id="connection-status-indicator" title="Connection status">
-                <span class="connection-indicator disconnected"></span>
+            <div class="sys-info-item" id="connection-status-indicator">
+                <span class="connection-indicator disconnected" title="Cannot reach backend API">
+                    <span class="status-dot"></span>
+                    Backend Offline
+                </span>
             </div>
             <div class="sys-info-item">
-                <span class="sys-info-label">Status:</span>
-                <span class="sys-info-value sys-info-disconnected">Backend Unavailable</span>
-            </div>
-            <div class="sys-info-item">
-                <span class="sys-info-label">Action:</span>
                 <span class="sys-info-value">Check that backend services are running</span>
             </div>
         `;
         bar.classList.remove('hidden');
         updateConnectionStatus('disconnected');
+        updateFooterStatus(false, false);
     }
 }
 
 function updateSystemInfoModel(model) {
     const el = document.getElementById('sys-info-model');
     if (el) el.textContent = model;
+}
+
+function updateFooterStatus(redisOk, llmOk) {
+    const footer = document.getElementById('footer-status');
+    if (!footer) return;
+    const apiOk = true; // if we got here, API was reachable
+    footer.innerHTML = `
+        <span class="footer-status-item">
+            <span class="footer-status-dot ${apiOk ? 'ok' : 'error'}"></span>
+            Backend: ${apiOk ? 'Healthy' : 'Down'}
+        </span>
+        <span class="footer-status-item">
+            <span class="footer-status-dot ${redisOk ? 'ok' : 'error'}"></span>
+            Redis: ${redisOk ? 'Connected' : 'Down'}
+        </span>
+        <span class="footer-status-item">
+            <span class="footer-status-dot ${llmOk ? 'ok' : 'error'}"></span>
+            Model: ${llmOk ? 'Ready' : 'Offline'}
+        </span>
+    `;
 }
 
 async function updateTemperature(value) {

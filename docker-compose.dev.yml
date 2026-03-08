@@ -1,18 +1,173 @@
-# Development overrides — Windows-friendly (no GPU reservation)
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# SNAP-AI Development Docker Compose — STANDALONE
+# Usage: docker compose -f docker-compose.dev.yml up -d --build
 #
-# Parity with production (docker-compose.local-gpu.yml):
-#   - Same API routes, env variable names, container naming
-#   - Same worker concurrency=1 (sequential processing)
-#   - Same max-tasks-per-child=50
-#   - Model differs: Ollama (dev) vs vLLM (prod) — system behavior identical
+# This file is self-contained. No need for -f docker-compose.yml.
+#
+# IMPORTANT: Celery workers do NOT hot-reload.
+# After changing tasks.py, pipeline code, or model integration:
+#   docker compose -f docker-compose.dev.yml restart worker
 
 services:
   # ===================
-  # Ollama LLM Service (Development — CPU-only safe)
+  # Backend API (Development — hot reload)
+  # ===================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: snapai-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000" # Exposed for dev debugging
+    environment:
+      - ENVIRONMENT=development
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      - LLM_BACKEND=ollama
+      - VLLM_HOST=${VLLM_HOST:-http://vllm:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
+      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Pancreas123}
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./backend/app:/app/app # Hot reload (no :ro)
+      - ./prompts:/app/prompts
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+
+  # ===================
+  # Celery Worker (Development — sequential processing)
+  # IMPORTANT: Does NOT hot-reload. Restart after code changes:
+  #   docker compose -f docker-compose.dev.yml restart worker
+  # ===================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: snapai-worker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
+    environment:
+      - ENVIRONMENT=development
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      - LLM_BACKEND=ollama
+      - VLLM_HOST=${VLLM_HOST:-http://vllm:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-900}
+      - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
+      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Pancreas123}
+      - LOG_LEVEL=DEBUG
+    healthcheck:
+      test: [ "CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>/dev/null | grep -q 'pong' || exit 1" ]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+    volumes:
+      - ./backend/app:/app/app # Hot reload for worker too
+      - ./prompts:/app/prompts
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - snapai-network
+    restart: unless-stopped
+
+  # ===================
+  # PostgreSQL Database
+  # ===================
+  postgres:
+    image: postgres:15-alpine
+    container_name: snapai-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-snapai}
+      - POSTGRES_USER=${POSTGRES_USER:-snapai}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-snapai_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-snapai}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Redis Message Broker
+  # ===================
+  redis:
+    image: redis:7-alpine
+    container_name: snapai-redis
+    command: sh -c ' if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 2gb --maxmemory-policy allkeys-lru; else exec redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru; fi '
+    ports:
+      - "6379:6379" # Exposed for host-based debugging
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    networks:
+      - snapai-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Ollama LLM Backend (Development — CPU-only safe)
   # ===================
   # GPU reservation removed: fails on Windows without NVIDIA Container Toolkit.
-  # On Linux with NVIDIA GPU, add deploy.resources.reservations back.
+  # On Linux with NVIDIA GPU, uncomment deploy.resources.reservations below.
   ollama:
     image: ollama/ollama:latest
     container_name: snapai-ollama
@@ -29,39 +184,39 @@ services:
           memory: 12G
     environment:
       - OLLAMA_NUM_GPU=1
-      - OLLAMA_GPU_MEMORY=5500 # Leave room for system
+      - OLLAMA_GPU_MEMORY=5500
+    # Uncomment for NVIDIA GPU support on Linux:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
-  # Override backend for development
-  backend:
-    environment:
-      - ENVIRONMENT=development
-      - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
-      - LLM_BACKEND=ollama
-      - LOG_LEVEL=DEBUG
-      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Pancreas123}
-    volumes:
-      - ./backend/app:/app/app # Hot reload (remove :ro)
-      - ./prompts:/app/prompts
+    # ===================
+    # Frontend (Vite dev build)
+    # ===================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: snapai-frontend
+    ports:
+      - "8080:80"
     depends_on:
-      - ollama
+      backend:
+        condition: service_healthy
+    networks:
+      - snapai-network
+    restart: unless-stopped
 
-  # Override worker for development — sequential processing
-  worker:
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
-    environment:
-      - ENVIRONMENT=development
-      - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
-      - LLM_BACKEND=ollama
-      - LOG_LEVEL=DEBUG
-      - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
-    volumes:
-      - ./backend/app:/app/app
-      - ./prompts:/app/prompts
-    depends_on:
-      - ollama
+networks:
+  snapai-network:
+    driver: bridge
 
 volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
   ollama_data:

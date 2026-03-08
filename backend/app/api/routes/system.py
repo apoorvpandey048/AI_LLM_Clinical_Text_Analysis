@@ -52,15 +52,19 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
     - LLM backend type (Ollama or vLLM)
     - Active model
     - Worker count
-    - Connection status
+    - Connection status (API, Redis, LLM)
+    - GPU memory status
     - Backend URL
     """
     request_id = getattr(request.state, "request_id", None)
 
     # Get active model and runtime temperature from Redis
     runtime_temperature = settings.llm_temperature
+    redis_connected = False
     try:
         r = _get_redis()
+        r.ping()
+        redis_connected = True
         active_model = r.get("snapai:active_model") or settings.llm_model
         temp = r.get("snapai:temperature")
         if temp is not None:
@@ -89,6 +93,25 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
         llm_error = str(e)
         llm_connected = False
 
+    # GPU memory safety check (multi-GPU safe, fails gracefully)
+    gpu_busy = False
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,nounits,noheader'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                parts = line.strip().split(',')
+                if len(parts) == 2:
+                    used, total = int(parts[0].strip()), int(parts[1].strip())
+                    if total > 0 and (used / total) > 0.90:
+                        gpu_busy = True
+                        break
+    except Exception:
+        pass  # No GPU or nvidia-smi not available
+
     # Get worker info from Celery if available
     worker_count = settings.api_workers
     try:
@@ -107,6 +130,7 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
             "llm_host": settings.llm_host,
             "llm_connected": llm_connected,
             "llm_error": llm_error,
+            "redis_connected": redis_connected,
             "active_model": active_model,
             "default_model": settings.llm_model,
             "available_models_count": len(available_models),
@@ -117,6 +141,8 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
             "temperature": runtime_temperature,
             "prompt_version": settings.prompt_version,
             "model_version": getattr(settings, 'model_version', settings.llm_model),
+            "supports_temperature_override": True,  # Redis-based temp always supported
+            "gpu_busy": gpu_busy,
         },
         request_id=request_id,
     )
