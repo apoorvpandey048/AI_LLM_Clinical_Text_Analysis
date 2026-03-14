@@ -103,6 +103,57 @@ async def list_jobs(
 # ============================================
 
 
+@router.get("/export-saved", include_in_schema=True)
+async def export_saved_cases(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Export all saved cases as a JSON dataset.
+
+    Returns cases whose case_label starts with '[SAVED]'.
+    Useful for doctors to download tagged cases for research or audit review.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    # Admin can see all saved cases; regular users only their own
+    query = db.query(JobCase).filter(
+        JobCase.case_label.ilike("[SAVED]%"),
+    )
+
+    if user.role != UserRole.ADMIN:
+        query = query.join(Job, JobCase.job_id == Job.id).filter(
+            Job.user_id == user.id,
+            Job.deleted_at.is_(None),
+        )
+
+    saved = query.order_by(JobCase.created_at.desc()).limit(500).all()
+
+    cases_data = []
+    for c in saved:
+        cases_data.append({
+            "case_id": str(c.id),
+            "job_id": str(c.job_id),
+            "case_number": c.case_number,
+            "case_label": c.case_label,
+            "input_text": c.input_text,
+            "final_verdict": c.final_verdict,
+            "final_cci": c.final_cci,
+            "status": c.status.value,
+            "processed_at": c.processed_at.isoformat() + "Z" if c.processed_at else None,
+        })
+
+    return create_response(
+        success=True,
+        data={
+            "cases": cases_data,
+            "total": len(cases_data),
+        },
+        request_id=request_id,
+    )
+
+
 @router.get("/compare")
 async def compare_jobs(
     request: Request,
@@ -988,6 +1039,125 @@ async def mark_baseline(
             "is_regression_baseline": new_val,
             "message": f"Job {'marked' if new_val else 'unmarked'} as regression baseline",
         },
+        request_id=request_id,
+    )
+
+
+# ============================================
+# Save Case (Tag for Research)
+# ============================================
+
+
+@router.post("/{job_id}/cases/{case_id}/save")
+async def save_case(
+    job_id: str,
+    case_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Tag a case as 'saved' for later review or research export.
+
+    Uses the case_label field to mark saved cases (no schema change).
+    Idempotent — saving an already-saved case is a no-op.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    try:
+        case_uuid = uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid case ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    case = db.query(JobCase).filter(
+        and_(JobCase.job_id == job_uuid, JobCase.id == case_uuid)
+    ).first()
+
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Tag case as saved (idempotent)
+    label = case.case_label or ""
+    if not label.startswith("[SAVED]"):
+        case.case_label = f"[SAVED] {label}".strip()
+        db.commit()
+
+    logger.info("CASE_SAVED", request_id=request_id, job_id=job_id, case_id=case_id)
+
+    return create_response(
+        success=True,
+        data={"case_id": case_id, "message": "Case saved for review"},
+        request_id=request_id,
+    )
+
+
+@router.post("/{job_id}/cases/{case_id}/unsave")
+async def unsave_case(
+    job_id: str,
+    case_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Remove the 'saved' tag from a case.
+
+    Reverses the save_case action by removing the [SAVED] prefix from case_label.
+    Idempotent — unsaving an already-unsaved case is a no-op.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    try:
+        case_uuid = uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid case ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    case = db.query(JobCase).filter(
+        and_(JobCase.job_id == job_uuid, JobCase.id == case_uuid)
+    ).first()
+
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Remove saved tag (idempotent)
+    label = case.case_label or ""
+    if label.startswith("[SAVED]"):
+        case.case_label = label.replace("[SAVED]", "", 1).strip()
+        db.commit()
+
+    logger.info("CASE_UNSAVED", request_id=request_id, job_id=job_id, case_id=case_id)
+
+    return create_response(
+        success=True,
+        data={"case_id": case_id, "message": "Case unsaved"},
         request_id=request_id,
     )
 

@@ -596,7 +596,6 @@ def process_batch(
     """
     logger.info(
         "JOB_STARTED",
-        event="JOB_STARTED",
         task_id=self.request.id,
         job_id=job_id,
         case_count=len(cases),
@@ -607,15 +606,26 @@ def process_batch(
     # Create a single event loop for the entire batch
     loop = _get_or_create_event_loop()
 
-    # Create publisher for job-level events
-    from app.utils.stream_manager import StreamPublisher
-    job_publisher = StreamPublisher()
-
-    # Explicitly mark job as PROCESSING so DB reflects correct state
+    # Explicitly mark job as PROCESSING so DB reflects correct state FIRST
+    # (before anything else can fail)
     update_job_status(job_id, JobStatus.PROCESSING)
+
+    # Create publisher for job-level events (optional — SSE streaming only)
+    from app.utils.stream_manager import StreamPublisher
+    try:
+        job_publisher = StreamPublisher()
+    except Exception as pub_err:
+        logger.warning(
+            "stream_publisher_unavailable",
+            job_id=job_id,
+            error=str(pub_err),
+        )
+        job_publisher = None
 
     # ── Build pipeline snapshot (frozen at job start) ──
     # For replay jobs, the snapshot is already set on the Job record — use it directly.
+    # IMPORTANT: initialise to None BEFORE the try so the variable is always bound.
+    pipeline_snapshot = None
     db = SessionLocal()
     try:
         job_start = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
@@ -624,7 +634,6 @@ def process_batch(
             pipeline_snapshot = job_start.pipeline_snapshot
             logger.info(
                 "PIPELINE_SNAPSHOT_REPLAY",
-                event="PIPELINE_SNAPSHOT_REPLAY",
                 job_id=job_id,
                 layer_count=len(pipeline_snapshot),
             )
@@ -635,7 +644,6 @@ def process_batch(
                 job_start.pipeline_snapshot = pipeline_snapshot
             logger.info(
                 "PIPELINE_SNAPSHOT",
-                event="PIPELINE_SNAPSHOT",
                 job_id=job_id,
                 layer_count=len(pipeline_snapshot),
                 layers=[l["layer_name"] for l in pipeline_snapshot],
@@ -646,10 +654,23 @@ def process_batch(
             if not job_start.model_name:
                 job_start.model_name = _get_active_model()
             db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(
+            "PIPELINE_SNAPSHOT_ERROR",
+            job_id=job_id,
+            error=str(e),
+            exc_info=True,
+        )
     finally:
         db.close()
+
+    # Fallback: if snapshot building failed (DB error, etc.), build without DB persistence
+    if pipeline_snapshot is None:
+        logger.warning(
+            "PIPELINE_SNAPSHOT_FALLBACK",
+            job_id=job_id,
+        )
+        pipeline_snapshot = _build_pipeline_snapshot()
 
     try:
         for i, case in enumerate(cases):
@@ -693,24 +714,35 @@ def process_batch(
         # Emit JOB_FAILED SSE so frontend exits processing immediately
         logger.error(
             "JOB_FAILED",
-            event="JOB_FAILED",
             task_id=self.request.id,
             job_id=job_id,
             error=str(e),
             exc_info=True,
         )
         try:
-            job_publisher.publish_job_failed(job_id, str(e))
+            if job_publisher:
+                job_publisher.publish_job_failed(job_id, str(e))
         except Exception:
             pass
         update_job_status(job_id, JobStatus.FAILED)
-        job_publisher.close()
-        loop.close()
+        try:
+            if job_publisher:
+                job_publisher.close()
+        except Exception:
+            pass
+        try:
+            if not loop.is_closed():
+                loop.close()
+        except Exception:
+            pass
         raise
     finally:
         # Only close if not already closed in the except block
-        if not loop.is_closed():
-            loop.close()
+        try:
+            if not loop.is_closed():
+                loop.close()
+        except Exception:
+            pass
 
     # Determine final job status
     success_count = sum(1 for r in results if r.get("success"))
@@ -720,13 +752,16 @@ def process_batch(
     update_job_status(job_id, final_status)
 
     # Emit job completion SSE event
-    job_publisher.publish_job_complete(job_id, len(cases), success_count)
-    job_publisher.close()
+    try:
+        if job_publisher:
+            job_publisher.publish_job_complete(job_id, len(cases), success_count)
+            job_publisher.close()
+    except Exception:
+        pass
 
     lifecycle_event = "JOB_COMPLETED" if final_status == JobStatus.COMPLETED else "JOB_FAILED"
     logger.info(
         lifecycle_event,
-        event=lifecycle_event,
         task_id=self.request.id,
         job_id=job_id,
         case_count=len(cases),

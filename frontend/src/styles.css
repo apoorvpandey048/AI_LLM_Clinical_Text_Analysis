@@ -48,8 +48,39 @@
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
 
   /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-base: 250ms ease;
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==========================================
+   Professional Layout Utilities
+   ========================================== */
+
+.section-container {
+  padding: var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.section-header {
+  font-weight: 600;
+  margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-text);
+}
+
+.section-card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  padding: var(--space-lg);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-base);
+}
+
+.section-card:hover {
+  box-shadow: var(--shadow-md);
 }
 
 /* Icon Animations */
@@ -107,6 +138,12 @@ h1 {
 
 h2 {
   font-size: var(--font-size-xl);
+  letter-spacing: -0.02em;
+}
+
+h3 {
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
 }
 
 p {
@@ -132,16 +169,18 @@ p {
 }
 
 .header-content {
-  max-width: 1100px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-xl);
 }
 
 .header-left {
   display: flex;
   align-items: center;
+  gap: var(--space-xl);
 }
 
 .header-right {
@@ -200,6 +239,7 @@ p {
   padding: var(--space-xl);
   margin-bottom: var(--space-lg);
   box-shadow: var(--shadow-md);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .card h2 {
@@ -317,7 +357,7 @@ p {
 .text-input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  box-shadow: 0 0 0 3px rgba(200, 16, 46, 0.1);
 }
 
 /* ==========================================
@@ -410,7 +450,7 @@ p {
 
 .btn-copy {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary);
+  color: var(--color-text-muted);
   border: 1px solid rgba(255, 255, 255, 0.15);
   cursor: pointer;
   margin-left: 8px;
@@ -420,8 +460,8 @@ p {
 
 .btn-copy:hover {
   background: rgba(255, 255, 255, 0.18);
-  color: var(--text-primary);
-  border-color: var(--primary);
+  color: var(--color-text);
+  border-color: var(--color-primary);
 }
 
 .btn-ghost {
@@ -962,7 +1002,8 @@ p {
 .results-table td {
   padding: var(--space-md);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: var(--line-height-base, 1.6);
+  vertical-align: middle;
 }
 
 .results-table .cd-grades {
@@ -990,6 +1031,7 @@ p {
   font-weight: 700;
   font-size: var(--font-size-lg);
   color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .results-table .verdict-cell {
@@ -1426,6 +1468,22 @@ p {
 .model-dropdown:focus {
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+/* Compare Runs Dropdown Readability Fix */
+.compare-select,
+.compare-select select {
+  background: #ffffff !important;
+  color: #1a1a1a !important;
+  border: 1px solid var(--color-border);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.compare-select select option {
+  background: #ffffff;
+  color: #1a1a1a;
 }
 
 /* ==========================================
@@ -3944,4 +4002,542 @@ input[type="file"].hidden {
     flex-direction: column;
     gap: var(--space-xs);
   }
+}
+
+/* ==========================================
+   Secondary & Outline Button Variants
+   ========================================== */
+
+.btn-secondary {
+  background: #ffffff !important;
+  color: #1a1a1a !important;
+  border: 1px solid rgba(0, 0, 0, 0.15) !important;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #f3f3f3 !important;
+  border-color: rgba(0, 0, 0, 0.25) !important;
+  transform: translateY(-1px);
+}
+
+.btn-secondary:active:not(:disabled) {
+  background: #eaeaea !important;
+  transform: translateY(0);
+}
+
+.btn-secondary.baseline-active {
+  background: #e8f7ed !important;
+  border-color: #3aa76d !important;
+  color: #2f7c53 !important;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-text, #333);
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 500;
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* ==========================================
+   Locked Config Actions
+   ========================================== */
+
+.locked-config-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* ==========================================
+   Pipeline Snapshot Viewer (Professional)
+   ========================================== */
+
+.snapshot-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: 10px 10px 0 0;
+  background: linear-gradient(180deg, #1d1e2f, #23243a);
+  color: #e0e0e0;
+}
+
+.snapshot-title {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snapshot-meta {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.snapshot-replay-badge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: rgba(108, 138, 255, 0.15);
+  color: #8ba4ff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.snapshot-mismatch-badge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: rgba(255, 193, 7, 0.15);
+  color: #ffc107;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-replay {
+  margin-left: auto;
+}
+
+.snapshot-table-wrap {
+  background: #23243a;
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
+}
+
+.snapshot-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.snapshot-table thead {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.snapshot-table th {
+  padding: 8px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #999;
+}
+
+.snapshot-table td {
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.snapshot-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.snapshot-mono {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: #8ba4ff;
+}
+
+.snapshot-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--color-text-muted, #999);
+  font-size: 14px;
+}
+
+.snapshot-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* ==========================================
+   Baseline Button — Active State
+   ========================================== */
+
+.btn-secondary.baseline-active {
+  background: #e8f7ed;
+  border-color: #2e9b63;
+  color: #2e9b63;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(46, 155, 99, .25);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  background: #2e9b63;
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: 6px;
+  animation: pulseDot 1.8s infinite;
+}
+
+@keyframes pulseDot {
+  0% {
+    opacity: .3;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: .3;
+  }
+}
+
+/* ==========================================
+   Save Case Button — Saved State
+   ========================================== */
+
+.save-case-btn.case-saved {
+  background: #eef6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+.save-case-btn.case-saved:hover {
+  background: #dbeafe;
+}
+
+/* ==========================================
+   Saved Case Badge
+   ========================================== */
+
+.case-saved-badge {
+  font-size: 12px;
+  background: #eef6ff;
+  color: #2563eb;
+  padding: 3px 8px;
+  border-radius: 5px;
+  margin-left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ==========================================
+   Run Status Ribbon
+   ========================================== */
+
+.run-status-ribbon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #f3f4f6;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+/* ==========================================
+   CCI Insight Badge
+   ========================================== */
+
+.insight-badge {
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+.insight-badge i,
+.insight-badge svg {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* ==========================================
+   Premium Micro-Animations
+   ========================================== */
+
+.card {
+  transition: all .15s ease;
+}
+
+.card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .08);
+}
+
+button {
+  transition: all .15s ease;
+}
+
+/* ==========================================
+   Run Info Banner
+   ========================================== */
+
+.run-info-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  letter-spacing: 0.02em;
+}
+
+.run-info-banner span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.run-info-banner i,
+.run-info-banner svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+
+.run-info-banner strong {
+  color: #fff;
+}
+
+.run-info-banner code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: #8ba4ff;
+}
+
+/* ==========================================
+   Cancelled Job State
+   ========================================== */
+
+.cancelled-job-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: #6b7280;
+}
+
+.cancelled-job-state .cancelled-icon,
+.cancelled-job-state i,
+.cancelled-job-state svg {
+  width: 48px;
+  height: 48px;
+  color: #dc2626;
+  opacity: 0.6;
+  margin-bottom: 12px;
+}
+
+.cancelled-job-state h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+  margin: 8px 0 4px;
+}
+
+.cancelled-job-state p {
+  font-size: 14px;
+  color: #9ca3af;
+}
+
+/* ==========================================
+   Clinical Status Indicators
+   ========================================== */
+
+.status-running {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.status-pending {
+  color: #6b7280;
+}
+
+.status-complete,
+.status-completed {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.status-failed {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.status-queued {
+  color: #6b7280;
+}
+
+.status-cancelled {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* ==========================================
+   Action Button Groups
+   ========================================== */
+
+.action-button-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.action-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ca3af;
+}
+
+.action-group-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ==========================================
+   Saved Cases Panel
+   ========================================== */
+
+.saved-cases-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.saved-cases-panel h3 {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: #374151;
+}
+
+.saved-cases-panel h3 i,
+.saved-cases-panel h3 svg {
+  width: 16px;
+  height: 16px;
+}
+
+.saved-case-card {
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  transition: all 0.15s ease;
+}
+
+.saved-case-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.saved-case-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.saved-case-input {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 4px 0 2px;
+  line-height: 1.4;
+}
+
+.saved-case-meta {
+  font-size: 11px;
+  color: #9ca3af;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+/* ==========================================
+   Dashboard Grid (3-Panel Layout)
+   ========================================== */
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr 380px;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+@media (max-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================
+   Metrics Empty State
+   ========================================== */
+
+.metrics-empty {
+  text-align: center;
+  padding: 24px 16px;
+  color: #9ca3af;
+}
+
+.metrics-empty p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.text-muted {
+  color: #9ca3af;
+  font-size: 12px;
 }

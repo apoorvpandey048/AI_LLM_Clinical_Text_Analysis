@@ -153,6 +153,9 @@ const state = {
     // Pipeline snapshot fetched from server after job completes
     pipelineSnapshot: null,
 
+    // Last completed job ID (retained so replay/baseline buttons work after processing resets currentJobId)
+    lastCompletedJobId: null,
+
     // Prompt state
     activePromptLayer: 'layer1_ctp',
     promptData: {},       // { layer: { content, source, version } }
@@ -189,6 +192,7 @@ function initApp() {
     initExportActions();
     initPromptEditor();
     initLiveOutputTabs();
+    initLockedConfigActions();
     loadModels();
     loadSystemInfo();
     loadLayers().then(() => loadAllPrompts());
@@ -198,6 +202,9 @@ function initApp() {
         document.getElementById('nav-ops')?.classList.remove('hidden');
         loadAdminUsers();
     }
+
+    // Initialize Lucide icons for static elements
+    if (window.lucide) lucide.createIcons();
 
     // Auto-reload last job results if the user refreshes the page
     const savedJobId = localStorage.getItem('snapai_last_job_id');
@@ -247,7 +254,12 @@ function initApp() {
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
-    const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️' };
+    const icons = {
+        info: '<i data-lucide="info"></i>',
+        success: '<i data-lucide="check-circle"></i>',
+        error: '<i data-lucide="alert-circle"></i>',
+        warning: '<i data-lucide="alert-triangle"></i>'
+    };
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
@@ -257,7 +269,73 @@ function showToast(message, type = 'info') {
     <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
   `;
     container.appendChild(toast);
+    if (window.lucide) lucide.createIcons({ props: { size: 18 } });
     setTimeout(() => toast.remove(), 5000);
+}
+
+// ============================================
+// Job Actions: Replay & Baseline
+// ============================================
+
+function initLockedConfigActions() {
+    const replayBtn = document.getElementById('replay-this-run-btn');
+    const markBaselineBtn = document.getElementById('mark-baseline-btn');
+
+    if (replayBtn) {
+        replayBtn.addEventListener('click', () => {
+            const jobId = state.currentJobId || state.lastCompletedJobId;
+            if (jobId) replayJob(jobId);
+            else showToast('No job available to replay', 'warning');
+        });
+    }
+
+    if (markBaselineBtn) {
+        markBaselineBtn.addEventListener('click', () => {
+            const jobId = state.currentJobId || state.lastCompletedJobId;
+            if (jobId) markBaseline(jobId);
+            else showToast('No job available to mark as baseline', 'warning');
+        });
+    }
+}
+async function markBaseline(jobId) {
+    const res = await authFetch(`${API_BASE}/jobs/${jobId}/mark-baseline`, {
+        method: 'POST',
+    });
+
+    const data = await safeJson(res);
+
+    if (!data) {
+        showToast('Failed to update baseline', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('mark-baseline-btn');
+
+    if (data.is_regression_baseline) {
+        if (btn) {
+            btn.classList.add('baseline-active');
+            btn.innerHTML = `
+                <i data-lucide="flag"></i>
+                Baseline
+                <span class="status-dot"></span>
+            `;
+        }
+        showToast('Run marked as baseline', 'success');
+    } else {
+        if (btn) {
+            btn.classList.remove('baseline-active');
+            btn.innerHTML = `
+                <i data-lucide="flag"></i>
+                Mark as Baseline
+            `;
+        }
+        showToast('Baseline removed', 'info');
+    }
+
+    if (window.lucide) lucide.createIcons();
+
+    // Refresh state so Ops page reflects the baseline
+    await loadSystemInfo();
 }
 
 // ============================================
@@ -341,9 +419,10 @@ function handleFileSelect(file) {
     const info = document.getElementById('file-info');
     info.classList.remove('hidden');
     info.innerHTML = `
-    <span>📄 ${file.name} (${formatFileSize(file.size)})</span>
+    <span><i data-lucide="file"></i> ${file.name} (${formatFileSize(file.size)})</span>
     <button class="btn btn-sm btn-outline" onclick="clearFile()">Remove</button>
   `;
+    if (window.lucide) lucide.createIcons();
     updateProcessButton();
 }
 
@@ -601,6 +680,7 @@ function connectSSE(jobId) {
         // Reset processing state BEFORE delegating to loadResults
         // (defense-in-depth: loadResults is async and may fail)
         console.debug('[SSE_RECV complete] resetting processing state');
+        state.lastCompletedJobId = state.currentJobId || jobId;
         state.isProcessing = false;
         state.currentJobId = null;
         updateProcessButton();
@@ -1081,15 +1161,19 @@ function renderSnapshotViewer(snapshot, jobData) {
     const replaySourceId = jobData?.replay_source_id;
     const jobId = jobData?.id || jobData?.job_id;
     const replayBadge = replaySourceId
-        ? `<span class="snapshot-replay-badge" title="Replayed from ${replaySourceId}">🔁 Replay</span>`
+        ? `<span class="snapshot-replay-badge" title="Replayed from ${replaySourceId}"><i data-lucide="refresh-cw" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Replay</span>`
         : '';
 
-    let html = `<div class="snapshot-header">
-        <span class="snapshot-title">🔒 Pipeline Snapshot</span>
+    let html = `<div class="run-status-ribbon">
+        <i data-lucide="shield-check"></i>
+        Reproducible Snapshot
+    </div>
+    <div class="snapshot-header">
+        <span class="snapshot-title"><i data-lucide="lock" style="width:16px;height:16px;display:inline-block;vertical-align:middle;"></i> Pipeline Snapshot</span>
         <span class="snapshot-meta">Run: ${escapeHtml(jobTime)} · Model: ${escapeHtml(modelName)}</span>
         ${replayBadge}
-        ${mismatch ? '<span class="snapshot-mismatch-badge">⚠ Configuration changed after this run</span>' : ''}
-        ${jobId ? `<button class="btn btn-sm btn-replay" onclick="replayJob('${jobId}')" title="Re-run with the same frozen snapshot">🔄 Replay This Run</button>` : ''}
+        ${mismatch ? '<span class="snapshot-mismatch-badge"><i data-lucide="alert-triangle" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Configuration changed after this run</span>' : ''}
+        ${jobId ? `<button class="btn btn-sm btn-primary btn-replay" onclick="replayJob('${jobId}')" title="Re-run with the same frozen snapshot"><i data-lucide="refresh-cw" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Replay This Run</button>` : ''}
     </div>`;
 
     html += '<div class="snapshot-table-wrap"><table class="snapshot-table"><thead><tr>'
@@ -1108,6 +1192,7 @@ function renderSnapshotViewer(snapshot, jobData) {
 
     html += '</tbody></table></div>';
     container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
 }
 
 /**
@@ -1194,7 +1279,12 @@ async function loadJobMetrics(jobId) {
  */
 function renderJobMetrics(metrics, container) {
     if (!metrics || !metrics.length) {
-        container.innerHTML = '<div class="metrics-empty">No layer metrics recorded for this job.</div>';
+        container.innerHTML = `<div class="metrics-empty">
+            <i data-lucide="trending-up" style="width:24px;height:24px;opacity:0.4;"></i>
+            <p>No metrics recorded yet.</p>
+            <p class="text-muted">Metrics appear after successful pipeline completion.</p>
+        </div>`;
+        if (window.lucide) lucide.createIcons();
         return;
     }
 
@@ -1499,6 +1589,24 @@ async function loadResults(jobId) {
         if (!res.ok) throw new Error('Failed to load results');
         const data = unwrapApiResponse(await res.json());
         window.currentResults = data;
+        // Retain the job ID so replay/baseline buttons work after processing resets currentJobId
+        state.lastCompletedJobId = jobId;
+
+        // Guard: cancelled jobs
+        if (data.status === 'cancelled') {
+            renderCancelledJobState();
+            document.getElementById('progress-section').classList.add('hidden');
+            document.getElementById('results-section').classList.remove('hidden');
+            state.isProcessing = false;
+            updateProcessButton();
+            try { localStorage.setItem('snapai_last_job_id', jobId); } catch { }
+            return;
+        }
+
+        // Hide cancelled state if visible from previous job
+        const cancelledEl = document.getElementById('cancelled-job-state');
+        if (cancelledEl) cancelledEl.classList.add('hidden');
+
         renderResults(data);
 
         // Render snapshot viewer with frozen pipeline config
@@ -1527,6 +1635,8 @@ async function loadResults(jobId) {
         loadJobMetrics(jobId);
         // Defer compare dropdown population (lazy-load)
         setTimeout(() => populateCompareSelect(jobId), 300);
+        // Load saved cases panel
+        setTimeout(() => renderSavedCasesPanel(), 500);
 
         // Persist job ID so results survive a page reload
         try { localStorage.setItem('snapai_last_job_id', jobId); } catch { /* ignore quota errors */ }
@@ -1573,6 +1683,9 @@ function renderResults(data) {
 
     renderResultsTable(results);
     renderResultsCards(results);
+
+    // Initialize Lucide icons after dynamic render
+    if (window.lucide) lucide.createIcons();
 }
 
 function renderResultsTable(results) {
@@ -1653,28 +1766,36 @@ function renderResultsCards(results) {
               </div>`;
         }).join('');
 
+        const caseId = r.case_id || '';
+        const rJobId = state.lastCompletedJobId || state.currentJobId || '';
         return `
       <div class="case-result-card ${r.error_message ? 'has-error' : ''}">
         <div class="case-result-header" onclick="toggleResult(${i})">
-          <span><strong>Case #${caseNum}</strong></span>
+          <span><strong>Case #${caseNum}</strong>
+            <span class="insight-badge">
+              <i data-lucide="activity"></i>
+              CCI Stable
+            </span>
+          </span>
           <div class="case-result-badges">
             <span class="cci-display">${cci}</span>
             <span class="verdict-badge verdict-${(verdict + '').toLowerCase().replace(/\s/g, '')}">${verdict}</span>
+            ${caseId ? `<button class="btn btn-xs btn-secondary save-case-btn" onclick="event.stopPropagation(); toggleSaveCase('${caseId}', '${rJobId}', this)" title="Save this case for later review"><i data-lucide="bookmark" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i> Save Case</button>` : ''}
           </div>
         </div>
         <div class="case-result-body" id="case-result-body-${i}">
           ${r.error_message ? `<div class="error-message">${escapeHtml(r.error_message)}</div>` : ''}
 
           <div class="result-tabs">
-            <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')">📋 Parsed JSON</button>
-            <button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')">📄 Raw LLM Output</button>
+            <button class="result-tab-btn active" onclick="switchResultTab(${i}, 'json')"><i data-lucide="clipboard-list" class="btn-icon"></i> Parsed JSON</button>
+            <button class="result-tab-btn" onclick="switchResultTab(${i}, 'raw')"><i data-lucide="file-text" class="btn-icon"></i> Raw LLM Output</button>
           </div>
 
           <!-- ── JSON Tab (default: active) ── -->
           <div class="result-tab-content active output-fullscreen-panel" id="result-tab-json-${i}">
             <div class="output-panel-toolbar">
-              <span class="output-audit-label">🔒 Audit Output (Read-only)</span>
-              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)">⛶ Fullscreen</button>
+              <span class="output-audit-label"><i data-lucide="lock" class="btn-icon"></i> Audit Output (Read-only)</span>
+              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)"><i data-lucide="maximize" class="btn-icon"></i> Fullscreen</button>
             </div>
 
             <details class="json-details" open>
@@ -1713,8 +1834,8 @@ function renderResultsCards(results) {
           <!-- ── Raw LLM Output Tab ── -->
           <div class="result-tab-content output-fullscreen-panel" id="result-tab-raw-${i}">
             <div class="output-panel-toolbar">
-              <span class="output-audit-label">🔒 Audit Output (Read-only)</span>
-              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)">⛶ Fullscreen</button>
+              <span class="output-audit-label"><i data-lucide="lock" class="btn-icon"></i> Audit Output (Read-only)</span>
+              <button class="btn btn-xs btn-ghost output-fullscreen-btn" onclick="toggleOutputFullscreen(this)"><i data-lucide="maximize" class="btn-icon"></i> Fullscreen</button>
             </div>
             <div class="raw-output-container">
               <div class="raw-output-section">
@@ -1925,7 +2046,7 @@ function renderParsedOutput(data, preEl) {
         if (!prev || !prev.classList.contains('json-parse-warning')) {
             const warn = document.createElement('div');
             warn.className = 'json-parse-warning';
-            warn.textContent = '\u26a0 Failed to parse JSON \u2014 showing raw content.';
+            warn.textContent = '(!) Failed to parse JSON \u2014 showing raw content.';
             preEl.parentNode && preEl.parentNode.insertBefore(warn, preEl);
         }
         preEl.textContent = typeof data === 'string' ? data : JSON.stringify(data);
@@ -1959,7 +2080,7 @@ function toggleOutputFullscreen(btnEl) {
     const panel = btnEl.closest('.output-fullscreen-panel');
     if (!panel) return;
     const isFs = panel.classList.toggle('output-panel-fullscreen');
-    btnEl.textContent = isFs ? '\u2715 Exit Fullscreen' : '\u26f6 Fullscreen';
+    btnEl.textContent = isFs ? '[X] Exit Fullscreen' : '[+] Fullscreen';
     document.body.style.overflow = isFs ? 'hidden' : '';
 }
 
@@ -3879,6 +4000,18 @@ function renderLockedConfig(jobData) {
 
     banner.classList.remove('hidden');
 
+    // Set baseline button state
+    const markBaselineBtn = document.getElementById('mark-baseline-btn');
+    if (markBaselineBtn) {
+        if (jobData?.is_regression_baseline) {
+            markBaselineBtn.classList.add('baseline-active');
+            markBaselineBtn.innerHTML = '<i data-lucide="flag"></i> Baseline <span class="status-dot"></span>';
+        } else {
+            markBaselineBtn.classList.remove('baseline-active');
+            markBaselineBtn.innerHTML = '<i data-lucide="flag"></i> Mark as Baseline';
+        }
+    }
+
     // Upgrade hash to real SHA-256 async
     if (window.crypto && window.crypto.subtle) {
         const enc = new TextEncoder();
@@ -3887,6 +4020,27 @@ function renderLockedConfig(jobData) {
             const hex = arr.map(b => b.toString(16).padStart(2, '0')).join('');
             if (hashEl) hashEl.textContent = hex.substring(0, 16);
         }).catch(() => { /* keep fallback */ });
+    }
+    if (window.lucide) lucide.createIcons();
+
+    // Populate Run Info Banner
+    const runInfoBanner = document.getElementById('run-info-banner');
+    if (runInfoBanner) {
+        const runInfoModel = document.getElementById('run-info-model');
+        const runInfoHash = document.getElementById('run-info-hash');
+        if (runInfoModel) runInfoModel.textContent = jobData?.model_name || '—';
+        if (runInfoHash) runInfoHash.textContent = hashHex;
+        runInfoBanner.classList.remove('hidden');
+
+        // Upgrade with real SHA-256 if available
+        if (window.crypto && window.crypto.subtle) {
+            const enc2 = new TextEncoder();
+            window.crypto.subtle.digest('SHA-256', enc2.encode(JSON.stringify(snapshot, null, 0))).then(buf2 => {
+                const arr2 = Array.from(new Uint8Array(buf2));
+                const hex2 = arr2.map(b => b.toString(16).padStart(2, '0')).join('');
+                if (runInfoHash) runInfoHash.textContent = hex2.substring(0, 16);
+            }).catch(() => { });
+        }
     }
 }
 
@@ -3926,6 +4080,79 @@ async function downloadAuditPackage() {
         showToast(`Failed to export audit package. Reason: ${msg || 'Unknown error'}`, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Download Audit Package'; }
+    }
+}
+
+// ============================================
+// Save Case & Export Saved Cases
+// ============================================
+
+/**
+ * Toggle save/unsave for an individual case.
+ */
+async function toggleSaveCase(caseId, jobId, btn) {
+    if (!caseId || !jobId) {
+        showToast('Missing case or job identifier', 'warning');
+        return;
+    }
+
+    const saved = btn && btn.classList.contains('case-saved');
+
+    const endpoint = saved
+        ? `${API_BASE}/jobs/${jobId}/cases/${caseId}/unsave`
+        : `${API_BASE}/jobs/${jobId}/cases/${caseId}/save`;
+
+    try {
+        const res = await authFetch(endpoint, { method: 'POST' });
+        const data = await safeJson(res);
+
+        if (saved) {
+            if (btn) {
+                btn.classList.remove('case-saved');
+                btn.innerHTML = `
+                    <i data-lucide="bookmark" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i>
+                    Save Case
+                `;
+            }
+            showToast('Case removed', 'info');
+        } else {
+            if (btn) {
+                btn.classList.add('case-saved');
+                btn.innerHTML = `
+                    <i data-lucide="bookmark-check" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i>
+                    Saved
+                `;
+            }
+            showToast('Case saved', 'success');
+        }
+
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        showToast(err.message || 'Action failed', 'error');
+    }
+}
+
+/**
+ * Export all saved cases as a downloadable JSON dataset.
+ */
+async function exportSavedCases() {
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/export-saved`);
+        if (!res.ok) throw new Error(`Export failed (${res.status})`);
+        const data = unwrapApiResponse(await res.json());
+        const text = JSON.stringify(data, null, 2);
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'snap-ai-saved-cases.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Saved cases exported', 'success');
+    } catch (err) {
+        showToast(err.message || 'Export failed', 'error');
     }
 }
 
@@ -3998,6 +4225,72 @@ function renderRegressionResults(data) {
 }
 
 // ============================================
+// Cancelled Job State
+// ============================================
+
+function renderCancelledJobState() {
+    const cancelledEl = document.getElementById('cancelled-job-state');
+    if (cancelledEl) cancelledEl.classList.remove('hidden');
+
+    // Hide sections that don't apply to cancelled jobs
+    const hideIds = [
+        'results-summary', 'results-timeline-wrap', 'locked-config-banner',
+        'metrics-details-wrap', 'compare-details-wrap',
+        'results-table-container', 'case-results', 'run-info-banner',
+    ];
+    hideIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+
+    // Hide snapshot viewer details
+    const snapDetails = document.querySelector('.snapshot-details');
+    if (snapDetails) snapDetails.classList.add('hidden');
+
+    if (window.lucide) lucide.createIcons();
+}
+
+// ============================================
+// Saved Cases Panel
+// ============================================
+
+async function renderSavedCasesPanel() {
+    const panel = document.getElementById('saved-cases-panel');
+    const list = document.getElementById('saved-cases-list');
+    if (!panel || !list) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/export-saved`);
+        if (!res.ok) { panel.classList.add('hidden'); return; }
+        const data = unwrapApiResponse(await res.json());
+        const cases = data?.cases || [];
+
+        if (cases.length === 0) {
+            panel.classList.add('hidden');
+            return;
+        }
+
+        panel.classList.remove('hidden');
+
+        list.innerHTML = cases.map(c => `
+            <div class="saved-case-card">
+                <div class="saved-case-header">
+                    <strong>Case #${c.case_number || '\u2014'}</strong>
+                    <span class="verdict-badge verdict-${(c.final_verdict || '').toLowerCase().replace(/\s/g, '')}">${escapeHtml(c.final_verdict || '\u2014')}</span>
+                    <span class="cci-display">${c.final_cci != null ? c.final_cci.toFixed(2) : '\u2014'}</span>
+                </div>
+                <p class="saved-case-input">${escapeHtml((c.input_text || '').substring(0, 120))}${(c.input_text || '').length > 120 ? '\u2026' : ''}</p>
+                <span class="saved-case-meta">Job: ${escapeHtml((c.job_id || '').substring(0, 8))}\u2026</span>
+            </div>
+        `).join('');
+
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        panel.classList.add('hidden');
+    }
+}
+
+// ============================================
 // Global expose for onclick handlers in HTML
 // ============================================
 
@@ -4062,3 +4355,10 @@ window.loadOperationsDashboard = loadOperationsDashboard;
 // Stage 6 — Regression, Audit, Config
 window.runRegressionCheck = runRegressionCheck;
 window.downloadAuditPackage = downloadAuditPackage;
+// Case tagging
+window.toggleSaveCase = toggleSaveCase;
+window.exportSavedCases = exportSavedCases;
+window.markBaseline = markBaseline;
+// UI State
+window.renderCancelledJobState = renderCancelledJobState;
+window.renderSavedCasesPanel = renderSavedCasesPanel;

@@ -105,9 +105,6 @@ async def generate_job_events(
             db.close()
 
     try:
-        # Start streaming events from Redis pub/sub
-        stream_task = asyncio.create_task(_stream_tokens(subscriber, job_id))
-
         start_time = asyncio.get_event_loop().time()
         token_buffer = []
 
@@ -196,11 +193,6 @@ async def generate_job_events(
         yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
     finally:
         await subscriber.close()
-
-
-async def _stream_tokens(subscriber: StreamSubscriber, job_id: str):
-    """Background task placeholder for token streaming."""
-    pass
 
 
 @router.get("/stream/{job_id}")
