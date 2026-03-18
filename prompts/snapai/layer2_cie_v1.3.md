@@ -206,8 +206,20 @@ or deviation:
 • Normal recovery statements ("komplikationslos", "problemlos", "unauffällig")
 
 DEFAULT RULE:
-If the postoperative course is described as uncomplicated / komplikationslos,
-assume ZERO complications unless a specific deviation is documented afterwards.
+If the postoperative course is described as uncomplicated / komplikationslos
+WITHOUT qualification, assume ZERO complications unless a specific deviation
+is documented afterwards.
+
+IMPORTANT: If "komplikationslos" / "ohne Komplikationen" is QUALIFIED
+(e.g., "von chirurgischer Seite ohne Komplikationen", "infektiologisch
+komplikationslos"), it ONLY applies to that domain. You MUST still check
+for deviations outside that domain (e.g., diarrhea, weakness, delirium).
+
+GRADE I DEVIATIONS TO STILL EXTRACT even when text says "komplikationslos":
+• Diarrhea / flüssiger Stuhlgang requiring Imodium (Loperamid) → Grade I
+• Pronounced weakness (ausgeprägte Schwäche) documented as deviation → Grade I
+• Nausea / vomiting requiring antiemetics → Grade I
+• Urinary retention requiring catheter → Grade I (if no non-exempt drugs)
 
 ============================================================
 NON-EXEMPT DRUGS → GRADE II (MANDATORY)
