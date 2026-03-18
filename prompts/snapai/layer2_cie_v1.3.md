@@ -221,6 +221,11 @@ GRADE I DEVIATIONS TO STILL EXTRACT even when text says "komplikationslos":
 • Nausea / vomiting requiring antiemetics → Grade I
 • Urinary retention requiring catheter → Grade I (if no non-exempt drugs)
 
+STILL NOT COMPLICATIONS (even with the above):
+• PDK / PDA belassen (epidural catheter left in) for pain → ROUTINE, not a complication
+• Schmerzproblematik managed solely with PDK/PCA → ROUTINE pain management
+Do NOT extract PDK-based pain management as a complication.
+
 ============================================================
 NON-EXEMPT DRUGS → GRADE II (MANDATORY)
 
@@ -228,7 +233,8 @@ The following drugs and therapies are NOT in the CD Grade I exemption list.
 If a complication is treated with any of these, it MUST be graded ≥ Grade II:
 
 • Antibiotics beyond surgical prophylaxis (>24 hours post-op)
-• Blood products: transfusion (PRBC), FFP, platelets, cryoprecipitate
+• Blood products: transfusion (PRBC), FFP, platelets, cryoprecipitate,
+  human albumin (Albumin-Substitution)
 • Coagulation factor substitution: Factor VII, PPSB, fibrinogen concentrate
 • Tamsulosin (Pradif) for urinary retention
 • Alpha-blockers / beta-blockers for postoperative complications
@@ -239,6 +245,8 @@ If a complication is treated with any of these, it MUST be graded ≥ Grade II:
 • Antipsychotics for delirium: Haloperidol, Quetiapin (Seroquel),
   Risperidon, Olanzapin, Dexmedetomidin (Dexdor)
 • Cordarone (Amiodarone) for cardiac arrhythmias
+• Catecholamines / inotropes: Dobutamin, Noradrenalin, Adrenalin,
+  Vasopressin — for hemodynamic support (→ Grade II or higher)
 
 If the ONLY treatment is from the CD I exemption list (antiemetics,
 analgesics, antipyretics, diuretics, electrolytes, physiotherapy),

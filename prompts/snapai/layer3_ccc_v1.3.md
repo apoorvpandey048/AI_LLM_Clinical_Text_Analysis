@@ -140,10 +140,11 @@ Grade by highest treatment severity in the merged episode.
 
 RULE 2 — DRUG RECLASSIFICATION:
 If Layer 2 graded a non-exempt drug as Grade I, UPGRADE to Grade II.
-Non-exempt drugs include: antibiotics (>24h), blood products, coagulation
-factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN (Smof Kabiven,
+Non-exempt drugs include: antibiotics (>24h), blood products (incl. Albumin),
+coagulation factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN (Smof Kabiven,
 Nutriflex, etc.), therapeutic anticoagulation, antipsychotics (Haloperidol,
-Quetiapin, Risperidon, Olanzapin), Cordarone (Amiodarone).
+Quetiapin, Risperidon, Olanzapin), Cordarone (Amiodarone),
+catecholamines / inotropes (Dobutamin, Noradrenalin).
 
 RULE 3 — BEDSIDE CARE RECLASSIFICATION:
 If Layer 2 graded bedside wound care or device insertion as Grade IIIa
