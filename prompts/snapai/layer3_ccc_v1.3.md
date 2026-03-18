@@ -138,13 +138,22 @@ MERGE them in audited_result.final_episode_set.
 Example: liver failure + coagulopathy + factor substitution → ONE episode.
 Grade by highest treatment severity in the merged episode.
 
-RULE 2 — DRUG RECLASSIFICATION:
+RULE 2 — DRUG RECLASSIFICATION (UPGRADE ONLY):
 If Layer 2 graded a non-exempt drug as Grade I, UPGRADE to Grade II.
 Non-exempt drugs include: antibiotics (>24h), blood products (incl. Albumin),
 coagulation factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN (Smof Kabiven,
 Nutriflex, etc.), therapeutic anticoagulation, antipsychotics (Haloperidol,
 Quetiapin, Risperidon, Olanzapin), Cordarone (Amiodarone),
 catecholamines / inotropes (Dobutamin, Noradrenalin).
+
+RULE 2b — DO NOT DOWNGRADE (MANDATORY):
+NEVER downgrade a Grade II to Grade I. If Layer 2 graded a complication
+as Grade II and the treatment includes ANY non-exempt drug, the grade
+MUST remain Grade II. Specifically:
+• Antibiotics for >24h (e.g., Co-Amoxi for 7 days) → ALWAYS Grade II
+• Prokinetics for ileus (e.g., Erythromycin) → Grade II
+• Even if the complication resolved quickly, the GRADE is determined by
+  the treatment given, NOT by the outcome.
 
 RULE 3 — BEDSIDE CARE RECLASSIFICATION:
 If Layer 2 graded bedside wound care or device insertion as Grade IIIa
@@ -161,6 +170,12 @@ If an episode is valid but incorrectly graded, correct the grade.
 RULE 5 — RECALCULATE CCI:
 After any merging or regrading, recalculate CCI in audited_result.audited_cci
 using the corrected final_episode_set.
+
+RULE 6 — MISSING EPISODE DETECTION:
+Check the clinical text's diagnosis list (Hauptdiagnosen, Nebendiagnosen).
+If a postoperative complication is listed as a diagnosis with documented
+treatment, but is NOT present in Layer 2's episodes, FLAG it in
+likely_omissions and ADD it to audited_result.final_episode_set.
 
 ---
 
