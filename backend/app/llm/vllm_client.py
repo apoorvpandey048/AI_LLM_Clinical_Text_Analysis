@@ -83,15 +83,12 @@ class VLLMClient(LLMClient):
             "max_tokens": max_tokens,
         }
 
-        # GPT-OSS / vLLM: strip fields that cause HTTP 400
-        if "gpt-oss" in self.model.lower():
-            # Do NOT send response_format, tools, tool_choice — vLLM rejects them
-            payload.pop("response_format", None)
-            payload.pop("tools", None)
-            payload.pop("tool_choice", None)
-            payload.pop("parallel_tool_calls", None)
-        else:
-            payload["response_format"] = {"type": "json_object"}
+        # Strip fields that can cause HTTP 400 on various vLLM setups
+        # (response_format requires guided decoding backends which may not be available)
+        payload.pop("response_format", None)
+        payload.pop("tools", None)
+        payload.pop("tool_choice", None)
+        payload.pop("parallel_tool_calls", None)
 
         logger.debug(
             "vllm_request",
@@ -291,12 +288,11 @@ class VLLMClient(LLMClient):
             "max_tokens": max_tokens,
             "stream": True,
         }
-        if "gpt-oss" in self.model.lower():
-            payload.pop("response_format", None)
-            payload.pop("tools", None)
-            payload.pop("tool_choice", None)
-        else:
-            payload["response_format"] = {"type": "json_object"}
+        # Strip fields that can cause HTTP 400 on various vLLM setups
+        payload.pop("response_format", None)
+        payload.pop("tools", None)
+        payload.pop("tool_choice", None)
+        payload.pop("parallel_tool_calls", None)
 
         logger.debug(
             "vllm_stream_request",
