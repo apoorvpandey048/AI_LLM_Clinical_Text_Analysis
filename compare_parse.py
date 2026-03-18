@@ -1,0 +1,1 @@
+import sys,json; d=json.load(sys.stdin); data=d.get('data',{}); print('Success:', d.get('success')); print('Jobs:', len(data.get('jobs',[])) if data else 0); print('Snapshot match:', data.get('snapshot_diff',{}).get('match','N/A') if data else 'N/A')

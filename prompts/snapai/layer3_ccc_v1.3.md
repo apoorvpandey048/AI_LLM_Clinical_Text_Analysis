@@ -127,6 +127,38 @@ Flag any mismatch.
 
 ---
 
+CORRECTIVE ADJUDICATOR RULES (MANDATORY)
+
+Layer 3 is a CORRECTIVE adjudicator, not just a filter.
+When issues are found, you must FIX them in audited_result, not just flag them.
+
+RULE 1 — EPISODE MERGING:
+If Layer 2 split a single clinical process into multiple episodes,
+MERGE them in audited_result.final_episode_set.
+Example: liver failure + coagulopathy + factor substitution → ONE episode.
+Grade by highest treatment severity in the merged episode.
+
+RULE 2 — DRUG RECLASSIFICATION:
+If Layer 2 graded a non-exempt drug as Grade I, UPGRADE to Grade II.
+Non-exempt drugs include: antibiotics (>24h), blood products, coagulation
+factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN, therapeutic anticoagulation.
+
+RULE 3 — BEDSIDE CARE RECLASSIFICATION:
+If Layer 2 graded bedside wound care as Grade IIIa, DOWNGRADE to Grade I.
+Bedside procedures: removing staples, applying Easy-Flow/Penrose bags,
+wound irrigation, wound packing. Grade IIIa requires a procedure room.
+
+RULE 4 — PRESERVE VALID EPISODES:
+Do NOT delete episodes that are clearly text-supported complications.
+Only reject episodes where there is NO textual evidence whatsoever.
+If an episode is valid but incorrectly graded, correct the grade.
+
+RULE 5 — RECALCULATE CCI:
+After any merging or regrading, recalculate CCI in audited_result.audited_cci
+using the corrected final_episode_set.
+
+---
+
 OVERALL VERDICT
 
 Based on all checks, assign ONE of:

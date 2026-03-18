@@ -3199,16 +3199,26 @@ async function loadSystemInfo() {
             statusTooltip = `Redis: ${redisOk ? 'OK' : 'Down'} | Model: ${llmOk ? 'OK' : 'Down'}`;
         }
 
-        // Conditional temperature control: slider if supported, label if not
-        const tempHtml = supportsTemp
-            ? `<input type="range" class="sys-info-temp-slider" id="sys-info-temp"
-                     value="${temperature}" min="0" max="1" step="0.05"
-                     title="LLM Temperature (0.0 = deterministic)"
-                     oninput="document.getElementById('sys-info-temp-display').textContent = this.value"
-                     onchange="updateTemperature(this.value)">
-               <span class="sys-info-temp-value" id="sys-info-temp-display">${temperature}</span>`
-            : `<span class="sys-info-value">${temperature}</span>
-               <span class="sys-info-hint">(Model Default)</span>`;
+        // Read-only inference parameter display with tooltips
+        const paramHtml = `
+            <div class="param-display-panel">
+                <div class="param-item" title="Controls randomness. Higher = more creative, lower = more deterministic.">
+                    <span class="param-label">temp</span>
+                    <span class="param-value">${temperature}</span>
+                </div>
+                <div class="param-item" title="Nucleus sampling. Limits token selection to cumulative probability mass.">
+                    <span class="param-label">top_p</span>
+                    <span class="param-value">0.8</span>
+                </div>
+                <div class="param-item" title="Limits token selection to top K most probable tokens.">
+                    <span class="param-label">top_k</span>
+                    <span class="param-value">20</span>
+                </div>
+                <div class="param-item" title="Penalizes repeated tokens. Higher values reduce repetition.">
+                    <span class="param-label">rep_pen</span>
+                    <span class="param-value">1.05</span>
+                </div>
+            </div>`;
 
         bar.innerHTML = `
             <div class="sys-info-item" id="connection-status-indicator">
@@ -3226,8 +3236,8 @@ async function loadSystemInfo() {
                 <span class="sys-info-value" id="sys-info-model">${activeModel}</span>
             </div>
             <div class="sys-info-item">
-                <span class="sys-info-label">Temp:</span>
-                ${tempHtml}
+                <span class="sys-info-label">Params:</span>
+                ${paramHtml}
             </div>
             <div class="sys-info-item">
                 <span class="sys-info-label">Prompt:</span>

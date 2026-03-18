@@ -2251,77 +2251,40 @@ p {
   font-size: 0.75rem;
 }
 
-/* Temperature slider for system info bar */
-.sys-info-temp-slider {
-  width: 80px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-  vertical-align: middle;
+/* Inference Parameter Display Panel */
+.param-display-panel {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.sys-info-temp-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: white;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.sys-info-temp-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: white;
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.sys-info-temp-value {
-  font-weight: 600;
-  min-width: 28px;
-  text-align: center;
-}
-
-.sys-info-hint {
-  opacity: 0.6;
-  font-size: 0.75rem;
-  font-style: italic;
-}
-
-/* Legacy temp input (kept for fallback) */
-.sys-info-temp-input {
-  width: 52px;
-  padding: 2px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: var(--radius-sm);
+.param-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
   background: rgba(255, 255, 255, 0.1);
-  color: white;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  font-family: inherit;
-  outline: none;
-  text-align: center;
-  -moz-appearance: textfield;
-  appearance: textfield;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  cursor: help;
+  transition: background 0.15s ease;
+  position: relative;
 }
 
-.sys-info-temp-input::-webkit-inner-spin-button,
-.sys-info-temp-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+.param-item:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
-.sys-info-temp-input:focus {
-  border-color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.2);
+.param-label {
+  font-size: 0.68rem;
+  opacity: 0.7;
+  text-transform: lowercase;
+  font-weight: 500;
+}
+
+.param-value {
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ==========================================

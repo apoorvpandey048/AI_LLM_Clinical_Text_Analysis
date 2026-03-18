@@ -130,6 +130,7 @@ VLLM_ARGS=(
     --dtype auto
     --trust-remote-code
     --enforce-eager
+    --generation-config vllm
     --host 0.0.0.0
     --port "$PORT"
 )

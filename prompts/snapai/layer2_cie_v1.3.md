@@ -181,6 +181,93 @@ Do NOT count:
 - vague "weakness" without a deviation
 
 ============================================================
+SINGLE-CASE ISOLATION (MANDATORY)
+
+You are analyzing EXACTLY ONE patient case. Do NOT:
+- Reference or infer from other cases.
+- Carry over context from prior analyses.
+- Assume patterns from external knowledge.
+Analyze ONLY what is explicitly written in THIS case.
+
+============================================================
+NOT COMPLICATIONS — DO NOT EXTRACT (MANDATORY)
+
+The following are ROUTINE postoperative care and must NEVER be extracted
+as complications unless the text EXPLICITLY labels them as a complication
+or deviation:
+
+• PDK / PDA (epidural catheter) left in place for pain management
+• Routine DK (urinary catheter) use and removal after surgery
+• Prophylactic antibiotics (started intraoperatively, continued ≤24 hours)
+• Routine physiotherapy for mobilisation or breathing support
+• Routine ICU / IMC monitoring without documented complications
+• Routine removal of drains, catheters, or wound dressings
+• Standard pain management (including epidural, PCA, non-opioid analgesics)
+• Normal recovery statements ("komplikationslos", "problemlos", "unauffällig")
+
+DEFAULT RULE:
+If the postoperative course is described as uncomplicated / komplikationslos,
+assume ZERO complications unless a specific deviation is documented afterwards.
+
+============================================================
+NON-EXEMPT DRUGS → GRADE II (MANDATORY)
+
+The following drugs and therapies are NOT in the CD Grade I exemption list.
+If a complication is treated with any of these, it MUST be graded ≥ Grade II:
+
+• Antibiotics beyond surgical prophylaxis (>24 hours post-op)
+• Blood products: transfusion (PRBC), FFP, platelets, cryoprecipitate
+• Coagulation factor substitution: Factor VII, PPSB, fibrinogen concentrate
+• Tamsulosin (Pradif) for urinary retention
+• Alpha-blockers / beta-blockers for postoperative complications
+• Parenteral nutrition (TPN)
+• Anticoagulation therapy (therapeutic dose — NOT prophylactic LMWH)
+• Bowel stimulation agents (prokinetics for ileus, e.g. Prostigmin)
+
+If the ONLY treatment is from the CD I exemption list (antiemetics,
+analgesics, antipyretics, diuretics, electrolytes, physiotherapy),
+the grade MUST remain Grade I.
+
+============================================================
+BEDSIDE WOUND CARE — ALWAYS GRADE I (NOT IIIa) (MANDATORY)
+
+The following bedside procedures are GRADE I even if they involve
+removing hardware or manipulating the wound:
+
+• Removing wound staples or sutures at the bedside
+• Opening a wound for drainage or irrigation at the bedside
+• Applying bedside drainage bags (Easy-Flow, Penrose, wound bags)
+• Wound packing or dressing changes
+• Wound irrigation at bedside
+• Removing or shortening a drain at bedside
+
+Grade IIIa requires a FORMAL PROCEDURE SETTING:
+interventional radiology suite, endoscopy suite, operating room,
+or equivalent — NOT bedside care.
+
+If the text describes wound management at the bedside without mention
+of a procedure room, sedation, or anaesthesia → Grade I.
+
+============================================================
+EPISODE MERGE EXAMPLE (NON-NORMATIVE)
+
+Example of a SINGLE EPISODE that must NOT be split:
+
+Text: "eingeschränkte Leberfunktion ... Gerinnungsstörung ...
+Substitution mit Faktor VII"
+
+WRONG (split into 3):
+  Episode 1: Eingeschränkte Leberfunktion → Grade I
+  Episode 2: Gerinnungsstörung → Grade I
+  Episode 3: Faktor VII Substitution → Grade I
+
+CORRECT (merged):
+  Episode 1: Posthepatektomie-Leberinsuffizienz → Grade II
+  Reasoning: liver dysfunction → coagulopathy → factor substitution
+  is ONE escalation chain. Grade by highest therapy:
+  factor substitution = pharmacological (non-exempt) → Grade II.
+
+============================================================
 TASK 1 OUTPUT FORMAT (STRICT JSON)
 
 {
