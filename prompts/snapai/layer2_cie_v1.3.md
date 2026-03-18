@@ -220,19 +220,23 @@ If a complication is treated with any of these, it MUST be graded ≥ Grade II:
 • Coagulation factor substitution: Factor VII, PPSB, fibrinogen concentrate
 • Tamsulosin (Pradif) for urinary retention
 • Alpha-blockers / beta-blockers for postoperative complications
-• Parenteral nutrition (TPN)
+• Parenteral nutrition (TPN) — includes branded products: Smof Kabiven,
+  Nutriflex, Olimel, Kabiven, Structokabiven, ClinOleic, Aminoven
 • Anticoagulation therapy (therapeutic dose — NOT prophylactic LMWH)
 • Bowel stimulation agents (prokinetics for ileus, e.g. Prostigmin)
+• Antipsychotics for delirium: Haloperidol, Quetiapin (Seroquel),
+  Risperidon, Olanzapin, Dexmedetomidin (Dexdor)
+• Cordarone (Amiodarone) for cardiac arrhythmias
 
 If the ONLY treatment is from the CD I exemption list (antiemetics,
 analgesics, antipyretics, diuretics, electrolytes, physiotherapy),
 the grade MUST remain Grade I.
 
 ============================================================
-BEDSIDE WOUND CARE — ALWAYS GRADE I (NOT IIIa) (MANDATORY)
+BEDSIDE WOUND CARE & DEVICES — ALWAYS GRADE I (NOT IIIa, NOT II) (MANDATORY)
 
-The following bedside procedures are GRADE I even if they involve
-removing hardware or manipulating the wound:
+The following bedside procedures and device insertions are GRADE I.
+They are NOT pharmacological therapy and NOT interventional procedures:
 
 • Removing wound staples or sutures at the bedside
 • Opening a wound for drainage or irrigation at the bedside
@@ -240,13 +244,22 @@ removing hardware or manipulating the wound:
 • Wound packing or dressing changes
 • Wound irrigation at bedside
 • Removing or shortening a drain at bedside
+• Nasogastric tube (Magensonde / Magenverweilsonde) insertion
+• Urinary catheter (DK / Blasenkatheter) insertion or exchange
+• Rectal tube insertion
+• Drainage flushing (Drainagespülung)
+
+These are GRADE I because they are bedside nursing interventions,
+not pharmacological treatments (Grade II) or procedure-room
+interventions (Grade IIIa).
 
 Grade IIIa requires a FORMAL PROCEDURE SETTING:
 interventional radiology suite, endoscopy suite, operating room,
 or equivalent — NOT bedside care.
 
-If the text describes wound management at the bedside without mention
-of a procedure room, sedation, or anaesthesia → Grade I.
+If the text describes wound management or device insertion at the
+bedside without mention of a procedure room, sedation, or
+anaesthesia → Grade I.
 
 ============================================================
 EPISODE MERGE EXAMPLE (NON-NORMATIVE)

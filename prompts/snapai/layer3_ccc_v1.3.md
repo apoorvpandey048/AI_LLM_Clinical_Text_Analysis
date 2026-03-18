@@ -141,12 +141,16 @@ Grade by highest treatment severity in the merged episode.
 RULE 2 — DRUG RECLASSIFICATION:
 If Layer 2 graded a non-exempt drug as Grade I, UPGRADE to Grade II.
 Non-exempt drugs include: antibiotics (>24h), blood products, coagulation
-factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN, therapeutic anticoagulation.
+factors (Factor VII, PPSB), Tamsulosin (Pradif), TPN (Smof Kabiven,
+Nutriflex, etc.), therapeutic anticoagulation, antipsychotics (Haloperidol,
+Quetiapin, Risperidon, Olanzapin), Cordarone (Amiodarone).
 
 RULE 3 — BEDSIDE CARE RECLASSIFICATION:
-If Layer 2 graded bedside wound care as Grade IIIa, DOWNGRADE to Grade I.
+If Layer 2 graded bedside wound care or device insertion as Grade IIIa
+or Grade II, DOWNGRADE to Grade I.
 Bedside procedures: removing staples, applying Easy-Flow/Penrose bags,
-wound irrigation, wound packing. Grade IIIa requires a procedure room.
+wound irrigation, wound packing, Magensonde insertion, DK insertion,
+drainage flushing. Grade IIIa requires a procedure room.
 
 RULE 4 — PRESERVE VALID EPISODES:
 Do NOT delete episodes that are clearly text-supported complications.
