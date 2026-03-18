@@ -35,7 +35,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
       - LLM_BACKEND=vllm
-      - VLLM_HOST=http://host.docker.internal:8000
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
@@ -88,7 +88,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
       - LLM_BACKEND=vllm
-      - VLLM_HOST=http://host.docker.internal:8000
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8000}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
