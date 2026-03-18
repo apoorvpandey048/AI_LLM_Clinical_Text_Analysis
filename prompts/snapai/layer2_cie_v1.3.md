@@ -301,6 +301,33 @@ CORRECT (merged):
   factor substitution = pharmacological (non-exempt) → Grade II.
 
 ============================================================
+EPISODE SPLITTING — WHEN NOT TO MERGE (MANDATORY)
+
+Do NOT merge complications that are DISTINCT clinical events, even if
+they affect the same organ system. Each requires its own episode:
+
+• AV block (treated with Dobutamin) ≠ Vorhofflimmern (treated with Cordarone)
+  → TWO separate cardiac episodes, each graded independently
+• Cholangitis (treated with antibiotics) ≠ Sepsis trigger for arrhythmia
+  → SEPARATE episodes
+• Pleuraerguss (puncture) ≠ Aszites (drainage)
+  → TWO separate episodes even if both fluid-related
+• Anasarka/capillary leak (treated with Albumin) ≠ Aszites (drainage)
+  → SEPARATE episodes
+
+GENERAL RULE: If TWO complications have DIFFERENT treatments AND are
+listed as separate diagnoses, they are SEPARATE episodes.
+
+============================================================
+DIAGNOSES-DRIVEN EXTRACTION (MANDATORY)
+
+If the clinical text includes a DIAGNOSIS LIST (Hauptdiagnosen,
+Nebendiagnosen), check EACH numbered postoperative diagnosis for
+complications. Every postoperative complication in the diagnosis list
+that has a treatment documented in the clinical text MUST appear as
+an episode. Do NOT skip any listed postoperative diagnosis.
+
+============================================================
 TASK 1 OUTPUT FORMAT (STRICT JSON)
 
 {
