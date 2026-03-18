@@ -312,6 +312,16 @@ class VLLMClient(LLMClient):
                 async with client.stream(
                     "POST", self.chat_url, json=payload
                 ) as response:
+                    if response.status_code != 200:
+                        # Read the error body before raise_for_status discards it
+                        error_body = await response.aread()
+                        logger.error(
+                            "vllm_stream_http_error",
+                            status_code=response.status_code,
+                            error_body=error_body.decode("utf-8", errors="replace")[:1000],
+                            model=self.model,
+                            max_tokens=max_tokens,
+                        )
                     response.raise_for_status()
 
                     async for raw_line in response.aiter_lines():
