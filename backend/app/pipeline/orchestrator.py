@@ -6,6 +6,8 @@ Supports additional custom layers that run after the built-in pipeline.
 """
 
 import json
+
+from app.pipeline.cci_calculator import compute_cci_from_pipeline
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
@@ -260,7 +262,13 @@ class PipelineOrchestrator:
 
         # Extract final values
         final_verdict = layer3_result.output.get("verdict", "UNKNOWN")
-        final_cci = layer2_result.output.get("cci_total", 0.0)
+
+        # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic
+        final_cci = compute_cci_from_pipeline(
+            layer2_output=layer2_result.output,
+            layer3_output=layer3_result.output if layer3_result.success else None,
+        )
+        logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
 
         # ====== Extra Custom Layers ======
         extra_layer_results = {}
@@ -616,8 +624,13 @@ class PipelineOrchestrator:
         elif layer3_result and not layer3_result.success:
             final_verdict = "LAYER3_FAILED"
 
+        # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic
         if layer2_result and layer2_result.output:
-            final_cci = layer2_result.output.get("cci_total", 0.0)
+            final_cci = compute_cci_from_pipeline(
+                layer2_output=layer2_result.output,
+                layer3_output=layer3_result.output if (layer3_result and layer3_result.success) else None,
+            )
+            logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
 
         # Pipeline is successful if at least L1+L2 succeeded
         success = True

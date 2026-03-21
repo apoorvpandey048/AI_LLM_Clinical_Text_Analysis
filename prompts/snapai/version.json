@@ -1,23 +1,39 @@
 {
-    "current_version": "1.3",
+    "current_version": "1.4",
     "layers": {
         "layer1_ctp": {
-            "version": "1.3",
-            "file": "layer1_ctp_v1.3.md",
+            "version": "1.4",
+            "file": "layer1_ctp_v1.4.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.3",
-            "file": "layer2_cie_v1.3.md",
+            "version": "1.4",
+            "file": "layer2_cie_v1.4.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.3",
-            "file": "layer3_ccc_v1.3.md",
+            "version": "1.4",
+            "file": "layer3_ccc_v1.4.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": [
+        {
+            "version": "1.4",
+            "date": "2026-03-21",
+            "changes": [
+                "Added 13 worked grading examples (A-M) to Layer 2 for common patterns",
+                "Expanded non-exempt drug list: Tamsulosin, prokinetics, Cordarone, Dobutamin, Levosimendan, Albumin",
+                "Added explicit IIIa rules for puncture/drainage vs bedside procedure distinction",
+                "Added multi-complication CCI reference table for self-check accuracy",
+                "Simplified CCI self-check to reference-value comparison",
+                "Layer 3: Added Rule 3b (puncture/drainage upgrade), Rule 7 (diuretic CD-I exemption)",
+                "Layer 3: Expanded DO NOT DOWNGRADE rule with explicit drug examples",
+                "Layer 1: Extended drug normalization table (Pradif, Paspertin, Aldactone, Konakion)",
+                "Added deterministic CCI calculator in Python (cci_calculator.py)",
+                "Orchestrator now computes final CCI in Python code, not LLM arithmetic"
+            ]
+        },
         {
             "version": "1.3",
             "date": "2026-01-31",
