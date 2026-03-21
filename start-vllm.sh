@@ -77,44 +77,42 @@ echo "  GPU memory util: ${VLLM_GPU_MEMORY_UTILIZATION}"
 if [ -n "$VLLM_MAX_NUM_SEQS" ]; then echo "  Max num seqs:  ${VLLM_MAX_NUM_SEQS}"; fi
 echo "============================================"
 
-# ---- Create venv (use uv if available, else pip) ----
+# ---- Python environment ----
+# Priority: 1) active conda env with vllm  2) .vllm-venv  3) create .vllm-venv
 VENV_DIR="${SCRIPT_DIR}/.vllm-venv"
 
-install_with_uv() {
-    echo "  Using uv (fast install)..."
-    uv venv "$VENV_DIR" --python python3
-    source "$VENV_DIR/bin/activate"
-    uv pip install --upgrade pip
-    uv pip install --prerelease=allow \
-        "vllm>=0.8" \
-        --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
-        --extra-index-url https://download.pytorch.org/whl/nightly/cu128
-}
-
-install_with_pip() {
-    echo "  Using pip..."
-    python3 -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    pip install --upgrade pip
-    pip install --pre \
-        "vllm>=0.8" \
-        --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
-        --extra-index-url https://download.pytorch.org/whl/nightly/cu128
-}
-
-if [ ! -d "$VENV_DIR" ]; then
-    echo ""
-    echo "Creating Python virtual environment..."
-    if command -v uv &> /dev/null; then
-        install_with_uv
-    else
-        install_with_pip
-    fi
-    echo "✓ vLLM installed"
-else
+# Check if we're already in a conda env with vllm installed
+if python3 -c "import vllm" 2>/dev/null; then
+    echo "  ✓ Using current Python env ($(which python3))"
+elif [ -d "$VENV_DIR" ]; then
     source "$VENV_DIR/bin/activate"
     echo "  ✓ Using existing venv at ${VENV_DIR}"
+else
+    echo ""
+    echo "Creating Python virtual environment..."
+    echo "(If you have a conda env with vllm, activate it first: conda activate vllm)"
+    if command -v uv &> /dev/null; then
+        echo "  Using uv (fast install)..."
+        uv venv "$VENV_DIR" --python python3
+        source "$VENV_DIR/bin/activate"
+        uv pip install --upgrade pip
+        uv pip install --prerelease=allow \
+            "vllm>=0.8" \
+            --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
+            --extra-index-url https://download.pytorch.org/whl/nightly/cu128
+    else
+        echo "  Using pip..."
+        python3 -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install --upgrade pip
+        pip install --pre \
+            "vllm>=0.8" \
+            --extra-index-url https://wheels.vllm.ai/gpt-oss/ \
+            --extra-index-url https://download.pytorch.org/whl/nightly/cu128
+    fi
+    echo "✓ vLLM installed"
 fi
+
 
 echo ""
 echo "Starting vLLM server..."

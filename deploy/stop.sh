@@ -1,10 +1,6 @@
 #!/bin/bash
 # =============================================================
-# SNAP-AI — Stop Everything
-# =============================================================
-# Stops the Docker stack and vLLM. Data is preserved.
-#
-# Usage: bash deploy/stop.sh
+# SNAP-AI — Stop Everything (NO SUDO)
 # =============================================================
 set -euo pipefail
 
@@ -18,11 +14,15 @@ docker compose -f docker-compose.prod.yml down 2>/dev/null || true
 echo "  ✓ Docker stack stopped"
 
 echo "[2/2] Stopping vLLM..."
-if systemctl is-active --quiet snapai-vllm 2>/dev/null; then
-    sudo systemctl stop snapai-vllm
-    echo "  ✓ vLLM stopped (systemd)"
+VLLM_PID=$(pgrep -f "vllm.entrypoints|vllm serve" 2>/dev/null | head -1 || echo "")
+if [ -n "$VLLM_PID" ]; then
+    kill "$VLLM_PID" 2>/dev/null || true
+    sleep 2
+    # Force kill if still running
+    kill -9 "$VLLM_PID" 2>/dev/null || true
+    echo "  ✓ vLLM stopped (was PID: ${VLLM_PID})"
 else
-    pkill -f "vllm serve" 2>/dev/null && echo "  ✓ vLLM process killed" || echo "  vLLM not running"
+    echo "  vLLM was not running"
 fi
 
 echo ""

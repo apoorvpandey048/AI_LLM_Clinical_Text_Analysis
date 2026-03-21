@@ -1,8 +1,9 @@
 #!/bin/bash
 # =============================================================
-# SNAP-AI — Deploy / Redeploy
+# SNAP-AI — Deploy / Redeploy (NO SUDO)
 # =============================================================
 # Builds and starts the full stack. Safe to run repeatedly.
+# Does NOT start vLLM — that's a separate step.
 #
 # Usage: bash deploy/deploy.sh
 # =============================================================
@@ -18,11 +19,10 @@ echo "============================================"
 
 # ---- Preflight checks ----
 if [ ! -f ".env" ]; then
-    echo "✗ .env not found. Run: cp .env.production .env && edit it"
+    echo "✗ .env not found. Run: cp .env.production .env && nano .env"
     exit 1
 fi
 
-# Check required env vars
 source .env 2>/dev/null || true
 if [ -z "${JWT_SECRET:-}" ] || echo "$JWT_SECRET" | grep -qi "change-me"; then
     echo "✗ JWT_SECRET not set or still placeholder. Edit .env"
@@ -33,25 +33,39 @@ if [ -z "${ADMIN_PASSWORD:-}" ] || echo "$ADMIN_PASSWORD" | grep -qi "change-me"
     exit 1
 fi
 
-echo "[1/5] Preflight checks passed"
+echo "[1/5] ✓ Preflight checks passed"
 
-# ---- Clean old Docker resources if disk is tight ----
-echo "[2/5] Cleaning unused Docker resources"
-docker system prune -f --volumes 2>/dev/null || true
-echo "  ✓ Pruned"
+# ---- Check Docker is rootless and data-root is on /raid ----
+echo "[2/5] Checking Docker"
+DOCKER_ROOT=$(docker info 2>/dev/null | grep "Docker Root Dir" | awk -F': ' '{print $2}')
+echo "  Docker Root: ${DOCKER_ROOT:-unknown}"
+if echo "$DOCKER_ROOT" | grep -q "/home/"; then
+    echo "  ⚠  Docker data is still in /home — run: bash deploy/setup.sh"
+    echo "     Then: systemctl --user restart docker"
+fi
+
+# Prune unused images to save space
+echo "  Pruning unused Docker resources..."
+docker system prune -f 2>/dev/null || true
 
 # ---- Check vLLM ----
-echo "[3/5] Checking vLLM status"
-VLLM_HOST="${VLLM_HOST:-http://host.docker.internal:8000}"
-# Try localhost too (host process)
-VLLM_LOCAL="http://localhost:8000"
-if curl -sf "${VLLM_LOCAL}/v1/models" > /dev/null 2>&1; then
-    MODELS=$(curl -sf "${VLLM_LOCAL}/v1/models" | python3 -c "import sys,json; d=json.load(sys.stdin); print(', '.join(m['id'] for m in d.get('data',[])))" 2>/dev/null || echo "unknown")
-    echo "  ✓ vLLM online — models: ${MODELS}"
+echo "[3/5] Checking vLLM"
+VLLM_PID=$(pgrep -f "vllm.entrypoints|vllm serve" 2>/dev/null | head -1 || echo "")
+if [ -n "$VLLM_PID" ]; then
+    echo "  ✓ vLLM running (PID: ${VLLM_PID})"
+    # Verify it's responding
+    if curl -sf http://localhost:8000/v1/models > /dev/null 2>&1; then
+        MODELS=$(curl -sf http://localhost:8000/v1/models | python3 -c "import sys,json; d=json.load(sys.stdin); print(', '.join(m['id'] for m in d.get('data',[])))" 2>/dev/null || echo "unknown")
+        echo "  ✓ Models: ${MODELS}"
+    else
+        echo "  ⚠  Process running but not responding yet (model may be loading)"
+    fi
 else
-    echo "  ⚠  vLLM not responding on localhost:8000"
-    echo "     Start with: sudo systemctl start snapai-vllm"
-    echo "     Or manually: nohup ./start-vllm.sh > data/logs/vllm.log 2>&1 &"
+    echo "  ⚠  vLLM not running"
+    echo "     Start in another terminal:"
+    echo "       conda activate vllm"
+    echo "       cd ${PROJECT_DIR}"
+    echo "       nohup bash start-vllm.sh > data/logs/vllm.log 2>&1 &"
     echo ""
     read -p "  Continue deployment without vLLM? [y/N] " -n 1 -r
     echo
@@ -64,42 +78,44 @@ fi
 echo "[4/5] Building and starting Docker stack"
 docker compose -f docker-compose.prod.yml up -d --build
 
-echo "[5/5] Waiting for services to be healthy..."
-sleep 10
+echo "[5/5] Waiting for backend health..."
+sleep 8
 
-# Health checks
 BACKEND_OK=false
-for i in $(seq 1 12); do
+for i in $(seq 1 15); do
     if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         BACKEND_OK=true
         break
     fi
-    echo "  Waiting for backend... (${i}/12)"
-    sleep 5
+    echo "  Waiting... (${i}/15)"
+    sleep 4
 done
 
 echo ""
 echo "============================================"
 echo "  Deployment Status"
 echo "============================================"
+echo ""
 
-# Container status
-docker compose -f docker-compose.prod.yml ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || \
+docker compose -f docker-compose.prod.yml ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || \
     docker compose -f docker-compose.prod.yml ps
 
 echo ""
 if $BACKEND_OK; then
     echo "  ✓ Backend: healthy"
-    # Full readiness
-    READY=$(curl -sf http://localhost:8000/health/ready 2>/dev/null || echo '{}')
-    echo "  Readiness: ${READY}" | head -c 200
-    echo ""
+    READY=$(curl -sf http://localhost:8000/health/ready 2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    svcs = d.get('services', {})
+    for k,v in svcs.items(): print(f'    {k}: {v}')
+except: print('    (could not parse)')
+" 2>/dev/null)
+    echo "$READY"
 else
-    echo "  ✗ Backend: not responding after 60s"
-    echo "    Check: docker logs snapai-backend"
+    echo "  ✗ Backend: not responding"
+    echo "    Check: docker logs snapai-backend --tail 30"
 fi
 
 echo ""
-echo "  Access: https://snap-ai.yourdomain.com (via Cloudflare)"
-echo "  Logs:   docker compose -f docker-compose.prod.yml logs -f"
 echo "============================================"

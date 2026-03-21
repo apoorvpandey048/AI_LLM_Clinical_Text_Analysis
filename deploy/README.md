@@ -1,74 +1,68 @@
-# SNAP-AI Deploy Scripts
+# SNAP-AI Deploy Scripts (DGX — No Sudo)
 
-## First-Time Setup (run once)
+## First-Time Setup (run ONCE)
 
 ```bash
-# 1. One-time setup: Docker storage on /raid, systemd services
-sudo bash deploy/setup.sh
+# 1. Fix disk: move Docker + HF cache to /raid
+bash deploy/setup.sh
 
-# 2. Edit configuration
-nano .env    # Set JWT_SECRET, ADMIN_PASSWORD, POSTGRES_PASSWORD, HF_TOKEN
+# 2. IMPORTANT: restart rootless Docker to use new data-root
+systemctl --user restart docker
 
-# 3. Set up Cloudflare tunnel
-cloudflared tunnel login
-cloudflared tunnel create snap-ai
-cloudflared tunnel route dns snap-ai snap-ai.yourdomain.com
-cp ~/.cloudflared/*.json cloudflared/credentials.json
-nano cloudflared/config.yml   # Fill in TUNNEL_ID and hostname
+# 3. Verify Docker moved
+docker info | grep "Docker Root Dir"
+# Should show: /raid/s3cache/vincent.ochs/docker-data
+
+# 4. Old Docker data can be deleted to free home quota:
+# rm -rf ~/.local/share/docker   (only after verifying step 3)
+
+# 5. Edit .env if needed
+nano .env
 ```
 
-## Deploy / Redeploy
+## Deploy App Stack
 
 ```bash
 bash deploy/deploy.sh
 ```
 
+## Start vLLM (separate terminal)
+
+```bash
+conda activate vllm
+cd ~/apoo    # or wherever snap-ai is
+nohup bash start-vllm.sh > data/logs/vllm.log 2>&1 &
+tail -f data/logs/vllm.log   # watch startup
+```
+
 ## Daily Operations
 
 ```bash
-# Check health of everything
-bash deploy/health-check.sh
-
-# View logs
-bash deploy/logs.sh              # all services
-bash deploy/logs.sh backend      # specific service
-bash deploy/logs.sh vllm         # vLLM host logs
-
-# Stop everything (data preserved)
-bash deploy/stop.sh
-
-# Clean Docker disk space
-bash deploy/cleanup.sh
+bash deploy/health-check.sh          # full status
+bash deploy/logs.sh                  # all Docker logs
+bash deploy/logs.sh backend          # specific service
+bash deploy/logs.sh vllm             # vLLM host logs
+bash deploy/stop.sh                  # stop everything
+bash deploy/cleanup.sh               # free Docker disk
 ```
 
-## Systemd Controls (restart-safe)
+## After Code Changes
 
 ```bash
-# vLLM (GPU model server)
-sudo systemctl start snapai-vllm
-sudo systemctl stop snapai-vllm
-sudo systemctl status snapai-vllm
-journalctl -u snapai-vllm -f
-
-# App stack (Docker Compose)
-sudo systemctl start snapai-app
-sudo systemctl stop snapai-app
-sudo systemctl reload snapai-app    # rebuild + restart
+cd ~/apoo
+git pull
+bash deploy/deploy.sh               # rebuilds + restarts
 ```
-
-Both services auto-start on reboot.
 
 ## File Map
 
 | File | Purpose |
 |------|---------|
-| `deploy/setup.sh` | One-time DGX setup (sudo) |
-| `deploy/deploy.sh` | Build + start stack |
-| `deploy/stop.sh` | Stop stack + vLLM |
-| `deploy/health-check.sh` | Check all services |
+| `deploy/setup.sh` | One-time: Docker→/raid, HF cache symlink |
+| `deploy/deploy.sh` | Build + start Docker stack |
+| `deploy/stop.sh` | Stop Docker + vLLM |
+| `deploy/health-check.sh` | Check all services + disk |
 | `deploy/cleanup.sh` | Docker disk cleanup |
-| `deploy/logs.sh` | View service logs |
-| `start-vllm.sh` | vLLM server (used by systemd) |
-| `.env` | All config (secrets, GPU, model) |
-| `cloudflared/config.yml` | Tunnel routing |
-| `cloudflared/credentials.json` | Tunnel credentials (gitignored) |
+| `deploy/logs.sh [service]` | View service logs |
+| `start-vllm.sh` | vLLM server (run with conda) |
+| `.env` | All config |
