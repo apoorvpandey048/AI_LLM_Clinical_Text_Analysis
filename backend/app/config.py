@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"
 
     # vLLM (Production)
-    vllm_host: str = "http://131.152.136.65:8000"
+    vllm_host: str = "http://host.docker.internal:8000"
     vllm_model: str = "openai/gpt-oss-120b"
 
     # LLM Inference Settings
@@ -55,11 +55,11 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
 
     # Authentication
-    jwt_secret: str = "snapai-change-this-in-production-2026"
+    jwt_secret: str = "CHANGE-ME-set-JWT_SECRET-in-env"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
     admin_email: str = "admin@snapai.local"
-    admin_password: str = "snapai-admin-2026"
+    admin_password: str = "CHANGE-ME-set-ADMIN_PASSWORD-in-env"
 
     # CORS
     cors_origins: str = "*"  # Comma-separated origins, or "*" for dev

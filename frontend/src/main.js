@@ -195,6 +195,9 @@ function initApp() {
     initLockedConfigActions();
     loadModels();
     loadSystemInfo();
+    checkVllmHealth();
+    // Poll vLLM health every 60 seconds
+    setInterval(checkVllmHealth, 60000);
     loadLayers().then(() => loadAllPrompts());
     initLogViewer();
     if (authState.user && authState.user.role === 'admin') {
@@ -3542,6 +3545,32 @@ async function deleteCustomLayer(layerName) {
         switchPromptTab(Object.keys(LAYERS)[0] || 'layer1_ctp');
     } catch (err) {
         showToast(`Delete failed: ${err.message}`, 'error');
+    }
+}
+
+// ============================================
+// vLLM Health Check
+// ============================================
+
+async function checkVllmHealth() {
+    const banner = document.getElementById('vllm-status-banner');
+    if (!banner) return;
+
+    try {
+        const res = await authFetch(`${API_BASE.replace('/api/v1', '')}/health/vllm`);
+        if (res.ok) {
+            banner.classList.add('hidden');
+        } else {
+            const data = await res.json().catch(() => ({}));
+            const hint = data.hint || 'Start the GPU model service.';
+            banner.innerHTML = `<i data-lucide="alert-triangle"></i> <strong>Model Offline</strong> — ${hint}`;
+            banner.classList.remove('hidden');
+            if (window.lucide) lucide.createIcons();
+        }
+    } catch {
+        banner.innerHTML = '<i data-lucide="alert-triangle"></i> <strong>Model Offline</strong> — Cannot reach backend.';
+        banner.classList.remove('hidden');
+        if (window.lucide) lucide.createIcons();
     }
 }
 

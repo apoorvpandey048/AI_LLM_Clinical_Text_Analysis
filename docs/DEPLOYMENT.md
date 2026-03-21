@@ -1,234 +1,177 @@
-# SNAP-AI Deployment Guide
-
-## Quick Start (DGX / Shared Server)
-
-> **For Vincent's DGX server or any shared Linux server with NVIDIA GPUs**
-
-```bash
-# 1. SSH into the server
-ssh vincent.ochs@dbe-dgx-a100-01.dbe.unibas.ch
-
-# 2. Clone the repo (into your home directory)
-cd ~
-git clone https://github.com/apoorvpandey048/AI_LLM_Clinical_Text_Analysis.git snap-ai
-cd snap-ai
-
-# 3. Run the setup (no sudo needed)
-chmod +x deploy.sh
-./deploy.sh --setup-only
-```
-
-That's it! The script will:
-1. Auto-detect the best available GPU
-2. Generate `.env` with secure passwords and recommended model
-3. Build and start all services (backend, frontend, Ollama, Redis, PostgreSQL)
-4. Pull the LLM model automatically
-
-**After deployment, share this link with the doctor:**
-```
-http://<server-ip>
-```
-The script prints the exact URL at the end.
-
----
+# SNAP-AI Production Deployment Guide
 
 ## Prerequisites
 
-| Requirement | Minimum |
-|-------------|---------|
-| OS | Ubuntu 22.04+ |
-| GPU | 1× NVIDIA GPU with ≥10GB VRAM |
-| RAM | 16 GB |
-| Disk | 50 GB free |
-| Docker | Docker + Docker Compose (already on DGX) |
-| NVIDIA | Driver 525+ and Container Toolkit |
+- DGX server with NVIDIA GPUs (A100/H100)
+- Docker Engine 24+ with Compose v2
+- NVIDIA Container Toolkit (for vLLM)
+- `cloudflared` CLI installed
+- Cloudflare account with a domain
 
----
+## Step 1: Clone and Configure
 
-## Model Selection (A100-40GB)
-
-| Model | VRAM Needed | Quality | Speed |
-|-------|-------------|---------|-------|
-| `qwen2.5:32b-instruct-q4_K_M` | ~20 GB | ★★★★★ | Medium |
-| `qwen2.5:14b-instruct-q4_K_M` | ~9 GB | ★★★★ | Fast |
-| `qwen2.5:7b-instruct-q4_K_M` | ~4.5 GB | ★★★ | Very Fast |
-| `llama3.1:8b-instruct-q4_K_M` | ~5 GB | ★★★ | Very Fast |
-| `mistral:7b-instruct-q4_K_M` | ~4.5 GB | ★★★ | Very Fast |
-
-> **Tip:** The deploy script auto-selects based on available VRAM. You can change the model later:
-> ```bash
-> # Edit .env and change OLLAMA_MODEL=...
-> nano .env
-> # Then restart
-> docker compose -f docker-compose.yml -f docker-compose.remote.yml restart
-> ```
-
----
-
-## Sharing with the Doctor
-
-The DGX server is behind the university firewall, so the doctor can't access it directly by IP. Use a **Cloudflare Tunnel** to create a free public URL.
-
-### Quick Start (recommended)
 ```bash
-# On the DGX server:
-chmod +x tunnel.sh
-./tunnel.sh
+git clone <repository-url> snap-ai
+cd snap-ai
+
+# Create production environment
+cp .env.example .env.production
 ```
 
-The script will:
-1. Install `cloudflared` (one-time, no sudo needed)
-2. Verify the app is running
-3. Create a public URL like `https://random-words.trycloudflare.com`
-
-**Share that URL with the doctor** — it works from any browser, anywhere in the world.
-
-> **Note:** The tunnel stays active as long as the script is running. To run it in the background:
-> ```bash
-> nohup ./tunnel.sh > tunnel.log 2>&1 &
-> ```
-> Check the URL: `grep trycloudflare tunnel.log`
-
-### Alternative: Direct IP (only works on campus network)
-If the doctor is on the same university network:
-```
-http://131.152.136.65:8080
-```
-
-
----
-
-## Manual Setup (if deploy.sh doesn't work)
-
-### Step 1: Create `.env` file
+Edit `.env.production`:
 ```bash
-cp .env.example .env
-nano .env
-# Set POSTGRES_PASSWORD to a strong random password
-# Set REDIS_PASSWORD to a strong random password
-# Set OLLAMA_MODEL to your preferred model (see table above)
-# Set NVIDIA_VISIBLE_DEVICES to available GPU index (e.g. 7)
+ENVIRONMENT=production
+LLM_BACKEND=vllm
+VLLM_HOST=http://host.docker.internal:8000
+VLLM_MODEL=openai/gpt-oss-120b
+
+# REQUIRED — generate unique values
+JWT_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+ADMIN_PASSWORD=<strong-admin-password>
+POSTGRES_PASSWORD=<strong-db-password>
+REDIS_PASSWORD=<strong-redis-password>
 ```
 
-### Step 2: Deploy
+## Step 2: Start vLLM Model Server
+
+vLLM runs on the host (not inside Docker) for direct GPU access:
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d --build
+# Start vLLM
+./start-vllm.sh
+
+# Verify it's running
+curl http://localhost:8000/v1/models
 ```
 
-### Step 3: Pull a Model
+### GPU Selection
+
 ```bash
-docker exec snapai-ollama ollama pull qwen2.5:14b-instruct-q4_K_M
+# Use specific GPUs (e.g., last 4 on an 8-GPU server)
+export CUDA_VISIBLE_DEVICES=4,5,6,7
+./start-vllm.sh
 ```
 
-### Step 4: Verify
-```bash
-# Check all services are running
-docker compose -f docker-compose.yml -f docker-compose.remote.yml ps
+### Stop vLLM
 
+```bash
+pkill -f vllm
+```
+
+## Step 3: Set Up Cloudflare Tunnel
+
+One-time setup for permanent HTTPS access:
+
+```bash
+# Install cloudflared
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared-linux-amd64.deb
+
+# Login to Cloudflare
+cloudflared tunnel login
+
+# Create tunnel
+cloudflared tunnel create snap-ai
+
+# Route DNS (replace with your domain)
+cloudflared tunnel route dns snap-ai snap-ai.yourdomain.com
+
+# Copy credentials into project
+mkdir -p cloudflared
+cp ~/.cloudflared/*.json cloudflared/credentials.json
+```
+
+Edit `cloudflared/config.yml`:
+```yaml
+tunnel: <TUNNEL_ID>  # from 'cloudflared tunnel create' output
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: snap-ai.yourdomain.com
+    service: http://frontend:80
+  - service: http_status:404
+```
+
+## Step 4: Start Application Stack
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Verify all containers are running:
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+Expected output:
+```
+snapai-backend      running (healthy)
+snapai-worker       running (healthy)
+snapai-postgres     running (healthy)
+snapai-redis        running (healthy)
+snapai-frontend     running
+snapai-cloudflared  running
+```
+
+## Step 5: Verify Access
+
+```bash
 # Check backend health
 curl http://localhost:8000/health
 
-# Check GPU access in Ollama
-docker exec snapai-ollama nvidia-smi
+# Check readiness (DB + Redis + LLM)
+curl http://localhost:8000/health/ready
+
+# Access via tunnel
+curl https://snap-ai.yourdomain.com/health
 ```
 
----
+Login at `https://snap-ai.yourdomain.com` with admin credentials.
 
-## GPU Selection on Shared Servers
+## Restart Procedures
 
-On a shared DGX with multiple users, check which GPUs are free:
+### Full Restart
+
 ```bash
-nvidia-smi
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Look for a GPU with 0% utilization and low memory usage. Set it in `.env`:
+### Worker Only (after code changes)
+
 ```bash
-# Use only GPU 7
-NVIDIA_VISIBLE_DEVICES=7
+docker compose -f docker-compose.prod.yml restart worker
 ```
 
-Or set via environment variable before deploying:
+### vLLM Only
+
 ```bash
-NVIDIA_VISIBLE_DEVICES=7 docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d
+pkill -f vllm
+./start-vllm.sh
 ```
 
----
+### Database Persistence
 
-## Operations
+PostgreSQL data is stored in a Docker volume (`postgres_data`). It persists across restarts. To reset:
 
-### View Logs
 ```bash
-# All services
-docker compose -f docker-compose.yml -f docker-compose.remote.yml logs -f
-
-# Just the backend
-docker compose -f docker-compose.yml -f docker-compose.remote.yml logs -f backend
-
-# Just Ollama
-docker compose -f docker-compose.yml -f docker-compose.remote.yml logs -f ollama
+docker compose -f docker-compose.prod.yml down -v  # WARNING: destroys all data
 ```
 
-### Stop Everything
-```bash
-docker compose -f docker-compose.yml -f docker-compose.remote.yml down
-```
+## Resource Usage
 
-### Update to Latest Code
-```bash
-git pull origin main
-docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d --build
-```
+| Component | CPU | RAM | GPU |
+|-----------|-----|-----|-----|
+| Backend | 1 core | 512MB | — |
+| Worker | 1 core | 1GB | — |
+| PostgreSQL | 1 core | 512MB | — |
+| Redis | 0.5 core | 2GB max | — |
+| Frontend | 0.5 core | 128MB | — |
+| vLLM | 4+ cores | 16GB+ | 1–8 GPUs |
 
-### Monitor GPU
-```bash
-watch -n 1 nvidia-smi
-```
+## Security Notes
 
-### Reset Everything
-```bash
-docker compose -f docker-compose.yml -f docker-compose.remote.yml down -v
-rm .env
-./deploy.sh --setup-only
-```
-
----
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| `POSTGRES_PASSWORD is missing` | Create `.env` file: `cp .env.example .env` and set passwords |
-| GPU not detected in container | Set `NVIDIA_VISIBLE_DEVICES` in `.env` to the correct GPU index |
-| Model too large for GPU | Use a smaller quantized model (see table above) |
-| Redis connection refused | Make sure `REDIS_PASSWORD` in `.env` matches across services |
-| Port 80 already in use | Change frontend port in `docker-compose.remote.yml` (e.g., `8080:80`) |
-| Permission denied (Docker) | Ask admin to add you to `docker` group: `sudo usermod -aG docker $USER` |
-| `git clone` fails via SFTP | Clone directly on the server via SSH, not through file manager |
-
----
-
-## Architecture
-
-```
-┌────────────────────────────────────────────────────┐
-│                  Doctor's Browser                   │
-└──────────┬─────────────────────────────────────────┘
-           │ HTTP :80
-┌──────────▼─────────────────────────────────────────┐
-│          Nginx (Frontend + Reverse Proxy)           │
-│  ┌──────────┐  ┌─────────────────────────────┐     │
-│  │ Static   │  │ /api/* → Backend:8000       │     │
-│  │ Files    │  │ /api/v1/stream/* → SSE      │     │
-│  └──────────┘  └─────────────────────────────┘     │
-└──────────┬─────────────────────────────────────────┘
-           │
-┌──────────▼──────────┐    ┌─────────────────────┐
-│  FastAPI Backend    │    │  Celery Workers     │
-│  (API + SSE)        │◄──►│  (concurrency=2)    │
-└────┬──────┬─────────┘    └────┬──────┬─────────┘
-     │      │                   │      │
-┌────▼──┐ ┌─▼────┐        ┌───▼──┐  ┌▼─────────┐
-│Postgres│ │Redis │        │Redis │  │ Ollama   │
-│  DB    │ │Broker│        │PubSub│  │ (1×GPU)  │
-└────────┘ └──────┘        └──────┘  └──────────┘
-```
+- No ports are exposed externally — all traffic goes through Cloudflare Tunnel
+- Backend is only accessible within the Docker network
+- JWT secrets must be unique per deployment
+- `cloudflared/credentials.json` must never be committed to git

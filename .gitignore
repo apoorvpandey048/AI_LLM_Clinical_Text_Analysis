@@ -97,5 +97,9 @@ ssl/
 # Internal docs (not for repo)
 docs/IMPLEMENTATION_PLAN.md
 
+# Cloudflare Tunnel credentials (generated per-machine)
+cloudflared/credentials.json
+cloudflared/*.json
+
 # Agent artifacts
 .gemini/

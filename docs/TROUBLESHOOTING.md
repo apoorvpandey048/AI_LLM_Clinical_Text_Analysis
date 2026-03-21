@@ -1,208 +1,224 @@
 # SNAP-AI Troubleshooting Guide
 
-Common issues and solutions for SNAP-AI deployment.
+## vLLM Issues
 
-## LLM Connection Issues
+### Model Not Starting
 
-### vLLM Not Responding
+**Symptom**: `./start-vllm.sh` fails or model doesn't load.
 
-**Symptoms:**
-- `/health/ready` shows LLM as "unhealthy"
-- Requests timeout
+**Fixes**:
+1. Check GPU availability:
+   ```bash
+   nvidia-smi
+   ```
+2. Check if another vLLM process is running:
+   ```bash
+   ps aux | grep vllm
+   pkill -f vllm  # kill existing process
+   ```
+3. Check CUDA_VISIBLE_DEVICES:
+   ```bash
+   echo $CUDA_VISIBLE_DEVICES
+   # Set explicitly if needed:
+   export CUDA_VISIBLE_DEVICES=0,1,2,3
+   ```
+4. Check disk space for model cache:
+   ```bash
+   df -h /raid/s3cache/$USER/huggingface
+   ```
 
-**Solutions:**
+### "Model Not Found" Error
 
-1. Check vLLM container:
+**Symptom**: Backend returns "Model Not Found" when processing cases.
+
+**Fix**: Ensure `VLLM_MODEL` in `.env` matches the model being served:
 ```bash
-docker compose logs vllm
-```
-
-2. Verify GPU availability:
-```bash
-docker compose exec vllm nvidia-smi
-```
-
-3. Check model is loaded:
-```bash
+# Check what vLLM is serving
 curl http://localhost:8000/v1/models
+
+# Update .env to match
+VLLM_MODEL=<exact-model-name-from-above>
 ```
 
-### Ollama Connection Refused
+### vLLM Out of Memory
 
-**Symptoms:**
-- "Connection refused" errors in development
+**Symptom**: CUDA OOM errors during inference.
 
-**Solutions:**
+**Fixes**:
+- Reduce `--max-model-len` in `start-vllm.sh`
+- Use a quantized model (AWQ)
+- Allocate more GPUs: `--tensor-parallel-size 4`
 
-1. Ensure Ollama is running:
+## Docker Issues
+
+### Container Won't Start
+
 ```bash
-ollama serve
+# Check logs for specific container
+docker logs snapai-backend
+docker logs snapai-worker
+docker logs snapai-postgres
+
+# Full stack logs
+docker compose -f docker-compose.prod.yml logs --tail=50
 ```
 
-2. Pull the model:
+### Disk Space / Quota Issues
+
+**Symptom**: Docker build fails with "no space left on device".
+
+**Fixes**:
 ```bash
-ollama pull qwen2.5:7b-instruct-q4_K_M
+# Clean unused Docker resources
+docker system prune -a --volumes
+
+# Check disk usage
+docker system df
+
+# Remove old images
+docker image prune -a
 ```
 
-3. Check host configuration:
-```env
-OLLAMA_HOST=http://host.docker.internal:11434
-```
+### Database Connection Errors
 
-## Database Issues
+**Symptom**: Backend logs show "database_not_ready" or connection refused.
 
-### Connection Refused
+**Fixes**:
+1. Check if PostgreSQL is running:
+   ```bash
+   docker compose -f docker-compose.prod.yml ps postgres
+   ```
+2. Check PostgreSQL logs:
+   ```bash
+   docker logs snapai-postgres
+   ```
+3. Verify credentials match between backend and postgres in docker-compose
 
-**Symptoms:**
-- Backend fails to start
-- "Connection refused" in logs
+### Redis Connection Errors
 
-**Solutions:**
+**Symptom**: Celery worker can't connect to Redis.
 
-1. Wait for PostgreSQL to be ready:
+**Fix**: Ensure `REDIS_PASSWORD` is the same in backend, worker, and redis services:
 ```bash
-docker compose logs postgres
+docker exec snapai-redis redis-cli -a <password> ping
+# Should return: PONG
 ```
 
-2. Check database exists:
+## GPU Issues
+
+### nvidia-smi Not Found
+
+**Fix**: Install NVIDIA drivers:
 ```bash
-docker compose exec postgres psql -U snapai -l
+# Check driver version
+cat /proc/driver/nvidia/version
+
+# Install if missing (Ubuntu)
+sudo apt install nvidia-driver-525
+sudo reboot
 ```
 
-3. Run migrations:
+### GPU Not Available in Docker
+
+**Symptom**: Container can't see GPUs.
+
+**Fix**: Install NVIDIA Container Toolkit:
 ```bash
-docker compose exec backend alembic upgrade head
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit.gpg
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt update
+sudo apt install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
 ```
 
-### Migration Errors
+### GPU Memory Not Releasing
 
-**Solutions:**
+**Symptom**: `nvidia-smi` shows memory in use but no processes.
 
-1. Check current version:
+**Fix**:
 ```bash
-docker compose exec backend alembic current
+# Kill zombie processes
+sudo fuser -v /dev/nvidia*
+sudo kill -9 <PID>
 ```
 
-2. Reset migrations (development only):
-```bash
-docker compose exec backend alembic downgrade base
-docker compose exec backend alembic upgrade head
-```
+## Cloudflare Tunnel Issues
 
-## Redis/Celery Issues
+### Tunnel Not Connecting
 
-### Tasks Not Processing
+**Symptom**: `snapai-cloudflared` container restarting.
 
-**Symptoms:**
-- Jobs stay in "queued" status
-- No worker activity
+**Fixes**:
+1. Check tunnel logs:
+   ```bash
+   docker logs snapai-cloudflared
+   ```
+2. Verify `cloudflared/config.yml` has correct tunnel ID
+3. Verify `cloudflared/credentials.json` exists and was generated for this tunnel
+4. Test tunnel manually:
+   ```bash
+   cloudflared tunnel --config ./cloudflared/config.yml run
+   ```
 
-**Solutions:**
+### Site Not Loading via Domain
 
+**Fixes**:
+1. Check DNS record exists:
+   ```bash
+   dig snap-ai.yourdomain.com
+   ```
+2. Verify frontend container is running:
+   ```bash
+   docker compose -f docker-compose.prod.yml ps frontend
+   ```
+3. Check if the hostname in `config.yml` matches the DNS record
+
+## Application Issues
+
+### Login Fails
+
+**Symptom**: "Invalid username or password" even with correct credentials.
+
+**Fixes**:
+1. Verify admin user exists — check backend startup logs:
+   ```bash
+   docker logs snapai-backend | grep admin
+   ```
+2. Reset admin password:
+   ```bash
+   docker exec snapai-backend python create_admin.py \
+     --username admin --password <new-password> --name "Admin"
+   ```
+
+### Jobs Stuck in "Processing"
+
+**Symptom**: Job stays in processing state indefinitely.
+
+**Fixes**:
 1. Check worker logs:
+   ```bash
+   docker logs snapai-worker --tail=100
+   ```
+2. Check if vLLM is responding:
+   ```bash
+   curl http://localhost:8000/v1/models
+   ```
+3. Restart worker:
+   ```bash
+   docker compose -f docker-compose.prod.yml restart worker
+   ```
+
+### SSE Stream Not Connecting
+
+**Symptom**: Frontend shows "Disconnected" during processing.
+
+**Fix**: This is usually a nginx timeout. The default config handles this, but verify:
 ```bash
-docker compose logs celery-worker
+docker exec snapai-frontend cat /etc/nginx/conf.d/default.conf | grep proxy_read_timeout
+# Should show: proxy_read_timeout 3600s
 ```
-
-2. Verify Redis connection:
-```bash
-docker compose exec redis redis-cli ping
-```
-
-3. Restart workers:
-```bash
-docker compose restart celery-worker
-```
-
-### Task Timeout
-
-**Symptoms:**
-- Tasks fail after 10 minutes
-
-**Solutions:**
-
-Increase timeout in `.env`:
-```env
-LLM_TIMEOUT=1200  # 20 minutes
-```
-
-## Frontend Issues
-
-### API Not Reachable
-
-**Symptoms:**
-- Network errors in browser
-- CORS errors
-
-**Solutions:**
-
-1. Check backend is running:
-```bash
-curl http://localhost:8000/health
-```
-
-2. Verify CORS settings in `main.py`
-
-3. Check nginx proxy config (production)
-
-## File Upload Issues
-
-### DOCX Not Parsing
-
-**Symptoms:**
-- "Failed to extract text" error
-
-**Solutions:**
-
-1. Verify file is valid DOCX:
-```bash
-unzip -t document.docx
-```
-
-2. Check file size limit:
-```env
-MAX_UPLOAD_SIZE_MB=100
-```
-
-## Performance Issues
-
-### Slow Processing
-
-**Causes:**
-- GPU memory pressure
-- Model too large for GPU
-
-**Solutions:**
-
-1. Use smaller model:
-```env
-VLLM_MODEL=Qwen/Qwen2.5-32B-Instruct-AWQ
-```
-
-2. Reduce max tokens:
-```env
-LLM_MAX_TOKENS=2048
-```
-
-3. Increase GPU memory utilization:
-```yaml
-command: --gpu-memory-utilization 0.95
-```
-
-### Out of Memory
-
-**Solutions:**
-
-1. Reduce batch size
-2. Use quantized model (AWQ)
-3. Enable tensor parallelism for multi-GPU
-
-## Getting Help
-
-1. Check logs: `docker compose logs -f`
-2. Verify config: `docker compose config`
-3. Test endpoints: `curl http://localhost:8000/health/ready`
-
-## Contact
-
-For persistent issues, contact the development team.

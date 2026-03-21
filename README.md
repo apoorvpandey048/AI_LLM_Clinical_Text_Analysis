@@ -1,186 +1,139 @@
-# SNAP-AI: Clinical NLP Pipeline
+# SNAP-AI — Clinical NLP Platform
 
-A secure, on-premise LLM pipeline for clinical text analysis of German discharge summaries. Extracts postoperative complications, assigns Clavien-Dindo grades, and computes the Comprehensive Complication Index (CCI®).
+**Secure On-Premise Complication Analysis for German Surgical Discharge Summaries**
 
-## Overview
-
-SNAP-AI processes anonymized clinical reports through three distinct layers:
-
-1. **Layer 1 (CTP)**: Clinical Text Pre-Processor - de-identification, drug normalization
-2. **Layer 2 (CIE)**: Complication Inference Engine - extract complications, assign CD grades, compute CCI
-3. **Layer 3 (CCC)**: Clinical Consistency Challenger - audit and verify Layer 2 outputs
-
-## Quick Start
-
-### Development (6GB GPU)
-
-```bash
-# Clone the repository
-git clone https://github.com/apoorvpandey048/AI_LLM_Clinical_Text_Analysis.git
-cd AI_LLM_Clinical_Text_Analysis
-
-# Copy environment file
-cp .env.example .env
-
-# Start all services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# Pull the development model (first time only)
-docker exec snapai-ollama ollama pull qwen2.5:7b-instruct-q4_K_M
-
-# Access the web interface
-open http://localhost:3000
-
-# View API docs
-open http://localhost:8000/docs
-```
-
-### Production (8x A100 GPUs)
-
-```bash
-# Clone the repository
-git clone https://github.com/apoorvpandey048/AI_LLM_Clinical_Text_Analysis.git
-cd AI_LLM_Clinical_Text_Analysis
-
-# Copy and configure environment file
-cp .env.example .env
-# Edit .env with production settings (see Model Selection below)
-
-# Start all services (vLLM will auto-download the model)
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# Access the web interface
-open http://localhost:3000
-```
-
-## Model Selection
-
-### Switching Models (Easy!)
-
-To switch models, edit your `.env` file:
-
-```bash
-# For production (vLLM)
-LLM_BACKEND=vllm
-VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct  # Change this line
-
-# For development (Ollama)
-LLM_BACKEND=ollama
-OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M  # Change this line
-```
-
-Then restart services:
-```bash
-docker-compose down && docker-compose up -d
-```
-
-### Recommended Free Models
-
-| Model | Size | VRAM | License | Best For |
-|-------|------|------|---------|----------|
-| **Qwen/Qwen2.5-72B-Instruct** | 72B | ~140GB | Apache 2.0 | Best quality ⭐ |
-| **meta-llama/Llama-3.1-70B-Instruct** | 70B | ~140GB | Llama 3.1 | Strong alternative |
-| **deepseek-ai/DeepSeek-V2.5** | 236B MoE | ~160GB | MIT | Reasoning tasks |
-| **mistralai/Mixtral-8x22B-Instruct-v0.1** | 141B MoE | ~100GB | Apache 2.0 | Good balance |
-| **Qwen/Qwen2.5-32B-Instruct** | 32B | ~64GB | Apache 2.0 | Faster inference |
-| **google/gemma-2-27b-it** | 27B | ~55GB | Gemma | Good performance |
-
-### Models NOT Self-Hostable
-
-> ⚠️ **Claude, GPT-4, and Gemini Pro are NOT free** - they require paid API access and cannot run on local GPUs.
-
-See `.env.example` for the complete list of supported models.
+SNAP-AI is a production-grade clinical NLP pipeline that extracts postoperative complications from German discharge summaries, assigns Clavien–Dindo grades, and computes the Comprehensive Complication Index (CCI®).
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Web Frontend  │────▶│   FastAPI API   │────▶│  Celery Worker  │
-│   (Port 3000)   │     │   (Port 8000)   │     │                 │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                        ┌────────────────────────────────┼────────────────────────────────┐
-                        │                                ▼                                │
-                        │  ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────────┐  │
-                        │  │ Layer 1 │───▶│ Layer 2 │───▶│ Layer 3 │───▶│   Results   │  │
-                        │  │   CTP   │    │   CIE   │    │   CCC   │    │   (JSON)    │  │
-                        │  └────┬────┘    └────┬────┘    └────┬────┘    └─────────────┘  │
-                        │       │              │              │                          │
-                        │       └──────────────┴──────────────┘                          │
-                        │                      │                                         │
-                        │              ┌───────▼───────┐                                 │
-                        │              │ Ollama/vLLM   │                                 │
-                        │              │ (Qwen2.5)     │                                 │
-                        │              └───────────────┘                                 │
-                        │                    SNAP-AI Pipeline                            │
-                        └────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│                 Cloudflare Tunnel                 │
+│            (HTTPS → snap-ai.domain.com)           │
+└──────────────────┬───────────────────────────────┘
+                   │
+┌──────────────────▼───────────────────────────────┐
+│              Nginx (Frontend Container)           │
+│         Serves SPA + reverse proxies /api         │
+│               Port 80 (internal)                  │
+├───────────────────────────────────────────────────┤
+│                                                   │
+│  ┌─────────────┐  ┌────────────┐  ┌────────────┐ │
+│  │  FastAPI     │  │  Celery    │  │  PostgreSQL│ │
+│  │  Backend     │◄─┤  Worker    │  │  Database  │ │
+│  │  :8000       │  │            │  │            │ │
+│  └──────┬───────┘  └─────┬──────┘  └────────────┘ │
+│         │                │                         │
+│  ┌──────▼────────────────▼──────┐  ┌────────────┐ │
+│  │            Redis             │  │   Prompts   │ │
+│  │       (Message Broker)       │  │ (Mounted)   │ │
+│  └──────────────────────────────┘  └────────────┘ │
+│                                                   │
+│           Docker Compose Network                  │
+└───────────────────────────────────────────────────┘
+                   │
+┌──────────────────▼───────────────────────────────┐
+│              vLLM (Host Process)                  │
+│         GPU Model Serving — Manual Start          │
+│       http://host.docker.internal:8000            │
+└───────────────────────────────────────────────────┘
 ```
+
+## Components
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Backend | FastAPI | REST API, auth, job management |
+| Worker | Celery | Async pipeline execution |
+| Database | PostgreSQL 15 | Jobs, users, audit logs |
+| Broker | Redis 7 | Task queue + pub/sub |
+| Frontend | HTML/JS + Nginx | SPA with SSE streaming |
+| Model | vLLM | GPU-accelerated inference |
+| Tunnel | Cloudflare | Secure HTTPS access |
+
+## Quick Start (Development)
+
+```bash
+# Clone and configure
+cp .env.example .env
+# Edit .env — set ADMIN_PASSWORD and JWT_SECRET
+
+# Start all services
+docker compose up -d --build
+
+# Access at http://localhost:8080
+# Login: admin / <ADMIN_PASSWORD from .env>
+```
+
+## Production Deployment (DGX)
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for step-by-step instructions.
+
+### Start/Stop vLLM Model
+
+```bash
+# Start (from project root on DGX host)
+./start-vllm.sh
+
+# Stop
+pkill -f vllm
+```
+
+### Start/Stop Application Stack
+
+```bash
+# Start
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Stop
+docker compose -f docker-compose.prod.yml down
+
+# Restart worker only (after code changes)
+docker compose -f docker-compose.prod.yml restart worker
+```
+
+### Access the System
+
+- **Production**: `https://snap-ai.yourdomain.com` (via Cloudflare Tunnel)
+- **Development**: `http://localhost:8080`
+- **API Docs**: `/docs` (Swagger UI)
+
+## Pipeline Layers
+
+1. **Layer 1 — CTP** (Clinical Text Pre-Processor): Extracts and cleans the postoperative course text
+2. **Layer 2 — CIE** (Complication Info Extraction): Identifies complications and assigns Clavien–Dindo grades
+3. **Layer 3 — CCC** (Clinical Consistency Challenger): Audits and corrects Layer 2 output, recalculates CCI
+
+## Authentication
+
+JWT-based authentication with bcrypt password hashing. See [docs/AUTH.md](docs/AUTH.md).
+
+## Documentation
+
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — Production deployment guide
+- [AUTH.md](docs/AUTH.md) — Authentication system
+- [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues and fixes
+- [MODELS.md](docs/MODELS.md) — Model selection guide
 
 ## Project Structure
 
 ```
 snap-ai/
-├── docker-compose.yml           # Base configuration
-├── docker-compose.dev.yml       # Development (6GB GPU, Ollama)
-├── docker-compose.prod.yml      # Production (8x A100, vLLM)
-├── .env.example                 # Model configuration (copy to .env)
-├── backend/
+├── backend/           # FastAPI + Celery backend
 │   ├── app/
-│   │   ├── api/                 # FastAPI routes
-│   │   ├── pipeline/            # SNAP-AI layers
-│   │   ├── llm/                 # LLM clients
-│   │   ├── workers/             # Celery tasks
-│   │   └── db/                  # Database models
-├── frontend/                    # Web interface
-├── prompts/                     # Versioned prompt templates
-│   └── snapai/
-│       ├── layer1_ctp_v1.3.md
-│       ├── layer2_cie_v1.3.md
-│       └── layer3_ccc_v1.3.md
-└── docs/
-    └── MODELS.md                # Model recommendations
+│   │   ├── api/routes/ # API endpoints
+│   │   ├── db/         # SQLAlchemy models
+│   │   ├── llm/        # LLM client abstraction
+│   │   ├── pipeline/   # NLP pipeline logic
+│   │   └── workers/    # Celery tasks
+│   ├── tests/          # pytest test suite
+│   └── create_admin.py # Admin user creation script
+├── frontend/          # Vite SPA + Nginx
+│   ├── src/            # main.js + styles.css
+│   ├── index.html      # Application shell
+│   └── nginx.conf      # Reverse proxy config
+├── prompts/           # Prompt templates (v1.4)
+├── cloudflared/       # Tunnel configuration
+├── docs/              # Documentation
+└── docker-compose.*.yml
 ```
-
-## Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_BACKEND` | `ollama` or `vllm` | `ollama` |
-| `OLLAMA_MODEL` | Model for development | `qwen2.5:7b-instruct-q4_K_M` |
-| `VLLM_MODEL` | Model for production | `Qwen/Qwen2.5-72B-Instruct` |
-| `LLM_TEMPERATURE` | Inference temperature | `0.0` |
-| `ENVIRONMENT` | `development` or `production` | `development` |
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/upload` | Upload clinical report(s) |
-| `GET` | `/api/v1/jobs` | List all jobs |
-| `GET` | `/api/v1/jobs/{id}` | Get job status |
-| `GET` | `/api/v1/jobs/{id}/results` | Get job results |
-
-## Testing
-
-```bash
-# Run unit tests
-docker exec snapai-backend pytest tests/ -v
-
-# Run with sample cases
-docker exec snapai-backend python -m scripts.validate_cases
-```
-
-## Security
-
-- **On-premise only**: No cloud dependencies
-- **De-identification**: PHI removed in Layer 1
-- **Audit trail**: All operations logged
-- **Deterministic**: Temperature=0 for reproducibility
-
-## License
-
-[Specify your license]
-
-## Support
-
-For questions or issues, please contact [your contact info].

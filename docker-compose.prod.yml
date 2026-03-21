@@ -7,7 +7,7 @@
 #   - vLLM running on host: ./start-vllm.sh &
 #   - NVIDIA drivers installed (525+)
 #   - mkdir -p /raid/s3cache/$USER/huggingface
-#   - Cloudflare tunnel token in .env
+#   - Cloudflare tunnel config in cloudflared/ directory
 #
 # IMPORTANT: Celery workers do NOT hot-reload.
 # After changing tasks.py, pipeline code, or model integration:
@@ -41,8 +41,8 @@ services:
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
       - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
-      - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       - API_WORKERS=4
       - LOG_LEVEL=INFO
     volumes:
@@ -94,8 +94,8 @@ services:
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - LLM_TIMEOUT=900
       - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
-      - JWT_SECRET=${JWT_SECRET:-snapai-production-secret-2026}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-snapai-admin-2026}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       - LOG_LEVEL=INFO
     healthcheck:
       test: [ "CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>/dev/null | grep -q 'pong' || exit 1" ]
@@ -165,8 +165,6 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: snapai-frontend
-    ports:
-      - "${FRONTEND_PORT:-8080}:80"
     environment:
       - NODE_ENV=production
     depends_on:
@@ -181,15 +179,15 @@ services:
   # ===================
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: snapai-tunnel
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-    networks:
-      - snapai-network
+    container_name: snapai-cloudflared
+    command: tunnel --no-autoupdate run
     restart: unless-stopped
     depends_on:
       - frontend
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    networks:
+      - snapai-network
 
 # Note: vLLM runs on host (not Docker) due to rootless Docker GPU limitations.
 # Start with: ./start-vllm.sh

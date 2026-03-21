@@ -140,6 +140,12 @@
             <!-- Populated by loadSystemInfo() -->
         </div>
 
+        <!-- vLLM Status Banner (shown when model server is offline) -->
+        <div id="vllm-status-banner" class="vllm-status-banner hidden">
+            <i data-lucide="alert-triangle"></i>
+            <strong>Model Offline</strong> — Start the GPU model service.
+        </div>
+
         <!-- Main Content -->
         <main class="main-content">
 
@@ -187,6 +193,33 @@
                         <i data-lucide="play" class="btn-icon"></i>
                         Process Cases
                     </button>
+
+                    <!-- Inference Parameters (Read-Only) -->
+                    <div class="inference-params-panel">
+                        <h3 class="inference-params-title">
+                            <i data-lucide="sliders-horizontal"></i>
+                            Inference Parameters
+                            <span class="inference-params-badge">Locked</span>
+                        </h3>
+                        <div class="param-grid">
+                            <div class="param-item" data-tooltip="Controls randomness in token generation. Lower = more deterministic, higher = more creative.">
+                                <span class="param-label">temperature</span>
+                                <span class="param-value">0.7</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Nucleus sampling — considers tokens within the top cumulative probability mass. Limits output diversity.">
+                                <span class="param-label">top_p</span>
+                                <span class="param-value">0.8</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Token filtering — only the top K most likely tokens are considered at each step.">
+                                <span class="param-label">top_k</span>
+                                <span class="param-value">20</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Repetition control — penalises repeated tokens to reduce redundant output.">
+                                <span class="param-label">repetition_penalty</span>
+                                <span class="param-value">1.05</span>
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Progress Section (Hidden by default) -->

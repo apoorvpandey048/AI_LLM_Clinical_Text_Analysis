@@ -29,6 +29,16 @@ async def lifespan(app: FastAPI):
     import asyncio
     settings = get_settings()
 
+    # SECURITY: Block startup if JWT_SECRET is not set in production
+    if settings.jwt_secret.startswith("CHANGE-ME"):
+        if settings.environment == "production":
+            raise RuntimeError(
+                "JWT_SECRET must be set in environment for production. "
+                "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+        else:
+            logger.warning("jwt_secret_is_placeholder", hint="Set JWT_SECRET env var before deploying")
+
     # Wait for database to be ready (up to 30s)
     for attempt in range(1, 7):
         try:
@@ -196,9 +206,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware (allow all origins for remote access)
+# CORS middleware — restrict to tunnel origin in production
 _cors_settings = get_settings()
-cors_origins = [o.strip() for o in _cors_settings.cors_origins.split(",") if o.strip()]
+if _cors_settings.environment == "production" and _cors_settings.cors_origins == "*":
+    # In production, default to allowing only same-origin requests
+    cors_origins = []
+    logger.warning("cors_wildcard_in_production", hint="Set CORS_ORIGINS to your domain")
+else:
+    cors_origins = [o.strip() for o in _cors_settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -210,7 +225,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    """Add unique request ID to each request for tracking."""
+    """Add unique request ID and audit logging for each request."""
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
 
@@ -227,12 +242,33 @@ async def add_request_id(request: Request, call_next):
     # Add request ID to response headers
     response.headers["X-Request-ID"] = request_id
 
-    logger.info(
-        "request_completed",
-        request_id=request_id,
-        status_code=response.status_code,
-    )
+    # Audit logging — capture user, action, resource for mutating requests
+    user_id = getattr(request.state, "user_id", None)
+    username = getattr(request.state, "username", None)
+    path = request.url.path
+    method = request.method
 
+    is_mutating = method in ("POST", "PUT", "DELETE", "PATCH")
+    is_api = path.startswith("/api/v1/")
+    skip_paths = ("/api/v1/auth/", "/health", "/docs")
+    should_audit = is_mutating and is_api and not any(path.startswith(s) for s in skip_paths)
+
+    if should_audit:
+        logger.info(
+            "audit_action",
+            request_id=request_id,
+            user_id=user_id,
+            username=username,
+            method=method,
+            path=path,
+            status_code=response.status_code,
+        )
+    else:
+        logger.info(
+            "request_completed",
+            request_id=request_id,
+            status_code=response.status_code,
+        )
     return response
 
 
@@ -469,6 +505,41 @@ async def readiness_check():
             "llm_model": settings.llm_model,
         },
     }
+
+
+@app.get("/health/vllm", tags=["Health"])
+async def vllm_health_check():
+    """
+    Check vLLM model server availability.
+
+    Returns model info if online, error details if offline.
+    Frontend uses this to display "Model offline" banner.
+    """
+    settings = get_settings()
+    vllm_url = f"{settings.vllm_host}/v1/models"
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(vllm_url)
+            resp.raise_for_status()
+            models_data = resp.json()
+            model_ids = [m.get("id", "unknown") for m in models_data.get("data", [])]
+            return {
+                "status": "online",
+                "host": settings.vllm_host,
+                "models": model_ids,
+            }
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "offline",
+                "host": settings.vllm_host,
+                "error": str(e),
+                "hint": "Start the GPU model service: ./start-vllm.sh",
+            },
+        )
 
 
 # ============================================
