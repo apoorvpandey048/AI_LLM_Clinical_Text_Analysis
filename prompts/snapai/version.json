@@ -1,23 +1,43 @@
 {
-    "current_version": "1.4",
+    "current_version": "1.5",
     "layers": {
         "layer1_ctp": {
-            "version": "1.4",
-            "file": "layer1_ctp_v1.4.md",
+            "version": "1.5",
+            "file": "layer1_ctp_v1.5.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.4",
-            "file": "layer2_cie_v1.4.md",
+            "version": "1.5",
+            "file": "layer2_cie_v1.5.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.4",
-            "file": "layer3_ccc_v1.4.md",
+            "version": "1.5",
+            "file": "layer3_ccc_v1.5.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": [
+        {
+            "version": "1.5",
+            "date": "2026-03-22",
+            "changes": [
+                "LAYER 1: Added rule to preserve Therapie lines from diagnosis lists (fixes Pradif-Therapie loss)",
+                "LAYER 1: Extended drug normalization table (Sandostatin, Quinlock, Sintrom, Cordarone, Haldol, Seroquel, Immodium)",
+                "LAYER 2: Added discharge-vs-inpatient treatment distinction (prevents false positives from Procedere section)",
+                "LAYER 2: Strengthened PDK/PCA pain management exclusion with binding Example N",
+                "LAYER 2: Classified Loperamide (Imodium) as CD-I exempt drug",
+                "LAYER 2: Added diagnoses-driven extraction rule for therapies listed under postop diagnoses",
+                "LAYER 2: Added over-extraction guard to CD-I sweep (routine recovery NOT complications)",
+                "LAYER 2: Added 3 new worked examples (N: PDK pain, O: discharge recommendation, P: diarrhea context)",
+                "LAYER 2: Clarified 'adaptierte Darmstimulation' as prokinetics -> Grade II",
+                "LAYER 3: Added 5 mandatory false-positive checks (PDK pain, discharge recs, routine recovery, komplikationslos, CD-I over-extraction)",
+                "LAYER 3: Added probe G for Tamsulosin/Pradif omission detection",
+                "LAYER 3: Added Loperamide exemption to prevent CD-II over-grading",
+                "LAYER 3: Added treatment mis-attribution downgrade exception (e.g., antibiotics for pneumonia not counted for ileus)",
+                "LAYER 3: Changed posture from FLAG to REJECT for false positives (delete from final_episode_set)"
+            ]
+        },
         {
             "version": "1.4",
             "date": "2026-03-21",

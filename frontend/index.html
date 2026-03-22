@@ -202,21 +202,21 @@
                             <span class="inference-params-badge">Locked</span>
                         </h3>
                         <div class="param-grid">
-                            <div class="param-item" data-tooltip="Controls randomness in token generation. Lower = more deterministic, higher = more creative.">
+                            <div class="param-item" data-tooltip="Set to 0 for fully deterministic, reproducible outputs (greedy decoding).">
                                 <span class="param-label">temperature</span>
-                                <span class="param-value">0.7</span>
+                                <span class="param-value">0</span>
                             </div>
-                            <div class="param-item" data-tooltip="Nucleus sampling — considers tokens within the top cumulative probability mass. Limits output diversity.">
+                            <div class="param-item" data-tooltip="Nucleus sampling disabled (=1.0) — all tokens considered. Combined with temp=0 for deterministic output.">
                                 <span class="param-label">top_p</span>
-                                <span class="param-value">0.8</span>
+                                <span class="param-value">1.0</span>
                             </div>
-                            <div class="param-item" data-tooltip="Token filtering — only the top K most likely tokens are considered at each step.">
-                                <span class="param-label">top_k</span>
-                                <span class="param-value">20</span>
+                            <div class="param-item" data-tooltip="Maximum number of output tokens per LLM call.">
+                                <span class="param-label">max_tokens</span>
+                                <span class="param-value">16384</span>
                             </div>
-                            <div class="param-item" data-tooltip="Repetition control — penalises repeated tokens to reduce redundant output.">
-                                <span class="param-label">repetition_penalty</span>
-                                <span class="param-value">1.05</span>
+                            <div class="param-item" data-tooltip="Request timeout in seconds per LLM call.">
+                                <span class="param-label">timeout</span>
+                                <span class="param-value">900s</span>
                             </div>
                         </div>
                     </div>
