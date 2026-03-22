@@ -1,23 +1,39 @@
 {
-    "current_version": "1.6",
+    "current_version": "1.7",
     "layers": {
         "layer1_ctp": {
-            "version": "1.6",
-            "file": "layer1_ctp_v1.6.md",
+            "version": "1.7",
+            "file": "layer1_ctp_v1.7.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.6",
-            "file": "layer2_cie_v1.6.md",
+            "version": "1.7",
+            "file": "layer2_cie_v1.7.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.6",
-            "file": "layer3_ccc_v1.6.md",
+            "version": "1.7",
+            "file": "layer3_ccc_v1.7.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": [
+        {
+            "version": "1.7",
+            "date": "2026-03-22",
+            "changes": [
+                "TARGET: Fix 5 remaining failures (Cases 6, 8, 12, 13, 18) for 20/20 exact matches",
+                "LAYER 2: QUALIFIED KOMPLIKATIONSLOS — binding example forcing extraction of non-surgical deviations when 'von chirurgischer Seite' qualifies the domain (Case 6)",
+                "LAYER 2: ADAPTIERTE DARMSTIMULATION + NAMED ILEUS — binding rule: named ileus + adapted stimulation = always Grade II (Case 8)",
+                "LAYER 2: ANTI-FALSE-POSITIVE — self-resolving nausea/vomiting without treatment is NOT CD I (Case 12)",
+                "LAYER 2: ANTI-FALSE-POSITIVE — elevated drain amylase/lipase with only irrigation is routine, NOT a complication (Case 18)",
+                "LAYER 2: Added 3 new NOT-COMPLICATION patterns: self-resolving nausea, elevated drain amylase, prophylactic Octreotide",
+                "LAYER 3: CHECK 4 STRENGTHENED — binding anti-addition example: do NOT add episodes when Verlauf says 'komplikationslos' and no in-hospital treatment was given (Case 13)",
+                "LAYER 3: CHECK 10 ADDED — Layer 3 omission addition guard: extreme caution when adding new episodes, Verlauf is authoritative over diagnosis list",
+                "LAYER 3: CHECK 11 ADDED — elevated drain amylase false positive rejection",
+                "LAYER 3: Binding examples for both qualified and unqualified komplikationslos scenarios"
+            ]
+        },
         {
             "version": "1.6",
             "date": "2026-03-22",
