@@ -1,52 +1,37 @@
 {
-    "current_version": "1.8",
+    "current_version": "1.9",
     "layers": {
         "layer1_ctp": {
-            "version": "1.8",
-            "file": "layer1_ctp_v1.8.md",
+            "version": "1.9",
+            "file": "layer1_ctp_v1.9.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.8",
-            "file": "layer2_cie_v1.8.md",
+            "version": "1.9",
+            "file": "layer2_cie_v1.9.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.8",
-            "file": "layer3_ccc_v1.8.md",
+            "version": "1.9",
+            "file": "layer3_ccc_v1.9.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": {
+        "1.9": {
+            "date": "2026-03-22",
+            "changes": [
+                "Case 8 fix: Layer 3 BINDING ANTI-DOWNGRADE for ileus — prevents L3 from overriding adaptierte Darmstimulation binding rule",
+                "Case 11 fix: Prophylactic antibiotic exclusion — intraop-started antibiotics continued ≤5d in uncomplicated course are NOT complications",
+                "Case 14 fix: Reverted hyponatremia over-correction — Grade II when co-managed with albumin/TPN",
+                "Case 18: Retry expected (transient JSON parse failure)"
+            ]
+        },
         "1.8": {
             "date": "2026-03-22",
             "changes": [
-                "Layer 1: MANDATORY DATE CHECK for historical diagnosis filter — forces per-diagnosis date comparison with binding wrong/correct output example (Case 3 PE fix)",
-                "Layer 2: EXAMPLE R — hyponatremia with fluid restriction/diuretics = Grade I, not Grade II (Case 14 fix)",
-                "Layer 2: Binding PE exclusion example with date-based skip rule",
-                "Layer 3: CHECK 9 strengthened with binding Case 3 PE pattern + anticoagulation verification rule",
-                "Layer 3: CHECK 12 — hyponatremia overgrading detector with binding Case 14 downgrade example",
-                "Layer 3: Grade rule violation check expanded to include hyponatremia fluid restriction pattern"
-            ]
-        },
-        "1.7": {
-            "date": "2026-03-22",
-            "changes": [
-                "Layer 2: Qualified komplikationslos binding example (Case 6 fix)",
-                "Layer 2: Adaptierte Darmstimulation + named ileus binding rule (Case 8 fix)",
-                "Layer 2: Self-resolving nausea anti-false-positive rule (Case 12 fix)",
-                "Layer 2: Elevated drain amylase false positive rule (Case 18 fix)",
-                "Layer 3: CHECK 4 strengthened for qualified komplikationslos",
-                "Layer 3: CHECK 10 Layer 3 omission addition guard (Case 13 fix)",
-                "Layer 3: CHECK 11 elevated drain amylase false positive"
-            ]
-        },
-        "1.6b": {
-            "date": "2026-03-21",
-            "changes": [
-                "Historical diagnosis exclusion filter",
-                "Standalone therapy section preservation",
-                "Therapy line audit requirement"
+                "Case 3 fix: MANDATORY DATE CHECK for historical PE",
+                "Case 14 fix: Hyponatremia grading rule (over-corrected, fixed in 1.9)"
             ]
         }
     }
