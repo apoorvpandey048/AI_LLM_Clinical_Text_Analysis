@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.db import get_db
 from app.db.models import PromptTemplate, PromptVersion
+from app.config import get_settings
 from app.utils import get_logger
 
 logger = get_logger(__name__)
@@ -39,11 +40,15 @@ LAYER_LABELS = {
     "layer3_ccc": "Layer 3 — Clavien-Dindo Classification & CCI (CCC)",
 }
 
-PROMPT_FILES = {
-    "layer1_ctp": "layer1_ctp_v1.3.md",
-    "layer2_cie": "layer2_cie_v1.3.md",
-    "layer3_ccc": "layer3_ccc_v1.3.md",
-}
+
+def _get_prompt_files() -> dict[str, str]:
+    """Build prompt filename dict using the current prompt_version from settings."""
+    version = get_settings().prompt_version
+    return {
+        "layer1_ctp": f"layer1_ctp_v{version}.md",
+        "layer2_cie": f"layer2_cie_v{version}.md",
+        "layer3_ccc": f"layer3_ccc_v{version}.md",
+    }
 
 # Valid layer name regex (letters, numbers, underscore, hyphen)
 LAYER_NAME_REGEX = re.compile(r'^[a-z][a-z0-9_\-]{2,49}$')
@@ -68,8 +73,13 @@ def create_response(success: bool, data=None, error=None, request_id=None):
 
 
 def _load_default_prompt(layer_name: str) -> str:
-    """Load the default prompt from file for built-in layers."""
-    filename = PROMPT_FILES.get(layer_name)
+    """Load the default prompt from file for built-in layers.
+
+    Uses the current prompt_version from settings to find the correct file.
+    Falls back to v1.3 if the versioned file does not exist.
+    """
+    prompt_files = _get_prompt_files()
+    filename = prompt_files.get(layer_name)
     if not filename:
         return ""
 
@@ -80,6 +90,18 @@ def _load_default_prompt(layer_name: str) -> str:
 
     for path in paths:
         if path.exists():
+            logger.info("prompt_file_loaded", layer=layer_name, path=str(path))
+            return path.read_text(encoding="utf-8")
+
+    # Fallback: try v1.3 if versioned file not found
+    fallback = f"{layer_name}_v1.3.md"
+    fallback_paths = [
+        Path(f"/app/prompts/snapai/{fallback}"),
+        Path(__file__).parent.parent.parent.parent / "prompts" / "snapai" / fallback,
+    ]
+    for path in fallback_paths:
+        if path.exists():
+            logger.warning("prompt_file_fallback_v1.3", layer=layer_name, wanted=filename, using=str(path))
             return path.read_text(encoding="utf-8")
 
     return ""
@@ -205,7 +227,7 @@ async def list_prompts(
                 "source": "default",
                 "content": default_content,
                 "label": LAYER_LABELS.get(layer, layer),
-                "version": "1.3",
+                "version": get_settings().prompt_version,
                 "id": None,
                 "is_builtin": True,
                 "display_order": BUILTIN_LAYERS.index(layer),
@@ -336,7 +358,7 @@ async def export_prompts(
             export_data["prompts"][layer] = {
                 "content": _load_default_prompt(layer),
                 "label": LAYER_LABELS.get(layer),
-                "version": "1.3",
+                "version": get_settings().prompt_version,
                 "source": "default",
                 "is_builtin": True,
             }
@@ -569,7 +591,7 @@ async def reorder_layers(
                 layer_name=name,
                 label=LAYER_LABELS.get(name, name),
                 content=default_content,
-                version="1.3",
+                version=get_settings().prompt_version,
                 is_active=True,
                 is_builtin=True,
                 display_order=order,
@@ -640,7 +662,7 @@ async def get_prompt(
                 "prompt": {
                     "layer_name": layer_name,
                     "content": default_content,
-                    "version": "1.3",
+                    "version": get_settings().prompt_version,
                     "is_active": True,
                     "is_builtin": True,
                 },
