@@ -3205,21 +3205,13 @@ async function loadSystemInfo() {
         // Read-only inference parameter display with tooltips
         const paramHtml = `
             <div class="param-display-panel">
-                <div class="param-item" title="Controls randomness. Higher = more creative, lower = more deterministic.">
+                <div class="param-item" title="Set to 0 for fully deterministic, reproducible outputs (greedy decoding).">
                     <span class="param-label">temp</span>
                     <span class="param-value">${temperature}</span>
                 </div>
-                <div class="param-item" title="Nucleus sampling. Limits token selection to cumulative probability mass.">
+                <div class="param-item" title="Nucleus sampling disabled (=1.0). Combined with temp=0 for deterministic output.">
                     <span class="param-label">top_p</span>
-                    <span class="param-value">0.8</span>
-                </div>
-                <div class="param-item" title="Limits token selection to top K most probable tokens.">
-                    <span class="param-label">top_k</span>
-                    <span class="param-value">20</span>
-                </div>
-                <div class="param-item" title="Penalizes repeated tokens. Higher values reduce repetition.">
-                    <span class="param-label">rep_pen</span>
-                    <span class="param-value">1.05</span>
+                    <span class="param-value">1.0</span>
                 </div>
             </div>`;
 
