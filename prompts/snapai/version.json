@@ -1,107 +1,53 @@
 {
-    "current_version": "1.7",
+    "current_version": "1.8",
     "layers": {
         "layer1_ctp": {
-            "version": "1.7",
-            "file": "layer1_ctp_v1.7.md",
+            "version": "1.8",
+            "file": "layer1_ctp_v1.8.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.7",
-            "file": "layer2_cie_v1.7.md",
+            "version": "1.8",
+            "file": "layer2_cie_v1.8.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.7",
-            "file": "layer3_ccc_v1.7.md",
+            "version": "1.8",
+            "file": "layer3_ccc_v1.8.md",
             "description": "Clinical Consistency Challenger"
         }
     },
-    "changelog": [
-        {
-            "version": "1.7",
+    "changelog": {
+        "1.8": {
             "date": "2026-03-22",
             "changes": [
-                "TARGET: Fix 5 remaining failures (Cases 6, 8, 12, 13, 18) for 20/20 exact matches",
-                "LAYER 2: QUALIFIED KOMPLIKATIONSLOS — binding example forcing extraction of non-surgical deviations when 'von chirurgischer Seite' qualifies the domain (Case 6)",
-                "LAYER 2: ADAPTIERTE DARMSTIMULATION + NAMED ILEUS — binding rule: named ileus + adapted stimulation = always Grade II (Case 8)",
-                "LAYER 2: ANTI-FALSE-POSITIVE — self-resolving nausea/vomiting without treatment is NOT CD I (Case 12)",
-                "LAYER 2: ANTI-FALSE-POSITIVE — elevated drain amylase/lipase with only irrigation is routine, NOT a complication (Case 18)",
-                "LAYER 2: Added 3 new NOT-COMPLICATION patterns: self-resolving nausea, elevated drain amylase, prophylactic Octreotide",
-                "LAYER 3: CHECK 4 STRENGTHENED — binding anti-addition example: do NOT add episodes when Verlauf says 'komplikationslos' and no in-hospital treatment was given (Case 13)",
-                "LAYER 3: CHECK 10 ADDED — Layer 3 omission addition guard: extreme caution when adding new episodes, Verlauf is authoritative over diagnosis list",
-                "LAYER 3: CHECK 11 ADDED — elevated drain amylase false positive rejection",
-                "LAYER 3: Binding examples for both qualified and unqualified komplikationslos scenarios"
+                "Layer 1: MANDATORY DATE CHECK for historical diagnosis filter — forces per-diagnosis date comparison with binding wrong/correct output example (Case 3 PE fix)",
+                "Layer 2: EXAMPLE R — hyponatremia with fluid restriction/diuretics = Grade I, not Grade II (Case 14 fix)",
+                "Layer 2: Binding PE exclusion example with date-based skip rule",
+                "Layer 3: CHECK 9 strengthened with binding Case 3 PE pattern + anticoagulation verification rule",
+                "Layer 3: CHECK 12 — hyponatremia overgrading detector with binding Case 14 downgrade example",
+                "Layer 3: Grade rule violation check expanded to include hyponatremia fluid restriction pattern"
             ]
         },
-        {
-            "version": "1.6",
+        "1.7": {
             "date": "2026-03-22",
             "changes": [
-                "CRITICAL FIX: prompt loading was hardcoded to v1.3 — now version-aware via config.py",
-                "LAYER 1: Added mandatory therapy_audit step to enumerate and verify all Therapie: lines",
-                "LAYER 1: Added NEVER-DROP patterns with worked example of required diagnosis list preservation",
-                "LAYER 1: Added Step 6 — discharge recommendation labeling for Layer 2 disambiguation",
-                "LAYER 2: Changed posture from sensitivity-first to BALANCED precision-recall",
-                "LAYER 2: Added ZERO COMPLICATIONS DEFAULT RULE — if text says komplikationslos, output empty unless strong evidence",
-                "LAYER 2: Added PDK+DK SEQUENCING RULE — catheter removal after PDK is routine, not urinary retention",
-                "LAYER 2: Added Examples P (DK after PDK), Q (retained sutures) to NOT COMPLICATIONS section",
-                "LAYER 2: Added EPISODE COUNT SANITY CHECK — verify each episode has independent evidence",
-                "LAYER 2: Expanded NOT COMPLICATIONS section: suture removal, retained material, DK sequencing",
-                "LAYER 2: Added more CCI reference values for multi-complication self-check",
-                "LAYER 2: Strengthened discharge recommendation detection with label-based approach",
-                "LAYER 3: Added CHECK 6 (DK sequencing), CHECK 7 (retained sutures), CHECK 8 (episode count)",
-                "LAYER 3: Added action field (CONFIRM/REJECT/UPGRADE/DOWNGRADE/MERGE) to episode_checks",
-                "LAYER 3: Added mandatory CCI reference cross-check after auditing",
-                "LAYER 3: Changed posture to PRECISION-FIRST with explicit REJECT default for ambiguous episodes"
+                "Layer 2: Qualified komplikationslos binding example (Case 6 fix)",
+                "Layer 2: Adaptierte Darmstimulation + named ileus binding rule (Case 8 fix)",
+                "Layer 2: Self-resolving nausea anti-false-positive rule (Case 12 fix)",
+                "Layer 2: Elevated drain amylase false positive rule (Case 18 fix)",
+                "Layer 3: CHECK 4 strengthened for qualified komplikationslos",
+                "Layer 3: CHECK 10 Layer 3 omission addition guard (Case 13 fix)",
+                "Layer 3: CHECK 11 elevated drain amylase false positive"
             ]
         },
-        {
-            "version": "1.5",
-            "date": "2026-03-22",
-            "changes": [
-                "LAYER 1: Added rule to preserve Therapie lines from diagnosis lists (fixes Pradif-Therapie loss)",
-                "LAYER 1: Extended drug normalization table (Sandostatin, Quinlock, Sintrom, Cordarone, Haldol, Seroquel, Immodium)",
-                "LAYER 2: Added discharge-vs-inpatient treatment distinction (prevents false positives from Procedere section)",
-                "LAYER 2: Strengthened PDK/PCA pain management exclusion with binding Example N",
-                "LAYER 2: Classified Loperamide (Imodium) as CD-I exempt drug",
-                "LAYER 2: Added diagnoses-driven extraction rule for therapies listed under postop diagnoses",
-                "LAYER 2: Added over-extraction guard to CD-I sweep (routine recovery NOT complications)",
-                "LAYER 2: Added 3 new worked examples (N: PDK pain, O: discharge recommendation, P: diarrhea context)",
-                "LAYER 2: Clarified 'adaptierte Darmstimulation' as prokinetics -> Grade II",
-                "LAYER 3: Added 5 mandatory false-positive checks (PDK pain, discharge recs, routine recovery, komplikationslos, CD-I over-extraction)",
-                "LAYER 3: Added probe G for Tamsulosin/Pradif omission detection",
-                "LAYER 3: Added Loperamide exemption to prevent CD-II over-grading",
-                "LAYER 3: Added treatment mis-attribution downgrade exception",
-                "LAYER 3: Changed posture from FLAG to REJECT for false positives"
-            ]
-        },
-        {
-            "version": "1.4",
+        "1.6b": {
             "date": "2026-03-21",
             "changes": [
-                "Added 13 worked grading examples (A-M) to Layer 2 for common patterns",
-                "Expanded non-exempt drug list: Tamsulosin, prokinetics, Cordarone, Dobutamin, Levosimendan, Albumin",
-                "Added explicit IIIa rules for puncture/drainage vs bedside procedure distinction",
-                "Added multi-complication CCI reference table for self-check accuracy",
-                "Simplified CCI self-check to reference-value comparison",
-                "Layer 3: Added Rule 3b (puncture/drainage upgrade), Rule 7 (diuretic CD-I exemption)",
-                "Layer 3: Expanded DO NOT DOWNGRADE rule with explicit drug examples",
-                "Layer 1: Extended drug normalization table (Pradif, Paspertin, Aldactone, Konakion)",
-                "Added deterministic CCI calculator in Python (cci_calculator.py)",
-                "Orchestrator now computes final CCI in Python code, not LLM arithmetic"
-            ]
-        },
-        {
-            "version": "1.3",
-            "date": "2026-01-31",
-            "changes": [
-                "Initial versioned prompts",
-                "Episode-aware extraction with severity guards",
-                "CD-I sweep for under-recognized complications",
-                "CCI self-check with explicit intermediate values",
-                "Specificity-first audit posture for Layer 3"
+                "Historical diagnosis exclusion filter",
+                "Standalone therapy section preservation",
+                "Therapy line audit requirement"
             ]
         }
-    ]
+    }
 }
