@@ -61,13 +61,22 @@ Gang", "Kostaufbau gut toleriert", "Mobilisation erfolgt") — these are NOT com
 REJECT and REMOVE from final_episode_set.
 
 CHECK 4 — KOMPLIKATIONSLOS CHECK:
-If clean_course_text explicitly states the course was "komplikationslos" or "ohne Komplikationen"
-(unqualified), then Layer 2 should have returned zero complications.
-If Layer 2 found complications despite an unqualified "komplikationslos" statement:
-- Verify each episode against verbatim text evidence.
-- The bar is VERY HIGH: only keep episodes with explicit deviation + in-hospital treatment.
-- REJECT any episode not explicitly supported by text describing an actual deviation.
-- If the "komplikationslos" is qualified (e.g., "von chirurgischer Seite"), only apply to that domain.
+If clean_course_text explicitly states the course was "komplikationslos" or "ohne Komplikationen":
+
+  a) UNQUALIFIED (e.g. "der Verlauf war komplikationslos"):
+     Layer 2 should have returned zero complications.
+     If Layer 2 found complications despite this:
+     - The bar is VERY HIGH: only keep episodes with explicit deviation + in-hospital treatment.
+     - REJECT any episode not explicitly supported by text describing an actual deviation.
+
+  b) QUALIFIED (e.g. "von chirurgischer Seite ohne Komplikationen"):
+     Only apply the zero-complication assumption to the QUALIFIED DOMAIN (e.g. surgical).
+     Complications OUTSIDE that domain (e.g. weakness, electrolyte issues) are STILL VALID
+     and must NOT be rejected solely because of the qualified komplikationslos statement.
+     
+     EXAMPLE: "von chirurgischer Seite ohne Komplikationen" + "ausgeprägte Schwäche"
+     → The weakness is a non-surgical complication → ACCEPT (do NOT reject)
+     → A surgical wound complication → Would need very strong evidence to accept
 
 CHECK 5 — OVER-EXTRACTION OF CD I:
 If Layer 2 extracted CD I episodes from the CD-I sweep, verify:
@@ -94,6 +103,16 @@ After all other checks, count the remaining episodes.
 If there are more episodes than the number of DISTINCT postoperative
 complications described in the text, something was over-extracted.
 Re-examine each episode for independence and remove duplicates/near-duplicates.
+
+CHECK 9 — HISTORICAL DIAGNOSIS CHECK (v1.6b):
+If an episode is based on a diagnosis that predates the current admission
+(e.g. pulmonary embolism from a previous hospitalization, St. n. ... condition),
+it is NOT a postoperative complication from this admission.
+Look for:
+- "HISTORICAL:" labels from Layer 1
+- Dates significantly before the operation date
+- "St. n." or "Z. n." prefixes
+REJECT any episode based on a historical diagnosis.
 
 ---
 

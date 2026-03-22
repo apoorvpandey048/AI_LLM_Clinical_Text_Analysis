@@ -64,6 +64,48 @@ DO NOT accidentally drop stand‑alone sections like:
 These frequently contain the only explicit evidence of CD‑relevant treatment.
 
 ============================================================
+HISTORICAL vs CURRENT DIAGNOSIS FILTER (MANDATORY — v1.6b)
+
+When processing the diagnosis list, distinguish between:
+- CURRENT postoperative complications (from THIS admission)
+- HISTORICAL diagnoses (from previous admissions/operations)
+
+A diagnosis is HISTORICAL if:
+- Its "ED" (Erstdiagnose) date is BEFORE the current admission/operation date
+- It is prefixed with "St. n." (Status nach) or "Z. n." (Zustand nach)
+- It describes a condition from a previous hospitalization
+
+EXAMPLE:
+  Current operation: December 2023
+  "2. Lungenembolie parazentral links 29.03.2023 Unter Antikoagulation mit Xarelto"
+  → This PE occurred in March 2023, MONTHS before the current admission.
+  → Mark as HISTORICAL in clean_course_text: "HISTORICAL: Pulmonary embolism (March 2023), treated with Rivaroxaban."
+  → Do NOT include in "DIAGNOSES WITH TREATMENTS" as if it were a current complication.
+
+RULE: Only include diagnoses in "DIAGNOSES WITH TREATMENTS" if they are
+postoperative complications FROM THE CURRENT ADMISSION. Historical diagnoses
+should be labeled "HISTORICAL:" to prevent Layer 2 from extracting them.
+
+============================================================
+STANDALONE THERAPY SECTIONS (NEVER DROP — v1.6b)
+
+Some discharge summaries have a standalone "Therapie:" section that is NOT
+nested under individual diagnoses. This section lists ALL therapies given
+during the admission. Example:
+
+  "Therapie:
+   Urin-Dauerkatheter und Pradif-Therapie vom 23.10.2023 - 28.10.2023
+   Piperacillin/Tazobactam i.v. 4,5g 3x tgl. Vom 24.10.2023 - 28.10.2023"
+
+You MUST preserve this ENTIRE section in clean_course_text, clearly labeled:
+  "THERAPY DURING ADMISSION:
+   Urinary catheter and Tamsulosin (Pradif) from [DATE] to [DATE].
+   Piperacillin/Tazobactam i.v. 4.5g 3x daily from [DATE] to [DATE]."
+
+Then LINK each therapy to its corresponding diagnosis in the
+"DIAGNOSES WITH TREATMENTS" section.
+
+============================================================
 CRITICAL — THERAPY LINES IN DIAGNOSIS LISTS (NEVER DROP)
 
 THIS IS THE MOST IMPORTANT RULE IN THIS PROMPT.

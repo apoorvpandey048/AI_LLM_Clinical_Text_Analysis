@@ -87,9 +87,11 @@ def extract_grades_from_layer3(layer3_output: dict) -> list[str] | None:
         return None
 
     episodes = audited.get("final_episode_set")
-    if not episodes or not isinstance(episodes, list):
+    if episodes is None or not isinstance(episodes, list):
         return None
 
+    # Empty list = Layer 3 rejected all episodes → 0 complications → return empty grades
+    # (Do NOT return None here, as that would fall back to Layer 2's grades)
     grades = []
     for ep in episodes:
         if isinstance(ep, dict):
@@ -97,7 +99,7 @@ def extract_grades_from_layer3(layer3_output: dict) -> list[str] | None:
             if grade:
                 grades.append(grade)
 
-    return grades if grades else None
+    return grades
 
 
 def compute_cci_from_pipeline(

@@ -246,6 +246,27 @@ You are analyzing EXACTLY ONE patient case. Do NOT:
 Analyze ONLY what is explicitly written in THIS case.
 
 ============================================================
+HISTORICAL DIAGNOSIS EXCLUSION (MANDATORY — v1.6b)
+
+Do NOT extract diagnoses that predate the CURRENT admission as postoperative complications.
+
+A diagnosis is HISTORICAL (not a postoperative complication) if:
+- Its "ED" or event date is BEFORE the current operation date
+- It is labeled "HISTORICAL:" by Layer 1
+- It is prefixed with "St. n." or "Z. n."
+- It describes a condition managed during a PREVIOUS hospitalization
+
+EXAMPLE:
+  Current operation: December 2023
+  "Pulmonary embolism (March 2023), treated with Rivaroxaban"
+  → This PE occurred 9 months BEFORE the current admission.
+  → Do NOT extract as a postoperative complication.
+  → Even though anticoagulation is ongoing, it is NOT a complication of THIS operation.
+
+RULE: Only extract complications that AROSE AFTER the current operation.
+If a diagnosis has a date that precedes the operation, SKIP IT.
+
+============================================================
 MANDATORY CD I SWEEP (AFTER MAJOR COMPLICATIONS)
 
 After extracting obvious major complications, perform a deliberate sweep for UNDER-RECOGNISED CD I events.
@@ -426,7 +447,9 @@ EXAMPLE B — Paralytic ileus / Gastroparese
   → Grade II (prokinetics = non-exempt drugs)
 
   Text: "adaptierte Darmstimulation" (without further specification)
-  → Grade I ONLY if no medications mentioned; if context implies prokinetics → Grade II
+  → If documented in context of a named ileus or gastroparesis → assume prokinetics were used → Grade II
+  → If standalone observation without ileus diagnosis → Grade I
+  → When in doubt AND diagnosis list says "paralytischer Ileus": Grade II
 
 EXAMPLE C — Post-hepatectomy liver failure
   Text: "eingeschränkte Leberfunktion, Gerinnung substituiert, Faktor VII"
