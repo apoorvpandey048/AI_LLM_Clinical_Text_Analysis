@@ -1,23 +1,45 @@
 {
-    "current_version": "1.5",
+    "current_version": "1.6",
     "layers": {
         "layer1_ctp": {
-            "version": "1.5",
-            "file": "layer1_ctp_v1.5.md",
+            "version": "1.6",
+            "file": "layer1_ctp_v1.6.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.5",
-            "file": "layer2_cie_v1.5.md",
+            "version": "1.6",
+            "file": "layer2_cie_v1.6.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.5",
-            "file": "layer3_ccc_v1.5.md",
+            "version": "1.6",
+            "file": "layer3_ccc_v1.6.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": [
+        {
+            "version": "1.6",
+            "date": "2026-03-22",
+            "changes": [
+                "CRITICAL FIX: prompt loading was hardcoded to v1.3 — now version-aware via config.py",
+                "LAYER 1: Added mandatory therapy_audit step to enumerate and verify all Therapie: lines",
+                "LAYER 1: Added NEVER-DROP patterns with worked example of required diagnosis list preservation",
+                "LAYER 1: Added Step 6 — discharge recommendation labeling for Layer 2 disambiguation",
+                "LAYER 2: Changed posture from sensitivity-first to BALANCED precision-recall",
+                "LAYER 2: Added ZERO COMPLICATIONS DEFAULT RULE — if text says komplikationslos, output empty unless strong evidence",
+                "LAYER 2: Added PDK+DK SEQUENCING RULE — catheter removal after PDK is routine, not urinary retention",
+                "LAYER 2: Added Examples P (DK after PDK), Q (retained sutures) to NOT COMPLICATIONS section",
+                "LAYER 2: Added EPISODE COUNT SANITY CHECK — verify each episode has independent evidence",
+                "LAYER 2: Expanded NOT COMPLICATIONS section: suture removal, retained material, DK sequencing",
+                "LAYER 2: Added more CCI reference values for multi-complication self-check",
+                "LAYER 2: Strengthened discharge recommendation detection with label-based approach",
+                "LAYER 3: Added CHECK 6 (DK sequencing), CHECK 7 (retained sutures), CHECK 8 (episode count)",
+                "LAYER 3: Added action field (CONFIRM/REJECT/UPGRADE/DOWNGRADE/MERGE) to episode_checks",
+                "LAYER 3: Added mandatory CCI reference cross-check after auditing",
+                "LAYER 3: Changed posture to PRECISION-FIRST with explicit REJECT default for ambiguous episodes"
+            ]
+        },
         {
             "version": "1.5",
             "date": "2026-03-22",
@@ -34,8 +56,8 @@
                 "LAYER 3: Added 5 mandatory false-positive checks (PDK pain, discharge recs, routine recovery, komplikationslos, CD-I over-extraction)",
                 "LAYER 3: Added probe G for Tamsulosin/Pradif omission detection",
                 "LAYER 3: Added Loperamide exemption to prevent CD-II over-grading",
-                "LAYER 3: Added treatment mis-attribution downgrade exception (e.g., antibiotics for pneumonia not counted for ileus)",
-                "LAYER 3: Changed posture from FLAG to REJECT for false positives (delete from final_episode_set)"
+                "LAYER 3: Added treatment mis-attribution downgrade exception",
+                "LAYER 3: Changed posture from FLAG to REJECT for false positives"
             ]
         },
         {
