@@ -119,6 +119,7 @@ class LLMClient(ABC):
         Attempt to parse JSON from LLM response.
 
         Handles cases where JSON is wrapped in markdown code blocks.
+        Includes repair logic for common LLM JSON errors (v1.15).
 
         Args:
             content: Raw LLM response text
@@ -153,5 +154,56 @@ class LLMClient(ABC):
                     return json.loads(json_str)
                 except (json.JSONDecodeError, IndexError):
                     continue
+
+        # JSON repair: try to fix common LLM output errors (v1.15)
+        # Extract the best candidate JSON string
+        json_candidate = None
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match:
+                json_candidate = match.group(1) if match.lastindex else match.group(0)
+                break
+        if json_candidate is None:
+            # Last resort: find first { to last }
+            first_brace = content.find("{")
+            last_brace = content.rfind("}")
+            if first_brace >= 0 and last_brace > first_brace:
+                json_candidate = content[first_brace : last_brace + 1]
+
+        if json_candidate:
+            repaired = json_candidate
+            # Remove control characters except newline/tab
+            repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", repaired)
+            # Fix trailing commas before } or ]
+            repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+            # Try parsing repaired version
+            try:
+                return json.loads(repaired)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            # Try closing unclosed braces/brackets (truncated output)
+            open_braces = repaired.count("{") - repaired.count("}")
+            open_brackets = repaired.count("[") - repaired.count("]")
+            if open_braces > 0 or open_brackets > 0:
+                # Strip trailing partial content after last complete value
+                repaired = repaired.rstrip()
+                if repaired and repaired[-1] not in "{}[],\"0123456789tfn":
+                    # Truncated mid-value, try removing partial tail
+                    last_good = max(
+                        repaired.rfind(","),
+                        repaired.rfind("}"),
+                        repaired.rfind("]"),
+                        repaired.rfind('"'),
+                    )
+                    if last_good > 0:
+                        repaired = repaired[: last_good + 1]
+                        # Remove trailing comma if present
+                        repaired = re.sub(r",\s*$", "", repaired)
+                repaired += "]" * open_brackets + "}" * open_braces
+                try:
+                    return json.loads(repaired)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         return None

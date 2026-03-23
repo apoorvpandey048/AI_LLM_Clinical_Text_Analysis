@@ -1,47 +1,36 @@
 {
-    "current_version": "1.14",
+    "current_version": "1.15",
     "layers": {
         "layer1_ctp": {
-            "version": "1.14",
-            "file": "layer1_ctp_v1.14.md",
+            "version": "1.15",
+            "file": "layer1_ctp_v1.15.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.14",
-            "file": "layer2_cie_v1.14.md",
+            "version": "1.15",
+            "file": "layer2_cie_v1.15.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.14",
-            "file": "layer3_ccc_v1.14.md",
+            "version": "1.15",
+            "file": "layer3_ccc_v1.15.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": {
-        "1.14": {
+        "1.15": {
             "date": "2026-03-23",
             "changes": [
-                "L2: Added Loperamide-only diarrhea rejection rule (Case 6 fix)",
-                "L2: Added malnutrition/assessment finding rejection with contrastive example (Case 15 fix)",
-                "L2: Added radiologic finding without treatment rejection (Case 18 fix)",
-                "L2: Added mandatory interventional procedure scan (Case 18 ascites fix)",
-                "L2: Strengthened prokinetics/ileus → Grade II binding rule (Case 8 fix)",
-                "L2: Strengthened hyponatremia + albumin → Grade II binding rule (Case 14 fix)",
-                "L2: Added explicit ascites puncture → Grade IIIa grading rule",
-                "L3: CRITICAL: final_episode_set now requires OBJECTS not strings",
-                "L3: Added radiologic finding rejection, malnutrition rejection, diarrhea rejection",
-                "L3: Strengthened probe_B for interventional procedure detection",
-                "Backend: CCI calculator now handles string-format episodes as fallback",
-                "Backend: CCI calculator falls back to audited_cci.grade_list when episodes unparseable"
-            ]
-        },
-        "1.13": {
-            "date": "2026-03-23",
-            "changes": [
-                "MAJOR REWRITE: 7-step clinical reasoning pipeline replacing 1900+ lines of patches",
-                "Timeline reconstruction, causality check, scope interpretation, deviation detection",
-                "Episode consolidation, grading, final validation",
-                "Contrastive WRONG/CORRECT examples for historical PE and qualified komplikationslos"
+                "Base: v1.8 (16/20 with corrected ground truth — best performing version)",
+                "L2: FIXED wrong Example R — hyponatremia with albumin is Grade II, not I",
+                "L2: Added albumin-anywhere rule for hyponatremia grading",
+                "L2: Added assessment findings rejection (malnutrition, radiologic findings without treatment)",
+                "L2: Added interventional procedure scan (mandatory check for punctures/drainage)",
+                "L2: Added final self-check questions (7 mandatory internal checks)",
+                "L3: FIXED wrong Check 12 — now correctly handles albumin-based Grade II",
+                "L3: Added structured final_episode_set format (objects with complication/cd_grade/treatment/timing)",
+                "L3: Added malnutrition/radiologic/Loperamide rejection in Check 5",
+                "Backend: CCI calculator handles string-format episodes + audited_cci fallback (from v1.14)"
             ]
         }
     }
