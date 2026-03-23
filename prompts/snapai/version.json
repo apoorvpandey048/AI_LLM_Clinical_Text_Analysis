@@ -1,42 +1,28 @@
 {
-    "current_version": "1.10",
+    "current_version": "1.11",
     "layers": {
         "layer1_ctp": {
-            "version": "1.10",
-            "file": "layer1_ctp_v1.10.md",
+            "version": "1.11",
+            "file": "layer1_ctp_v1.11.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.10",
-            "file": "layer2_cie_v1.10.md",
-            "description": "Complication Inference Engine"
+            "version": "1.11",
+            "file": "layer2_cie_v1.11.md",
+            "description": "Complication Identification & Extraction"
         },
         "layer3_ccc": {
-            "version": "1.10",
-            "file": "layer3_ccc_v1.10.md",
-            "description": "Clinical Consistency Challenger"
+            "version": "1.11",
+            "file": "layer3_ccc_v1.11.md",
+            "description": "Clavien-Dindo Classification & CCI"
         }
     },
     "changelog": {
-        "1.10": {
-            "date": "2026-03-23",
-            "changes": [
-                "L2: Added Case 12 binding example for self-resolving nausea/vomiting false positive",
-                "L2: Added capillary leak episode splitting binding rule (Case 14)",
-                "L3: Restructured CHECK 4 with mandatory qualified/unqualified first step (Case 6)",
-                "L3: Added CHECK 14 for nausea/vomiting false positive detection",
-                "L3: Added CHECK 15 for episode splitting enforcement"
-            ]
-        },
-        "1.9": {
-            "date": "2026-03-22",
-            "changes": [
-                "L2: Extended prophylactic antibiotic exclusion to ≤5 days",
-                "L2: Revised EXAMPLE R hyponatremia grading to context-aware",
-                "L3: Ileus anti-downgrade binding rule (RULE 2b)",
-                "L3: Added CHECK 13 prophylactic antibiotic exclusion",
-                "L3: Revised CHECK 12 hyponatremia grading review"
-            ]
-        }
+        "1.11": "Fix Cases 4,14: L3 electrolyte anti-rejection guard, L2 capillary-leak anti-over-splitting (4 eps not 5), correct sub-grading",
+        "1.10": "Fix Cases 6,12,14: qualified komplikationslos, nausea FP, capillary leak splitting",
+        "1.9": "Fix Cases 3,8,11,13: historical PE, ileus binding, prophylactic Abx, anti-addition guard",
+        "1.8": "Historical diagnosis filter, date-based PE exclusion",
+        "1.7": "Zero complications default, CD-I sweep guard, omission guard",
+        "1.6": "Therapy preservation, discharge recommendation labeling"
     }
 }
