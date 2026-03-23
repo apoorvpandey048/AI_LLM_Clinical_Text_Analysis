@@ -326,3 +326,134 @@ async def reject_user(
         data={"message": f"User {user.username} deactivated"},
         request_id=request_id,
     )
+
+
+# ============================================
+# User Status & Role Management
+# ============================================
+
+
+class UpdateStatusRequest(BaseModel):
+    is_active: bool
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str = Field(..., pattern="^(admin|doctor)$")
+
+
+@router.patch("/users/{user_id}/status")
+async def update_user_status(
+    user_id: str,
+    body: UpdateStatusRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Toggle a user's active status (admin only).
+
+    Activates or deactivates a user account. Deactivated users cannot log in.
+    Admins cannot deactivate themselves.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent admin from deactivating themselves
+    if user.id == admin.id and not body.is_active:
+        raise HTTPException(status_code=409, detail="Cannot deactivate your own account")
+
+    user.is_active = body.is_active
+    db.commit()
+
+    action = "activated" if body.is_active else "deactivated"
+    logger.info(
+        f"user_{action}",
+        user_id=user_id,
+        admin=admin.username,
+        request_id=request_id,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "message": f"User {user.username} {action}",
+            "user": user.to_dict(),
+        },
+        request_id=request_id,
+    )
+
+
+@router.patch("/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    body: UpdateRoleRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Change a user's role (admin only).
+
+    Safety rules:
+    - Only 'admin' and 'doctor' roles are allowed
+    - Cannot change your own role
+    - Cannot demote the last remaining admin
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    user = db.query(User).filter(User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent admin from changing their own role
+    if user.id == admin.id:
+        raise HTTPException(status_code=409, detail="Cannot change your own role")
+
+    new_role = UserRole(body.role)
+
+    # Last-admin safeguard: prevent demoting the only admin
+    if user.role == UserRole.ADMIN and new_role != UserRole.ADMIN:
+        admin_count = db.query(User).filter(
+            User.role == UserRole.ADMIN,
+            User.is_active == True,
+        ).count()
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot demote the last admin. Promote another user first.",
+            )
+
+    old_role = user.role.value
+    user.role = new_role
+    db.commit()
+
+    logger.info(
+        "user_role_changed",
+        user_id=user_id,
+        old_role=old_role,
+        new_role=new_role.value,
+        admin=admin.username,
+        request_id=request_id,
+    )
+
+    return create_response(
+        success=True,
+        data={
+            "message": f"User {user.username} role changed from {old_role} to {new_role.value}",
+            "user": user.to_dict(),
+        },
+        request_id=request_id,
+    )

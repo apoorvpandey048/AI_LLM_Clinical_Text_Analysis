@@ -3972,90 +3972,173 @@ function renderDeterminism(data) {
 }
 
 // ============================================
-// Admin Panel
+// Admin Panel: User Management
 // ============================================
+
+/** Generate role badge HTML. */
+function _roleBadge(role) {
+    const cls = role === 'admin' ? 'role-admin' : role === 'pending' ? 'role-pending' : 'role-doctor';
+    return `<span class="user-role-badge ${cls}">${role.toUpperCase()}</span>`;
+}
+
+/** Generate status badge HTML. */
+function _statusBadge(isActive, role) {
+    if (role === 'pending') return '<span class="status-badge status-pending">PENDING</span>';
+    if (isActive) return '<span class="status-badge status-active">ACTIVE</span>';
+    return '<span class="status-badge status-inactive">INACTIVE</span>';
+}
+
+/** Generate action buttons for a user row. */
+function _userActions(u, isSelf) {
+    const btns = [];
+    const id = u.id;
+
+    if (u.role === 'pending') {
+        btns.push(`<button class="btn btn-xs btn-success" onclick="approveUser('${id}')">Approve</button>`);
+        btns.push(`<button class="btn btn-xs btn-danger" onclick="rejectUser('${id}')">Reject</button>`);
+    } else if (isSelf) {
+        btns.push('<span class="admin-self-label">You</span>');
+    } else {
+        // Role actions
+        if (u.role === 'doctor') {
+            btns.push(`<button class="btn btn-xs btn-warning" onclick="changeUserRole('${id}', 'admin')">Make Admin</button>`);
+        } else if (u.role === 'admin') {
+            btns.push(`<button class="btn btn-xs btn-secondary" onclick="changeUserRole('${id}', 'doctor')">Remove Admin</button>`);
+        }
+        // Status toggle
+        if (u.is_active) {
+            btns.push(`<button class="btn btn-xs btn-danger" onclick="toggleUserStatus('${id}', false)">Deactivate</button>`);
+        } else {
+            btns.push(`<button class="btn btn-xs btn-success" onclick="toggleUserStatus('${id}', true)">Reactivate</button>`);
+        }
+    }
+    return btns.join(' ');
+}
 
 async function loadAdminUsers() {
     const container = document.getElementById('admin-users-list');
     if (!container) return;
 
+    container.innerHTML = '<div class="log-loading">Loading users…</div>';
+
     try {
         const res = await authFetch(`${API_BASE}/auth/users`);
-        if (!res.ok) throw new Error('Failed to load users');
-        const data = unwrapApiResponse(await res.json());
-        const users = data.users || [];
+        if (!res.ok) {
+            const body = await tryJson(res);
+            throw new Error(body?.error?.message || `Failed to load users (${res.status})`);
+        }
+        const json = await res.json();
+        const users = json?.data?.users || [];
+        const currentUserId = authState.user?.id;
 
         if (users.length === 0) {
-            container.innerHTML = '<div class="log-empty">No users found</div>';
+            container.innerHTML = '<div class="ops-empty">No users found.</div>';
             return;
         }
 
-        container.innerHTML = `
-            <table class="admin-table">
+        let html = `
+            <table class="ops-table admin-users-table">
                 <thead>
                     <tr>
                         <th>Username</th>
                         <th>Name</th>
                         <th>Role</th>
+                        <th>Status</th>
                         <th>Created</th>
                         <th>Last Login</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>
-                    ${users.map(u => `
-                        <tr class="${u.role === 'pending' ? 'pending-row' : ''}">
-                            <td>${escapeHtml(u.username)}</td>
-                            <td>${escapeHtml(u.name)}</td>
-                            <td><span class="user-role-badge role-${u.role}">${u.role}</span></td>
-                            <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
-                            <td>${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
-                            <td>
-                                ${u.role === 'pending' ? `
-                                    <button class="btn btn-sm btn-primary" onclick="approveUser('${u.id}', 'doctor')">Approve</button>
-                                    <button class="btn btn-sm btn-cancel" onclick="rejectUser('${u.id}')">Reject</button>
-                                ` : u.role !== 'admin' ? `
-                                    <button class="btn btn-sm btn-cancel" onclick="rejectUser('${u.id}')">Deactivate</button>
-                                ` : '<span class="text-muted">—</span>'}
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
+                <tbody>`;
+
+        users.forEach(u => {
+            const isSelf = u.id === currentUserId;
+            html += `
+                <tr>
+                    <td class="ops-mono">${escapeHtml(u.username)}</td>
+                    <td>${escapeHtml(u.name)}</td>
+                    <td>${_roleBadge(u.role)}</td>
+                    <td>${_statusBadge(u.is_active, u.role)}</td>
+                    <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
+                    <td>${u.last_login ? new Date(u.last_login).toLocaleString() : '—'}</td>
+                    <td class="admin-actions-cell">${_userActions(u, isSelf)}</td>
+                </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
     } catch (err) {
-        container.innerHTML = `<div class="log-error">Error: ${err.message}</div>`;
+        container.innerHTML = `<div class="ops-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
     }
 }
 
-async function approveUser(userId, role) {
+async function approveUser(userId) {
+    if (!confirm('Approve this user?')) return;
     try {
         const res = await authFetch(`${API_BASE}/auth/approve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, role }),
+            body: JSON.stringify({ user_id: userId, role: 'doctor' }),
         });
-        if (!res.ok) throw new Error('Failed to approve user');
-        showToast('User approved', 'success');
+        const data = await tryJson(res);
+        if (!res.ok) throw new Error(data?.error?.message || data?.detail || 'Approval failed');
+        showToast(data?.data?.message || 'User approved', 'success');
         loadAdminUsers();
     } catch (err) {
-        showToast(`Error: ${err.message}`, 'error');
+        showToast(err.message, 'error');
     }
 }
 
 async function rejectUser(userId) {
-    if (!confirm('Are you sure you want to deactivate this user?')) return;
+    if (!confirm('Reject and deactivate this user?')) return;
     try {
         const res = await authFetch(`${API_BASE}/auth/reject`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: userId }),
         });
-        if (!res.ok) throw new Error('Failed to reject user');
-        showToast('User deactivated', 'success');
+        const data = await tryJson(res);
+        if (!res.ok) throw new Error(data?.error?.message || data?.detail || 'Rejection failed');
+        showToast(data?.data?.message || 'User rejected', 'success');
         loadAdminUsers();
     } catch (err) {
-        showToast(`Error: ${err.message}`, 'error');
+        showToast(err.message, 'error');
+    }
+}
+
+async function toggleUserStatus(userId, activate) {
+    const action = activate ? 'reactivate' : 'deactivate';
+    if (!confirm(`Are you sure you want to ${action} this user?`)) return;
+    try {
+        const res = await authFetch(`${API_BASE}/auth/users/${userId}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: activate }),
+        });
+        const data = await tryJson(res);
+        if (!res.ok) throw new Error(data?.error?.message || data?.detail || `${action} failed`);
+        showToast(data?.data?.message || `User ${action}d`, 'success');
+        loadAdminUsers();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function changeUserRole(userId, newRole) {
+    const label = newRole === 'admin' ? 'promote this user to Admin' : 'demote this user to Doctor';
+    if (!confirm(`Are you sure you want to ${label}?`)) return;
+    try {
+        const res = await authFetch(`${API_BASE}/auth/users/${userId}/role`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: newRole }),
+        });
+        const data = await tryJson(res);
+        if (!res.ok) throw new Error(data?.error?.message || data?.detail || 'Role change failed');
+        showToast(data?.data?.message || `Role changed to ${newRole}`, 'success');
+        loadAdminUsers();
+    } catch (err) {
+        showToast(err.message, 'error');
     }
 }
 
@@ -4383,6 +4466,8 @@ async function renderSavedCasesPanel() {
     }
 }
 
+
+
 // ============================================
 // Global expose for onclick handlers in HTML
 // ============================================
@@ -4443,6 +4528,8 @@ window.toggleLogAutoRefresh = toggleLogAutoRefresh;
 window.approveUser = approveUser;
 window.rejectUser = rejectUser;
 window.loadAdminUsers = loadAdminUsers;
+window.toggleUserStatus = toggleUserStatus;
+window.changeUserRole = changeUserRole;
 // Operations Dashboard
 window.loadOperationsDashboard = loadOperationsDashboard;
 // Stage 6 — Regression, Audit, Config
