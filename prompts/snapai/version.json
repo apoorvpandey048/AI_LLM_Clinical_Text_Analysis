@@ -1,37 +1,41 @@
 {
-    "current_version": "1.9",
+    "current_version": "1.10",
     "layers": {
         "layer1_ctp": {
-            "version": "1.9",
-            "file": "layer1_ctp_v1.9.md",
+            "version": "1.10",
+            "file": "layer1_ctp_v1.10.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.9",
-            "file": "layer2_cie_v1.9.md",
+            "version": "1.10",
+            "file": "layer2_cie_v1.10.md",
             "description": "Complication Inference Engine"
         },
         "layer3_ccc": {
-            "version": "1.9",
-            "file": "layer3_ccc_v1.9.md",
+            "version": "1.10",
+            "file": "layer3_ccc_v1.10.md",
             "description": "Clinical Consistency Challenger"
         }
     },
     "changelog": {
+        "1.10": {
+            "date": "2026-03-23",
+            "changes": [
+                "L2: Added Case 12 binding example for self-resolving nausea/vomiting false positive",
+                "L2: Added capillary leak episode splitting binding rule (Case 14)",
+                "L3: Restructured CHECK 4 with mandatory qualified/unqualified first step (Case 6)",
+                "L3: Added CHECK 14 for nausea/vomiting false positive detection",
+                "L3: Added CHECK 15 for episode splitting enforcement"
+            ]
+        },
         "1.9": {
             "date": "2026-03-22",
             "changes": [
-                "Case 8 fix: Layer 3 BINDING ANTI-DOWNGRADE for ileus — prevents L3 from overriding adaptierte Darmstimulation binding rule",
-                "Case 11 fix: Prophylactic antibiotic exclusion — intraop-started antibiotics continued ≤5d in uncomplicated course are NOT complications",
-                "Case 14 fix: Reverted hyponatremia over-correction — Grade II when co-managed with albumin/TPN",
-                "Case 18: Retry expected (transient JSON parse failure)"
-            ]
-        },
-        "1.8": {
-            "date": "2026-03-22",
-            "changes": [
-                "Case 3 fix: MANDATORY DATE CHECK for historical PE",
-                "Case 14 fix: Hyponatremia grading rule (over-corrected, fixed in 1.9)"
+                "L2: Extended prophylactic antibiotic exclusion to ≤5 days",
+                "L2: Revised EXAMPLE R hyponatremia grading to context-aware",
+                "L3: Ileus anti-downgrade binding rule (RULE 2b)",
+                "L3: Added CHECK 13 prophylactic antibiotic exclusion",
+                "L3: Revised CHECK 12 hyponatremia grading review"
             ]
         }
     }

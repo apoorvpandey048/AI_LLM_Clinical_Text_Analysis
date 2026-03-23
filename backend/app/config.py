@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Versioning
-    prompt_version: str = "1.9"
+    prompt_version: str = "1.10"
 
     @property
     def database_url(self) -> str:
