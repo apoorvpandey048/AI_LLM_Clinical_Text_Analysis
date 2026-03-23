@@ -81,6 +81,7 @@ def extract_grades_from_layer3(layer3_output: dict) -> list[str] | None:
     Extract cd_grade strings from Layer 3's audited final_episode_set.
 
     Returns None if Layer 3 output doesn't have a usable final_episode_set.
+    Handles both dict-format and string-format episodes (v1.14 robustness).
     """
     audited = layer3_output.get("audited_result")
     if not audited or not isinstance(audited, dict):
@@ -93,11 +94,40 @@ def extract_grades_from_layer3(layer3_output: dict) -> list[str] | None:
     # Empty list = Layer 3 rejected all episodes → 0 complications → return empty grades
     # (Do NOT return None here, as that would fall back to Layer 2's grades)
     grades = []
+
+    # Known CD grades in order of specificity (longest first to avoid partial matches)
+    KNOWN_GRADES = ["IIIb", "IIIa", "IVb", "IVa", "III", "IV", "II", "I", "V"]
+
     for ep in episodes:
         if isinstance(ep, dict):
             grade = ep.get("cd_grade", "")
             if grade:
                 grades.append(grade)
+        elif isinstance(ep, str):
+            # Fallback: parse grade from string like "Complication – II" or "Complication - IIIa"
+            # Try splitting on common separators
+            found = False
+            for sep in [" – ", " - ", " — ", "–", "-"]:
+                if sep in ep:
+                    last_part = ep.rsplit(sep, 1)[-1].strip()
+                    if last_part in KNOWN_GRADES:
+                        grades.append(last_part)
+                        found = True
+                        break
+            if not found:
+                # Try checking if the string ends with a grade
+                for g in KNOWN_GRADES:
+                    if ep.strip().endswith(g):
+                        grades.append(g)
+                        break
+
+    # If we couldn't extract from episodes, try audited_cci.grade_list as fallback
+    if not grades and episodes:
+        cci_data = audited.get("audited_cci")
+        if cci_data and isinstance(cci_data, dict):
+            grade_list = cci_data.get("grade_list", [])
+            if grade_list and isinstance(grade_list, list):
+                grades = [g for g in grade_list if isinstance(g, str) and g in KNOWN_GRADES]
 
     return grades
 
