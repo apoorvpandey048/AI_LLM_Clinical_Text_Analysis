@@ -1,23 +1,24 @@
 {
-    "current_version": "1.12",
+    "current_version": "1.13",
     "layers": {
         "layer1_ctp": {
-            "version": "1.12",
-            "file": "layer1_ctp_v1.12.md",
+            "version": "1.13",
+            "file": "layer1_ctp_v1.13.md",
             "description": "Clinical Text Pre-Processor"
         },
         "layer2_cie": {
-            "version": "1.12",
-            "file": "layer2_cie_v1.12.md",
+            "version": "1.13",
+            "file": "layer2_cie_v1.13.md",
             "description": "Complication Identification & Extraction"
         },
         "layer3_ccc": {
-            "version": "1.12",
-            "file": "layer3_ccc_v1.12.md",
+            "version": "1.13",
+            "file": "layer3_ccc_v1.13.md",
             "description": "Clavien-Dindo Classification & CCI"
         }
     },
     "changelog": {
+        "1.13": "MAJOR REWRITE: 7-step clinical reasoning pipeline replacing patch-heavy prompts. Timeline reconstruction, causality check, scope interpretation, deviation detection, episode consolidation, grading, validation. Contrastive WRONG/CORRECT examples. ~60% shorter prompts.",
         "1.12": "Fix Cases 6,14,15: strengthened qualified-komplikationslos (L2+L3), mandatory Grade II hyponatremia in capillary-leak (L2+L3), malnutrition anti-FP (L2), self-contradicting no-treatment CHECK 16 (L3)",
         "1.11": "Fix Cases 4,14: L3 electrolyte anti-rejection guard, L2 capillary-leak anti-over-splitting (4 eps not 5), correct sub-grading",
         "1.10": "Fix Cases 6,12,14: qualified komplikationslos, nausea FP, capillary leak splitting",
