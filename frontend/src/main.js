@@ -280,65 +280,118 @@ function showToast(message, type = 'info') {
 // Job Actions: Replay & Baseline
 // ============================================
 
-function initLockedConfigActions() {
-    const replayBtn = document.getElementById('replay-this-run-btn');
-    const markBaselineBtn = document.getElementById('mark-baseline-btn');
-
-    if (replayBtn) {
-        replayBtn.addEventListener('click', () => {
-            const jobId = state.currentJobId || state.lastCompletedJobId;
-            if (jobId) replayJob(jobId);
-            else showToast('No job available to replay', 'warning');
-        });
-    }
-
-    if (markBaselineBtn) {
-        markBaselineBtn.addEventListener('click', () => {
-            const jobId = state.currentJobId || state.lastCompletedJobId;
-            if (jobId) markBaseline(jobId);
-            else showToast('No job available to mark as baseline', 'warning');
-        });
-    }
+/**
+ * Resolve the best available job ID for replay/baseline actions.
+ * Priority: state.lastCompletedJobId > state.currentJobId > localStorage fallback.
+ */
+function _resolveJobId() {
+    return state.lastCompletedJobId
+        || state.currentJobId
+        || localStorage.getItem('snapai_last_job_id')
+        || null;
 }
-async function markBaseline(jobId) {
-    const res = await authFetch(`${API_BASE}/jobs/${jobId}/mark-baseline`, {
-        method: 'POST',
+
+/**
+ * Bind a click handler to a button with duplicate-listener prevention.
+ * Uses a data-bound attribute as a guard so calling initLockedConfigActions
+ * multiple times (e.g. after re-login) never stacks listeners.
+ */
+function _bindOnce(el, handler) {
+    if (!el || el.dataset.bound) return;
+    el.dataset.bound = '1';
+    el.addEventListener('click', handler);
+}
+
+function initLockedConfigActions() {
+    // Locked-config panel buttons
+    _bindOnce(document.getElementById('replay-this-run-btn'), () => {
+        const jobId = _resolveJobId();
+        if (jobId) replayJob(jobId);
+        else showToast('No job available to replay', 'warning');
     });
 
-    const data = await safeJson(res);
+    _bindOnce(document.getElementById('mark-baseline-btn'), () => {
+        const jobId = _resolveJobId();
+        if (jobId) markBaseline(jobId);
+        else showToast('No job available to mark as baseline', 'warning');
+    });
 
-    if (!data) {
-        showToast('Failed to update baseline', 'error');
+    // Bottom "Run Actions" buttons (same logic, different DOM elements)
+    _bindOnce(document.getElementById('replay-btn-bottom'), () => {
+        const jobId = _resolveJobId();
+        if (jobId) replayJob(jobId);
+        else showToast('No job available to replay', 'warning');
+    });
+
+    _bindOnce(document.getElementById('baseline-btn-bottom'), () => {
+        const jobId = _resolveJobId();
+        if (jobId) markBaseline(jobId);
+        else showToast('No job available to mark as baseline', 'warning');
+    });
+}
+
+/**
+ * Set disabled state on all baseline buttons (top + bottom).
+ */
+function _setBaselineButtonsDisabled(disabled) {
+    ['mark-baseline-btn', 'baseline-btn-bottom'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    });
+}
+
+/**
+ * Update the visual state of all baseline buttons after a toggle.
+ */
+function _updateBaselineButtonsUI(isBaseline) {
+    ['mark-baseline-btn', 'baseline-btn-bottom'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        if (isBaseline) {
+            btn.classList.add('baseline-active');
+            btn.innerHTML = `<i data-lucide="flag"></i> Baseline <span class="status-dot"></span>`;
+        } else {
+            btn.classList.remove('baseline-active');
+            btn.innerHTML = `<i data-lucide="flag" class="btn-icon"></i> Mark as Baseline`;
+        }
+    });
+    if (window.lucide) lucide.createIcons();
+}
+
+async function markBaseline(jobId) {
+    if (!jobId) {
+        showToast('No job selected', 'warning');
         return;
     }
 
-    const btn = document.getElementById('mark-baseline-btn');
+    _setBaselineButtonsDisabled(true);
 
-    if (data.is_regression_baseline) {
-        if (btn) {
-            btn.classList.add('baseline-active');
-            btn.innerHTML = `
-                <i data-lucide="flag"></i>
-                Baseline
-                <span class="status-dot"></span>
-            `;
+    try {
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/mark-baseline`, {
+            method: 'POST',
+        });
+
+        const data = await safeJson(res);
+
+        if (!data) {
+            showToast('Failed to update baseline', 'error');
+            return;
         }
-        showToast('Run marked as baseline', 'success');
-    } else {
-        if (btn) {
-            btn.classList.remove('baseline-active');
-            btn.innerHTML = `
-                <i data-lucide="flag"></i>
-                Mark as Baseline
-            `;
-        }
-        showToast('Baseline removed', 'info');
+
+        _updateBaselineButtonsUI(data.is_regression_baseline);
+        showToast(
+            data.is_regression_baseline ? 'Run marked as baseline' : 'Baseline removed',
+            data.is_regression_baseline ? 'success' : 'info',
+        );
+
+        // Refresh state so Ops page reflects the baseline
+        await loadSystemInfo();
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : extractErrorMessage(err);
+        showToast(`Baseline update failed: ${msg || 'Unknown error'}`, 'error');
+    } finally {
+        _setBaselineButtonsDisabled(false);
     }
-
-    if (window.lucide) lucide.createIcons();
-
-    // Refresh state so Ops page reflects the baseline
-    await loadSystemInfo();
 }
 
 // ============================================
@@ -1218,12 +1271,27 @@ function detectSnapshotMismatch(snapshot) {
 // ============================================
 
 /**
+ * Set disabled state on all replay buttons (top + bottom).
+ */
+function _setReplayButtonsDisabled(disabled) {
+    ['replay-this-run-btn', 'replay-btn-bottom'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    });
+}
+
+/**
  * Replay a completed job using its frozen pipeline snapshot.
  * Creates a new job on the backend and starts streaming it.
  */
 async function replayJob(jobId) {
-    if (!jobId) return;
+    if (!jobId) {
+        showToast('No job available to replay', 'warning');
+        return;
+    }
     if (!confirm('Replay this run with the same frozen snapshot? A new job will be created.')) return;
+
+    _setReplayButtonsDisabled(true);
 
     try {
         showToast('Starting replay…', 'info');
@@ -1244,7 +1312,10 @@ async function replayJob(jobId) {
         document.getElementById('progress-section').classList.remove('hidden');
         startStreaming(newJobId);
     } catch (err) {
-        showToast(err.message, 'error');
+        const msg = err instanceof Error ? err.message : extractErrorMessage(err);
+        showToast(`Replay failed: ${msg || 'Unknown error'}`, 'error');
+    } finally {
+        _setReplayButtonsDisabled(false);
     }
 }
 
@@ -4031,17 +4102,8 @@ function renderLockedConfig(jobData) {
 
     banner.classList.remove('hidden');
 
-    // Set baseline button state
-    const markBaselineBtn = document.getElementById('mark-baseline-btn');
-    if (markBaselineBtn) {
-        if (jobData?.is_regression_baseline) {
-            markBaselineBtn.classList.add('baseline-active');
-            markBaselineBtn.innerHTML = '<i data-lucide="flag"></i> Baseline <span class="status-dot"></span>';
-        } else {
-            markBaselineBtn.classList.remove('baseline-active');
-            markBaselineBtn.innerHTML = '<i data-lucide="flag"></i> Mark as Baseline';
-        }
-    }
+    // Set baseline button state (both locked-config and bottom buttons)
+    _updateBaselineButtonsUI(!!jobData?.is_regression_baseline);
 
     // Upgrade hash to real SHA-256 async
     if (window.crypto && window.crypto.subtle) {
