@@ -104,9 +104,14 @@ docker compose -f docker-compose.prod.yml restart worker
 2. **Layer 2 — CIE** (Complication Info Extraction): Identifies complications and assigns Clavien–Dindo grades
 3. **Layer 3 — CCC** (Clinical Consistency Challenger): Audits and corrects Layer 2 output, recalculates CCI
 
-## Authentication
+## Authentication & User Management
 
-JWT-based authentication with bcrypt password hashing. See [docs/AUTH.md](docs/AUTH.md).
+JWT-based authentication with bcrypt password hashing. Admin panel supports:
+- User approval/rejection for new signups
+- Account activation/deactivation (soft toggle)
+- Role assignment (admin ↔ doctor) with last-admin safeguard
+
+See [docs/AUTH.md](docs/AUTH.md) for full details.
 
 ## Documentation
 

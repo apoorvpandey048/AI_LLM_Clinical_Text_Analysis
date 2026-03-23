@@ -58,6 +58,20 @@ python create_admin.py --username admin --password <secure-password> --name "Dr.
 3. Admin navigates to Admin → User Management
 4. Admin approves user and assigns role (`doctor` or `admin`)
 
+### User Lifecycle Management
+
+| Action | How | Notes |
+|--------|-----|-------|
+| **Approve** pending user | Admin panel → Approve button | Sets role to `doctor` |
+| **Promote** to admin | Admin panel → Make Admin | Assigns `admin` role |
+| **Demote** admin | Admin panel → Remove Admin | Reverts to `doctor` |
+| **Deactivate** user | Admin panel → Deactivate | Blocks login, preserves data |
+| **Reactivate** user | Admin panel → Reactivate | Restores login access |
+
+> **Safety Rules:**
+> - Cannot deactivate or change your own account
+> - Cannot demote the last remaining admin
+
 ## API Endpoints
 
 | Method | Path | Auth | Description |
@@ -69,6 +83,8 @@ python create_admin.py --username admin --password <secure-password> --name "Dr.
 | GET | `/api/v1/auth/users` | Admin | List all users |
 | POST | `/api/v1/auth/approve` | Admin | Approve pending user |
 | POST | `/api/v1/auth/reject` | Admin | Deactivate user |
+| PATCH | `/api/v1/auth/users/{id}/status` | Admin | Toggle active/inactive |
+| PATCH | `/api/v1/auth/users/{id}/role` | Admin | Change role (admin ↔ doctor) |
 
 ## Environment Variables
 
