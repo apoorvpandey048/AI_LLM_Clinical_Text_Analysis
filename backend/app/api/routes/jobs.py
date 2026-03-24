@@ -716,17 +716,22 @@ async def replay_job(
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_auth),
+    mode: str = Query("original", regex="^(original|latest)$"),
 ):
     """
-    Replay a completed job using its frozen pipeline snapshot.
+    Replay a completed job.
 
-    Creates a NEW job that executes with the exact same layer config,
-    prompts, and order as the original run.  The original job is never
-    mutated.  Current prompt edits do NOT affect the replay.
+    Supports two modes:
+    - mode="original" (default): Uses the EXACT frozen pipeline snapshot
+      from the original run. Ensures reproducibility.
+    - mode="latest": Builds a FRESH pipeline snapshot from the currently
+      active prompts. Uses whatever prompts are active right now.
+
+    Creates a NEW job. The original job is never mutated.
 
     Safety rules:
     - Cannot replay a job that is still running (QUEUED / PROCESSING)
-    - Cannot replay a job without a pipeline_snapshot
+    - Cannot replay a job without a pipeline_snapshot (for "original" mode)
     - Cannot replay a job that is itself a replay of a running source
     """
     import hashlib
@@ -754,7 +759,7 @@ async def replay_job(
             detail="Cannot replay a job that is still running",
         )
 
-    if not source_job.pipeline_snapshot:
+    if mode == "original" and not source_job.pipeline_snapshot:
         raise HTTPException(
             status_code=409,
             detail="Cannot replay — job has no pipeline snapshot",
@@ -781,13 +786,29 @@ async def replay_job(
     if not source_cases:
         raise HTTPException(status_code=409, detail="Source job has no cases to replay")
 
+    # ── Determine pipeline snapshot based on mode ──
+    if mode == "latest":
+        # Build a fresh snapshot from the currently active prompts
+        from app.workers.tasks import _build_pipeline_snapshot
+        replay_snapshot = _build_pipeline_snapshot()
+        if not replay_snapshot:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to build current pipeline snapshot",
+            )
+        replay_source_type = f"replay-latest:{source_job.source_type or 'unknown'}"
+    else:
+        # Use the exact frozen snapshot from the original run
+        replay_snapshot = source_job.pipeline_snapshot
+        replay_source_type = f"replay:{source_job.source_type or 'unknown'}"
+
     # ── Create new job ──
     new_job = Job(
         status=JobStatus.QUEUED,
         case_count=len(source_cases),
-        source_type=f"replay:{source_job.source_type or 'unknown'}",
+        source_type=replay_source_type,
         source_filename=source_job.source_filename,
-        pipeline_snapshot=source_job.pipeline_snapshot,
+        pipeline_snapshot=replay_snapshot,
         model_name=source_job.model_name,
         replay_source_id=source_job.id,
         user_id=user.id,
@@ -808,14 +829,19 @@ async def replay_job(
 
     # Compute snapshot hash for audit
     import json as _json
-    snapshot_str = _json.dumps(source_job.pipeline_snapshot, sort_keys=True)
+    snapshot_str = _json.dumps(replay_snapshot, sort_keys=True)
     snapshot_hash = hashlib.sha256(snapshot_str.encode()).hexdigest()[:16]
 
     # Audit logs
     for action, details in [
-        ("REPLAY_STARTED", {"source_job_id": str(source_job.id), "new_job_id": str(new_job.id), "snapshot_hash": snapshot_hash}),
+        ("REPLAY_STARTED", {
+            "source_job_id": str(source_job.id),
+            "new_job_id": str(new_job.id),
+            "snapshot_hash": snapshot_hash,
+            "mode": mode,
+        }),
         ("REPLAY_SOURCE_JOB", {"source_job_id": str(source_job.id), "case_count": len(source_cases)}),
-        ("REPLAY_NEW_JOB", {"new_job_id": str(new_job.id), "snapshot_hash": snapshot_hash}),
+        ("REPLAY_NEW_JOB", {"new_job_id": str(new_job.id), "snapshot_hash": snapshot_hash, "mode": mode}),
     ]:
         audit = AuditLog(
             request_id=uuid.UUID(request_id) if request_id else None,
@@ -844,6 +870,7 @@ async def replay_job(
     new_job.started_at = datetime.utcnow()
     db.commit()
 
+    mode_label = "latest active prompts" if mode == "latest" else "original frozen snapshot"
     logger.info(
         "REPLAY_STARTED",
         request_id=request_id,
@@ -851,6 +878,7 @@ async def replay_job(
         new_job_id=str(new_job.id),
         case_count=len(source_cases),
         snapshot_hash=snapshot_hash,
+        mode=mode,
     )
 
     return create_response(
@@ -861,7 +889,8 @@ async def replay_job(
             "status": "processing",
             "case_count": len(source_cases),
             "snapshot_hash": snapshot_hash,
-            "message": f"Replaying {len(source_cases)} case(s) from job {job_id[:8]}...",
+            "mode": mode,
+            "message": f"Replaying {len(source_cases)} case(s) from job {job_id[:8]}… using {mode_label}",
         },
         request_id=request_id,
     )

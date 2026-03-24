@@ -211,12 +211,14 @@ def _build_pipeline_snapshot() -> list[dict]:
 
             if template:
                 content = template.content
+                version_label = template.version or "custom"
                 if template.active_version_id:
                     version = db.query(PromptVersion).filter(
                         PromptVersion.id == template.active_version_id
                     ).first()
                     if version:
                         content = version.content
+                        version_label = version.version_label or version_label
 
                 layers.append({
                     "layer_name": name,
@@ -224,6 +226,7 @@ def _build_pipeline_snapshot() -> list[dict]:
                     "prompt": content,
                     "is_builtin": True,
                     "display_order": template.display_order if template.display_order != 99 else idx,
+                    "prompt_version": version_label,
                 })
             else:
                 layers.append({
@@ -232,6 +235,7 @@ def _build_pipeline_snapshot() -> list[dict]:
                     "prompt": _load_default_prompt(name),
                     "is_builtin": True,
                     "display_order": idx,
+                    "prompt_version": settings.prompt_version,
                 })
 
         # Custom layers
@@ -249,12 +253,21 @@ def _build_pipeline_snapshot() -> list[dict]:
                 if version:
                     content = version.content
 
+            version_label = tmpl.version or "custom"
+            if tmpl.active_version_id:
+                ver = db.query(PromptVersion).filter(
+                    PromptVersion.id == tmpl.active_version_id
+                ).first()
+                if ver and ver.version_label:
+                    version_label = ver.version_label
+
             layers.append({
                 "layer_name": tmpl.layer_name,
                 "label": tmpl.label or tmpl.layer_name,
                 "prompt": content,
                 "is_builtin": False,
                 "display_order": tmpl.display_order,
+                "prompt_version": version_label,
             })
 
         # Sort by display_order for deterministic execution

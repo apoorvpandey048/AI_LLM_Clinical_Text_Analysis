@@ -1289,13 +1289,82 @@ async function replayJob(jobId) {
         showToast('No job available to replay', 'warning');
         return;
     }
-    if (!confirm('Replay this run with the same frozen snapshot? A new job will be created.')) return;
+
+    // Show replay mode selection modal
+    _showReplayModal(jobId);
+}
+
+function _showReplayModal(jobId) {
+    // Remove existing modal if present
+    const existing = document.getElementById('replay-modal-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'replay-modal-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-dialog replay-modal">
+            <div class="modal-header">
+                <h3><i data-lucide="refresh-cw" style="width:20px;height:20px;display:inline-block;vertical-align:middle;"></i> Replay Run</h3>
+                <button class="modal-close" onclick="document.getElementById('replay-modal-overlay').remove()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-subtitle">Choose which prompts to use for the replay:</p>
+                <div class="replay-mode-options">
+                    <label class="replay-mode-option selected" data-mode="original">
+                        <input type="radio" name="replay-mode" value="original" checked>
+                        <div class="replay-mode-content">
+                            <span class="replay-mode-title">Original Prompts</span>
+                            <span class="replay-mode-desc">Use the exact prompts from this run. Ensures reproducibility.</span>
+                        </div>
+                    </label>
+                    <label class="replay-mode-option" data-mode="latest">
+                        <input type="radio" name="replay-mode" value="latest">
+                        <div class="replay-mode-content">
+                            <span class="replay-mode-title">Latest Prompts</span>
+                            <span class="replay-mode-desc">Use currently active prompts. Test your latest prompt changes.</span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="document.getElementById('replay-modal-overlay').remove()">Cancel</button>
+                <button class="btn btn-primary" id="replay-confirm-btn" onclick="_executeReplay('${jobId}')">Start Replay</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Radio button interaction
+    overlay.querySelectorAll('.replay-mode-option').forEach(opt => {
+        opt.addEventListener('click', () => {
+            overlay.querySelectorAll('.replay-mode-option').forEach(o => o.classList.remove('selected'));
+            opt.classList.add('selected');
+            opt.querySelector('input[type=radio]').checked = true;
+        });
+    });
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    if (window.lucide) lucide.createIcons();
+}
+
+async function _executeReplay(jobId) {
+    const overlay = document.getElementById('replay-modal-overlay');
+    const modeInput = overlay?.querySelector('input[name="replay-mode"]:checked');
+    const mode = modeInput?.value || 'original';
+
+    // Remove modal
+    if (overlay) overlay.remove();
 
     _setReplayButtonsDisabled(true);
 
     try {
-        showToast('Starting replay…', 'info');
-        const res = await authFetch(`${API_BASE}/jobs/${jobId}/replay`, { method: 'POST' });
+        showToast(`Starting replay (${mode} prompts)…`, 'info');
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/replay?mode=${mode}`, { method: 'POST' });
         if (!res.ok) {
             const body = await tryJson(res);
             throw new Error(body?.detail || `Replay failed (${res.status})`);
@@ -1303,7 +1372,7 @@ async function replayJob(jobId) {
         const data = unwrapApiResponse(await res.json());
         const newJobId = data.job_id;
         if (!newJobId) throw new Error('No job ID returned from replay');
-        showToast(`Replay started → Job ${newJobId.substring(0, 8)}…`, 'success');
+        showToast(`Replay started (${mode}) → Job ${newJobId.substring(0, 8)}…`, 'success');
 
         // Navigate to progress view and start streaming the new job
         state.currentJobId = newJobId;
@@ -3032,10 +3101,21 @@ function displayPromptData(layer, promptInfo) {
     editor.disabled = false;
     state.promptDirty = false;
 
-    // Update badge
+    // Update badge with active version info
     const isCustom = promptInfo.source === 'custom';
-    badge.textContent = isCustom ? `Custom v${promptInfo.version || 1}` : `Default v${promptInfo.version || '1.3'}`;
-    badge.className = `prompt-source-badge ${isCustom ? 'custom' : 'default'}`;
+    const versionStr = promptInfo.version || (isCustom ? 'custom' : '1.3');
+    if (isCustom) {
+        badge.textContent = `CUSTOM V${versionStr}`;
+        badge.className = 'prompt-source-badge custom';
+    } else {
+        badge.textContent = `DEFAULT V${versionStr}`;
+        badge.className = 'prompt-source-badge default';
+    }
+
+    // Show active version count if available
+    if (promptInfo.version_count > 0) {
+        badge.textContent += ` · ${promptInfo.version_count} version${promptInfo.version_count > 1 ? 's' : ''}`;
+    }
 
     updateCharCount();
 }
@@ -3116,18 +3196,44 @@ async function savePrompt() {
 
 async function resetPrompt() {
     const layer = state.activePromptLayer;
-    if (!confirm(`Reset ${LAYERS[layer]?.shortLabel || layer} to the default prompt? Your custom version will be removed.`)) return;
+    const layerLabel = LAYERS[layer]?.shortLabel || layer;
+
+    if (!confirm(`Load the default prompt for ${layerLabel} into the editor?\n\nYou will need to click \"Save Prompt\" to apply it.`)) return;
 
     try {
-        const res = await authFetch(`${API_BASE}/prompts/${layer}/reset`, { method: 'POST' });
-        if (res.ok) {
-            // Clear cache so it reloads from file
-            delete state.promptData[layer];
-            showToast('Prompt reset to default', 'info');
-            await loadPrompt(layer);
+        // Use the read-only /default endpoint — does NOT modify DB
+        const res = await authFetch(`${API_BASE}/prompts/${layer}/default`);
+        if (!res.ok) {
+            // Fallback: try the old reset endpoint for backward compat
+            const fallbackRes = await authFetch(`${API_BASE}/prompts/${layer}/reset`, { method: 'POST' });
+            if (fallbackRes.ok) {
+                delete state.promptData[layer];
+                showToast('Prompt reset to default', 'info');
+                await loadPrompt(layer);
+            } else {
+                showToast('Failed to load default prompt', 'error');
+            }
+            return;
         }
+
+        const data = unwrapApiResponse(await res.json());
+        const defaultContent = data.content || '';
+
+        // Load default content into editor WITHOUT saving to DB
+        const editor = document.getElementById('prompt-editor');
+        editor.value = defaultContent;
+        editor.disabled = false;
+        state.promptDirty = true; // Mark as dirty — user must click Save
+
+        // Update badge to indicate unsaved default
+        const badge = document.getElementById('prompt-source-badge');
+        badge.textContent = `Default v${data.version || '?'} (unsaved)`;
+        badge.className = 'prompt-source-badge default';
+
+        updateCharCount();
+        showToast(`Default prompt loaded for ${layerLabel}. Click \"Save Prompt\" to apply.`, 'info');
     } catch {
-        showToast('Failed to reset prompt', 'error');
+        showToast('Failed to load default prompt', 'error');
     }
 }
 
@@ -4511,6 +4617,7 @@ window.renderExecutionTimeline = renderExecutionTimeline;
 window.renderSnapshotViewer = renderSnapshotViewer;
 // Replay, Metrics & Compare
 window.replayJob = replayJob;
+window._executeReplay = _executeReplay;
 window.loadJobMetrics = loadJobMetrics;
 window.loadAggregateMetrics = loadAggregateMetrics;
 window.runComparison = runComparison;

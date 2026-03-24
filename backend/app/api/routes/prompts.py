@@ -857,8 +857,54 @@ async def rename_layer(
 
 
 # ============================================
+# Default Prompt (read-only, no side effects)
+# ============================================
+
+@router.get("/{layer_name}/default")
+async def get_default_prompt(
+    layer_name: str,
+    request: Request,
+    user: User = Depends(require_auth),
+):
+    """
+    Get the default (on-disk) prompt content for a built-in layer.
+
+    This is a READ-ONLY endpoint — it does NOT modify the database.
+    Used by the frontend "Reset to Default" button to load default
+    content into the editor without auto-saving or deactivating
+    the current custom prompt.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    if layer_name not in BUILTIN_LAYERS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only built-in layers have defaults",
+        )
+
+    default_content = _load_default_prompt(layer_name)
+    if not default_content:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No default prompt file found for '{layer_name}'",
+        )
+
+    return create_response(
+        success=True,
+        data={
+            "layer_name": layer_name,
+            "content": default_content,
+            "label": LAYER_LABELS.get(layer_name, layer_name),
+            "version": get_settings().prompt_version,
+        },
+        request_id=request_id,
+    )
+
+
+# ============================================
 # Reset (built-in only)
 # ============================================
+
 
 @router.post("/{layer_name}/reset")
 async def reset_prompt(
