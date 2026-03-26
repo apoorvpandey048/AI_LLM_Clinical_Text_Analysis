@@ -206,6 +206,11 @@ function initApp() {
         loadAdminUsers();
     }
 
+    // Role-based visibility: hide Prompts tab for non-admin (supplementary — backend enforces)
+    if (authState.user?.role !== 'admin') {
+        document.getElementById('nav-prompts')?.classList.add('hidden');
+    }
+
     // Initialize Lucide icons for static elements
     if (window.lucide) lucide.createIcons();
 
@@ -399,13 +404,18 @@ async function markBaseline(jobId) {
 // ============================================
 
 function switchPage(page) {
-    // Role guard: block non-admin from admin/ops pages
+    // Role guard: block non-admin from admin/ops/prompts pages
     if ((page === 'admin' || page === 'operations') && authState.user?.role !== 'admin') {
         showToast('Admin access required', 'warning');
         return;
     }
-    // Load operations dashboard data on page switch
+    if (page === 'prompts' && authState.user?.role !== 'admin') {
+        showToast('Admin access required', 'warning');
+        return;
+    }
+    // Load page-specific data
     if (page === 'operations') loadOperationsDashboard();
+    if (page === 'saved') loadSavedCases();
 
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -714,6 +724,9 @@ function connectSSE(jobId) {
             resetLiveOutput();
             updateCaseProgress(data);
             state.currentCaseNumber = finishedCase + 1;
+
+            // — Live streaming: append completed case card —
+            renderLiveCaseCard(data, jobId);
         } catch { /* ignore */ }
     });
 
@@ -4371,6 +4384,7 @@ async function downloadAuditPackage() {
 
 /**
  * Toggle save/unsave for an individual case.
+ * Uses the new /saved-cases collection endpoint (immutable snapshot).
  */
 async function toggleSaveCase(caseId, jobId, btn) {
     if (!caseId || !jobId) {
@@ -4378,39 +4392,25 @@ async function toggleSaveCase(caseId, jobId, btn) {
         return;
     }
 
-    const saved = btn && btn.classList.contains('case-saved');
+    const alreadySaved = btn && btn.classList.contains('case-saved');
 
-    const endpoint = saved
-        ? `${API_BASE}/jobs/${jobId}/cases/${caseId}/unsave`
-        : `${API_BASE}/jobs/${jobId}/cases/${caseId}/save`;
+    if (alreadySaved) {
+        showToast('This case is already saved in your collection', 'info');
+        return;
+    }
 
     try {
-        const res = await authFetch(endpoint, { method: 'POST' });
-        const data = await safeJson(res);
-
-        if (saved) {
-            if (btn) {
-                btn.classList.remove('case-saved');
-                btn.innerHTML = `
-                    <i data-lucide="bookmark" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i>
-                    Save Case
-                `;
-            }
-            showToast('Case removed', 'info');
-        } else {
-            if (btn) {
-                btn.classList.add('case-saved');
-                btn.innerHTML = `
-                    <i data-lucide="bookmark-check" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i>
-                    Saved
-                `;
-            }
-            showToast('Case saved', 'success');
+        const result = await saveCaseToCollection(jobId, caseId);
+        if (result && btn) {
+            btn.classList.add('case-saved');
+            btn.innerHTML = `
+                <i data-lucide="bookmark-check" style="width:12px;height:12px;display:inline-block;vertical-align:middle;"></i>
+                Saved
+            `;
+            if (window.lucide) lucide.createIcons();
         }
-
-        if (window.lucide) lucide.createIcons();
     } catch (err) {
-        showToast(err.message || 'Action failed', 'error');
+        showToast(err.message || 'Save failed', 'error');
     }
 }
 
@@ -4572,6 +4572,283 @@ async function renderSavedCasesPanel() {
     }
 }
 
+// ============================================
+// Role Helper
+// ============================================
+
+function isAdmin() {
+    return authState.user?.role === 'admin';
+}
+
+
+// ============================================
+// Live Pipeline Result Streaming
+// ============================================
+
+let _liveCaseThrottleTimer = null;
+const _liveCaseQueue = [];
+
+/**
+ * Render a completed case card in the progress section as each case finishes.
+ * Includes retry logic for race condition where DB write may not be committed yet.
+ * Throttled: max 1 card appended per 300ms.
+ */
+function renderLiveCaseCard(data, jobId) {
+    const container = document.getElementById('completed-cases-live');
+    const list = document.getElementById('completed-cases-live-list');
+    if (!container || !list) return;
+
+    container.classList.remove('hidden');
+
+    const caseNum = data.case_number || '?';
+    const verdict = data.verdict || '—';
+    const cci = data.cci != null ? parseFloat(data.cci).toFixed(2) : '—';
+    const success = data.success !== false;
+
+    const card = document.createElement('div');
+    card.className = `live-case-card ${success ? 'success' : 'failed'} slide-in`;
+    card.innerHTML = `
+        <div class="live-case-card-header">
+            <strong>Case #${caseNum}</strong>
+            <span class="verdict-badge verdict-${(verdict).toLowerCase().replace(/\s/g, '')}">${escapeHtml(verdict)}</span>
+            <span class="cci-display">${cci}</span>
+        </div>
+    `;
+
+    // Throttle appending to avoid UI spam
+    _liveCaseQueue.push(card);
+    if (!_liveCaseThrottleTimer) {
+        _liveCaseThrottleTimer = setInterval(() => {
+            if (_liveCaseQueue.length > 0) {
+                const c = _liveCaseQueue.shift();
+                list.appendChild(c);
+                if (window.lucide) lucide.createIcons();
+            } else {
+                clearInterval(_liveCaseThrottleTimer);
+                _liveCaseThrottleTimer = null;
+            }
+        }, 300);
+    }
+}
+
+
+// ============================================
+// Saved Cases Collection (Full CRUD)
+// ============================================
+
+/**
+ * Save a case to the collection (immutable snapshot).
+ * Blocks if case is not completed. Warns on duplicate.
+ */
+async function saveCaseToCollection(jobId, caseId, caseName) {
+    try {
+        const res = await authFetch(`${API_BASE}/saved-cases`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: jobId, case_id: caseId, name: caseName || '' }),
+        });
+
+        if (res.status === 409) {
+            const errData = await res.json();
+            const msg = errData?.detail || errData?.error?.message || 'This case is already saved';
+            showToast(msg, 'warning');
+            return;
+        }
+
+        const data = await safeJson(res);
+        showToast('Case saved!', 'success');
+        return data;
+    } catch (err) {
+        showToast('Failed to save case: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Load all saved cases into the Saved Cases page.
+ */
+async function loadSavedCases() {
+    const container = document.getElementById('saved-cases-collection');
+    if (!container) return;
+
+    try {
+        const res = await authFetch(`${API_BASE}/saved-cases`);
+        const data = await safeJson(res);
+        const cases = data?.cases || [];
+
+        if (cases.length === 0) {
+            container.innerHTML = `
+                <div class="saved-cases-empty">
+                    <i data-lucide="bookmark-plus"></i>
+                    <p>No saved cases yet. Save a completed case from the results view.</p>
+                </div>
+            `;
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
+
+        container.innerHTML = cases.map(c => `
+            <div class="saved-case-collection-card" onclick="openSavedCase('${c.id}')">
+                <div class="saved-case-collection-header">
+                    <strong>${escapeHtml(c.name)}</strong>
+                    <span class="saved-case-date">${c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</span>
+                </div>
+                <p class="saved-case-preview">${escapeHtml(c.input_preview || '—')}</p>
+            </div>
+        `).join('');
+
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        container.innerHTML = '<p class="text-muted">Failed to load saved cases.</p>';
+    }
+}
+
+let _currentSavedCaseId = null;
+
+/**
+ * Open a saved case detail view.
+ * Backend enforces role-based filtering — doctors won't see layer outputs.
+ */
+async function openSavedCase(id) {
+    _currentSavedCaseId = id;
+    const detailSection = document.getElementById('saved-case-detail');
+    const nameEl = document.getElementById('saved-case-detail-name');
+    const bodyEl = document.getElementById('saved-case-detail-body');
+    if (!detailSection || !bodyEl) return;
+
+    detailSection.classList.remove('hidden');
+
+    try {
+        const res = await authFetch(`${API_BASE}/saved-cases/${id}`);
+        const data = await safeJson(res);
+
+        nameEl.textContent = data.name || '—';
+
+        const snap = data.results_snapshot || {};
+        const inputText = data.input_text || '—';
+
+        // Build result sections
+        let html = `
+            <div class="saved-case-section">
+                <h4>Input Text</h4>
+                <pre class="saved-case-input-full">${escapeHtml(inputText)}</pre>
+            </div>
+            <div class="saved-case-section">
+                <h4>Final Results</h4>
+                <div class="saved-case-results-grid">
+                    <span><strong>Verdict:</strong> ${escapeHtml(snap.final_verdict || '—')}</span>
+                    <span><strong>CCI:</strong> ${snap.final_cci != null ? snap.final_cci : '—'}</span>
+                    <span><strong>Status:</strong> ${escapeHtml(snap.status || '—')}</span>
+                </div>
+            </div>
+        `;
+
+        // Admin-only: show layer outputs (backend already strips for doctors)
+        if (snap.layer1_output || snap.layer2_output || snap.layer3_output) {
+            html += `
+                <details class="saved-case-section">
+                    <summary><i data-lucide="layers"></i> Layer Outputs</summary>
+                    <pre class="saved-case-raw">${escapeHtml(JSON.stringify({
+                        layer1: snap.layer1_output,
+                        layer2: snap.layer2_output,
+                        layer3: snap.layer3_output,
+                        extra: snap.extra_layer_outputs
+                    }, null, 2))}</pre>
+                </details>
+            `;
+        }
+
+        if (snap.layer1_raw_output || snap.layer2_raw_output || snap.layer3_raw_output) {
+            html += `
+                <details class="saved-case-section">
+                    <summary><i data-lucide="terminal"></i> Raw LLM Output</summary>
+                    <pre class="saved-case-raw">${escapeHtml(
+                        (snap.layer1_raw_output || '') + '\n---\n' +
+                        (snap.layer2_raw_output || '') + '\n---\n' +
+                        (snap.layer3_raw_output || '')
+                    )}</pre>
+                </details>
+            `;
+        }
+
+        bodyEl.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        bodyEl.innerHTML = `<p class="text-muted">Failed to load case: ${err.message}</p>`;
+    }
+}
+
+function closeSavedCaseDetail() {
+    _currentSavedCaseId = null;
+    document.getElementById('saved-case-detail')?.classList.add('hidden');
+}
+
+/**
+ * Rename a saved case with Enter → save, Escape → cancel.
+ */
+function renameSavedCaseUI() {
+    if (!_currentSavedCaseId) return;
+    const nameEl = document.getElementById('saved-case-detail-name');
+    if (!nameEl) return;
+
+    const currentName = nameEl.textContent;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentName;
+    input.className = 'saved-case-rename-input';
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    async function save() {
+        const newName = input.value.trim();
+        if (!newName || newName === currentName) {
+            cancel();
+            return;
+        }
+        try {
+            await authFetch(`${API_BASE}/saved-cases/${_currentSavedCaseId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName }),
+            });
+            showToast('Renamed!', 'success');
+        } catch (err) {
+            showToast('Rename failed: ' + err.message, 'error');
+        }
+        cancel(newName || currentName);
+    }
+
+    function cancel(name) {
+        const h3 = document.createElement('h3');
+        h3.id = 'saved-case-detail-name';
+        h3.textContent = name || currentName;
+        input.replaceWith(h3);
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { cancel(); }
+    });
+    input.addEventListener('blur', () => save());
+}
+
+/**
+ * Soft-delete a saved case. Never hard-deletes.
+ */
+async function deleteSavedCaseUI() {
+    if (!_currentSavedCaseId) return;
+    if (!confirm('Remove this saved case? It will be hidden but never permanently deleted.')) return;
+
+    try {
+        await authFetch(`${API_BASE}/saved-cases/${_currentSavedCaseId}`, { method: 'DELETE' });
+        showToast('Saved case removed', 'success');
+        closeSavedCaseDetail();
+        loadSavedCases();
+    } catch (err) {
+        showToast('Delete failed: ' + err.message, 'error');
+    }
+}
+
 
 
 // ============================================
@@ -4649,3 +4926,10 @@ window.markBaseline = markBaseline;
 // UI State
 window.renderCancelledJobState = renderCancelledJobState;
 window.renderSavedCasesPanel = renderSavedCasesPanel;
+// Saved Cases Collection
+window.loadSavedCases = loadSavedCases;
+window.openSavedCase = openSavedCase;
+window.closeSavedCaseDetail = closeSavedCaseDetail;
+window.renameSavedCaseUI = renameSavedCaseUI;
+window.deleteSavedCaseUI = deleteSavedCaseUI;
+window.saveCaseToCollection = saveCaseToCollection;

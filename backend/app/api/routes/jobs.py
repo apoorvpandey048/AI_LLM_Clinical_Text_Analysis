@@ -385,19 +385,28 @@ async def get_job_results(
         JobCase.case_number
     ).all()
 
+    # Role-based filtering: doctors cannot see layer outputs or pipeline snapshot
+    is_admin = user.role == UserRole.ADMIN
+    include_outputs = is_admin
+
+    job_data = {
+        "job_id": str(job.id),
+        "status": job.status.value,
+        "model_name": job.model_name,
+        "replay_source_id": str(job.replay_source_id) if job.replay_source_id else None,
+        "is_regression_baseline": job.is_regression_baseline,
+        "created_at": job.created_at.isoformat() + "Z" if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
+        "results": [c.to_dict(include_outputs=include_outputs) for c in cases],
+    }
+
+    # Only admins see pipeline_snapshot
+    if is_admin:
+        job_data["pipeline_snapshot"] = job.pipeline_snapshot
+
     return create_response(
         success=True,
-        data={
-            "job_id": str(job.id),
-            "status": job.status.value,
-            "pipeline_snapshot": job.pipeline_snapshot,
-            "model_name": job.model_name,
-            "replay_source_id": str(job.replay_source_id) if job.replay_source_id else None,
-            "is_regression_baseline": job.is_regression_baseline,
-            "created_at": job.created_at.isoformat() + "Z" if job.created_at else None,
-            "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
-            "results": [c.to_dict(include_outputs=True) for c in cases],
-        },
+        data=job_data,
         request_id=request_id,
     )
 
@@ -444,9 +453,12 @@ async def get_case_output(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    # Role-based filtering
+    include_outputs = user.role == UserRole.ADMIN
+
     return create_response(
         success=True,
-        data=case.to_dict(include_outputs=True),
+        data=case.to_dict(include_outputs=include_outputs),
         request_id=request_id,
     )
 

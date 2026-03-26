@@ -112,9 +112,13 @@
                             <i data-lucide="play-circle"></i>
                             Pipeline
                         </button>
-                        <button class="nav-btn" data-page="prompts" onclick="switchPage('prompts')">
+                        <button class="nav-btn" data-page="prompts" onclick="switchPage('prompts')" id="nav-prompts">
                             <i data-lucide="file-text"></i>
                             Prompts
+                        </button>
+                        <button class="nav-btn" data-page="saved" onclick="switchPage('saved')">
+                            <i data-lucide="bookmark"></i>
+                            Saved Cases
                         </button>
                         <button class="nav-btn" data-page="logs" onclick="switchPage('logs')">
                             <i data-lucide="terminal"></i>
@@ -290,6 +294,12 @@
                     <!-- Per-Case Status -->
                     <div class="case-status-list" id="case-status-list">
                         <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Live Completed Cases (populated as each case finishes) -->
+                    <div id="completed-cases-live" class="completed-cases-live hidden">
+                        <h3><i data-lucide="check-circle"></i> Completed Cases</h3>
+                        <div id="completed-cases-live-list"></div>
                     </div>
                 </section>
 
@@ -471,6 +481,44 @@
                             <i data-lucide="refresh-cw" class="btn-icon"></i>
                             New Analysis
                         </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== SAVED CASES PAGE ===================== -->
+            <div id="page-saved" class="page">
+                <section class="card">
+                    <h2>
+                        <i data-lucide="bookmark"></i>
+                        Saved Cases
+                    </h2>
+                    <p class="section-description">Your saved case snapshots. Each snapshot is immutable — results are frozen at save time.</p>
+
+                    <!-- Saved Cases List -->
+                    <div id="saved-cases-collection" class="saved-cases-collection">
+                        <div class="saved-cases-empty">
+                            <i data-lucide="bookmark-plus"></i>
+                            <p>No saved cases yet. Save a completed case from the results view.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Saved Case Detail (shown when a case is clicked) -->
+                <section id="saved-case-detail" class="card hidden">
+                    <div class="saved-case-detail-header">
+                        <button class="btn btn-sm btn-ghost" onclick="closeSavedCaseDetail()">
+                            <i data-lucide="arrow-left"></i> Back
+                        </button>
+                        <h3 id="saved-case-detail-name">—</h3>
+                        <button class="btn btn-sm btn-outline" onclick="renameSavedCaseUI()">
+                            <i data-lucide="edit-3"></i> Rename
+                        </button>
+                        <button class="btn btn-sm btn-cancel" onclick="deleteSavedCaseUI()">
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
+                    <div id="saved-case-detail-body">
+                        <!-- Populated dynamically -->
                     </div>
                 </section>
             </div>

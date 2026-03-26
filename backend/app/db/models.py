@@ -498,3 +498,57 @@ class LayerMetric(Base):
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }
+
+
+class SavedCase(Base):
+    """
+    SavedCase model — immutable snapshot of a completed pipeline case.
+
+    Stores a deep copy of the full results at save time. The snapshot MUST
+    remain frozen even if the pipeline or prompts change later.
+
+    Security: users can only access their own saved cases.
+    """
+
+    __tablename__ = "saved_cases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    job_id = Column(UUID(as_uuid=True), nullable=True)
+    case_id = Column(UUID(as_uuid=True), nullable=True)
+    name = Column(String(300), nullable=False)
+    input_text = Column(Text, nullable=False)
+    results_snapshot = Column(PortableJSON, nullable=True)  # Immutable deep copy
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)  # Soft delete only
+
+    # Relationships
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("ix_saved_cases_user_id", "user_id"),
+        Index("ix_saved_cases_user_deleted", "user_id", "deleted_at"),
+    )
+
+    def to_dict(self, include_preview: bool = True) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        result = {
+            "id": str(self.id),
+            "user_id": str(self.user_id),
+            "job_id": str(self.job_id) if self.job_id else None,
+            "case_id": str(self.case_id) if self.case_id else None,
+            "name": self.name,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+        if include_preview and self.input_text:
+            result["input_preview"] = self.input_text[:100] + ("…" if len(self.input_text) > 100 else "")
+        return result
+
+    def to_full_dict(self) -> dict[str, Any]:
+        """Full response including input_text and results_snapshot."""
+        d = self.to_dict(include_preview=False)
+        d["input_text"] = self.input_text
+        d["results_snapshot"] = self.results_snapshot
+        return d
+

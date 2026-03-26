@@ -163,6 +163,21 @@ def _run_schema_migrations():
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
         # prompt_templates — active version for multi-version prompts
         "ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS active_version_id UUID NULL",
+        # saved_cases table (created by create_all, but ensure columns exist)
+        """CREATE TABLE IF NOT EXISTS saved_cases (
+            id UUID PRIMARY KEY,
+            user_id UUID NOT NULL REFERENCES users(id),
+            job_id UUID NULL,
+            case_id UUID NULL,
+            name VARCHAR(300) NOT NULL,
+            input_text TEXT NOT NULL,
+            results_snapshot JSONB NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NULL,
+            deleted_at TIMESTAMP NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_saved_cases_user_id ON saved_cases (user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_saved_cases_user_deleted ON saved_cases (user_id, deleted_at)",
     ]
 
     db = db_session.SessionLocal()
@@ -424,6 +439,7 @@ from app.api.routes.models import router as models_router
 from app.api.routes.system import router as system_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.logs import router as logs_router
+from app.api.routes.saved_cases import router as saved_cases_router
 
 app.include_router(auth_router)
 app.include_router(upload_router)
@@ -434,6 +450,7 @@ app.include_router(prompts_router)
 app.include_router(models_router)
 app.include_router(system_router)
 app.include_router(logs_router)
+app.include_router(saved_cases_router)
 
 
 # ============================================
