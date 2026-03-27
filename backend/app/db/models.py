@@ -513,7 +513,7 @@ class SavedCase(Base):
     __tablename__ = "saved_cases"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     job_id = Column(UUID(as_uuid=True), nullable=True)
     case_id = Column(UUID(as_uuid=True), nullable=True)
     name = Column(String(300), nullable=False)
@@ -526,10 +526,7 @@ class SavedCase(Base):
     # Relationships
     user = relationship("User")
 
-    __table_args__ = (
-        Index("ix_saved_cases_user_id", "user_id"),
-        Index("ix_saved_cases_user_deleted", "user_id", "deleted_at"),
-    )
+    # Indexes are created by migration SQL with IF NOT EXISTS (see main.py _run_schema_migrations)
 
     def to_dict(self, include_preview: bool = True) -> dict[str, Any]:
         """Convert to dictionary for API response."""
