@@ -152,6 +152,8 @@ def _run_schema_migrations():
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(50) NULL",
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS model_version VARCHAR(200) NULL",
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP NULL",
+        # job_cases — source file tracking for multi-file uploads
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS source_file VARCHAR(255) NULL",
         # jobs — pipeline snapshot for deterministic execution
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_snapshot JSONB NULL",
         # jobs — model name + replay provenance (Stage 4)

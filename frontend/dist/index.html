@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SNAP-AI Clinical NLP Pipeline — Research Platform for Complication Analysis">
+    <title>SNAP-AI | Clinical NLP Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+  <script type="module" crossorigin src="/assets/index-g0XcuHZE.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Sjbg_M-7.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- ===================== LOGIN / SIGNUP OVERLAY ===================== -->
+        <div id="auth-overlay" class="auth-overlay">
+            <div class="auth-container">
+                <div class="auth-logo">
+                    <i data-lucide="plus-square" class="auth-logo-icon"></i>
+                    <h1>SNAP-AI</h1>
+                    <p class="auth-subtitle">Clinical NLP Platform</p>
+                </div>
+
+                <!-- Login Form -->
+                <form id="login-form" class="auth-form" onsubmit="handleLogin(event)">
+                    <h2>Sign In</h2>
+                    <div class="form-group">
+                        <label for="login-username">Username</label>
+                        <input type="text" id="login-username" placeholder="Enter username" required
+                            autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="Enter password" required
+                            autocomplete="current-password">
+                    </div>
+                    <div id="login-error" class="auth-error hidden"></div>
+                    <button type="submit" class="btn btn-primary btn-large auth-btn" id="login-btn">Sign In</button>
+                    <p class="auth-switch">Don't have an account? <a href="#" onclick="showSignup(event)">Sign Up</a>
+                    </p>
+                </form>
+
+                <!-- Signup Form -->
+                <form id="signup-form" class="auth-form hidden" onsubmit="handleSignup(event)">
+                    <h2>Create Account</h2>
+                    <div class="form-group">
+                        <label for="signup-name">Full Name</label>
+                        <input type="text" id="signup-name" placeholder="Dr. Jane Smith" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-username">Username</label>
+                        <input type="text" id="signup-username" placeholder="Choose a username" required minlength="3"
+                            autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-password">Password</label>
+                        <input type="password" id="signup-password" placeholder="Min 6 characters" required
+                            minlength="6" autocomplete="new-password">
+                    </div>
+                    <div id="signup-error" class="auth-error hidden"></div>
+                    <div id="signup-success" class="auth-success hidden"></div>
+                    <button type="submit" class="btn btn-primary btn-large auth-btn" id="signup-btn">Create
+                        Account</button>
+                    <p class="auth-switch">Already have an account? <a href="#" onclick="showLogin(event)">Sign In</a>
+                    </p>
+                </form>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="logo">
+                        <span class="logo-icon">
+                            <i data-lucide="activity" class="logo-icon-svg"></i>
+                        </span>
+                        <h1>SNAP-AI <small
+                                style="font-size:10px; opacity:0.6; font-weight:normal; margin-left:4px;">Deploy-v1.2</small>
+                        </h1>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <!-- User Info -->
+                    <div class="user-info" id="user-info">
+                        <span class="user-name" id="user-display-name"></span>
+                        <span class="user-role-badge" id="user-role-badge"></span>
+                        <button class="btn btn-sm btn-ghost" onclick="handleLogout()" title="Logout">
+                            <i data-lucide="log-out"></i>
+                        </button>
+                    </div>
+
+                    <!-- Model Selector -->
+                    <div class="model-selector" id="model-selector">
+                        <label class="model-label">Model:</label>
+                        <select id="model-dropdown" class="model-dropdown">
+                            <option value="">Loading...</option>
+                        </select>
+                        <button id="manage-models-btn" class="btn btn-sm btn-ghost" title="Manage Models">
+                            <i data-lucide="settings"></i>
+                        </button>
+                    </div>
+
+                    <!-- Navigation -->
+                    <nav class="header-nav">
+                        <button class="nav-btn active" data-page="pipeline" onclick="switchPage('pipeline')">
+                            <i data-lucide="play-circle"></i>
+                            Pipeline
+                        </button>
+                        <button class="nav-btn" data-page="prompts" onclick="switchPage('prompts')">
+                            <i data-lucide="file-text"></i>
+                            Prompts
+                        </button>
+                        <button class="nav-btn" data-page="logs" onclick="switchPage('logs')">
+                            <i data-lucide="terminal"></i>
+                            Logs
+                        </button>
+                        <button class="nav-btn admin-only hidden" id="nav-admin" data-page="admin"
+                            onclick="switchPage('admin')">
+                            <i data-lucide="users"></i>
+                            Admin
+                        </button>
+                        <button class="nav-btn admin-only hidden" id="nav-ops" data-page="operations"
+                            onclick="switchPage('operations')">
+                            <i data-lucide="layout-grid"></i>
+                            Ops
+                        </button>
+                    </nav>
+                </div>
+            </div>
+        </header>
+
+        <!-- System Info Bar -->
+        <div class="system-info-bar hidden" id="system-info-bar">
+            <!-- Populated by loadSystemInfo() -->
+        </div>
+
+        <!-- vLLM Status Banner (shown when model server is offline) -->
+        <div id="vllm-status-banner" class="vllm-status-banner hidden">
+            <i data-lucide="alert-triangle"></i>
+            <strong>Model Offline</strong> — Start the GPU model service.
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+
+            <!-- ===================== PIPELINE PAGE ===================== -->
+            <div id="page-pipeline" class="page active">
+
+                <!-- Upload Section -->
+                <section id="upload-section" class="card">
+                    <h2>
+                        <i data-lucide="file-up" class="section-icon"></i>
+                        Upload Clinical Cases
+                    </h2>
+                    <p class="section-description">Upload DOCX, PDF, or TXT files (multiple allowed) or paste clinical text directly.</p>
+
+                    <!-- Tab Navigation -->
+                    <div class="tab-nav">
+                        <button class="tab-btn active" data-tab="file">File Upload</button>
+                        <button class="tab-btn" data-tab="text">Direct Text</button>
+                    </div>
+
+                    <!-- File Upload Tab -->
+                    <div id="file-tab" class="tab-content active">
+                        <div class="dropzone" id="dropzone">
+                            <div class="dropzone-content">
+                                <span class="dropzone-icon">
+                                    <i data-lucide="upload-cloud" class="dropzone-icon-svg"></i>
+                                </span>
+                                <p>Drag & drop files here (DOCX, PDF, TXT)</p>
+                                <p class="dropzone-hint">or click to browse — multiple files supported</p>
+                                <input type="file" id="file-input" accept=".docx,.pdf,.txt" multiple hidden>
+                            </div>
+                        </div>
+                        <div id="file-info" class="file-info hidden"></div>
+                    </div>
+
+                    <!-- Text Input Tab -->
+                    <div id="text-tab" class="tab-content">
+                        <textarea id="text-input" class="text-input"
+                            placeholder="Paste clinical text here... Cases should be separated by headers like 'Case #1', 'Case #2', etc."
+                            rows="12"></textarea>
+                    </div>
+
+                    <!-- Process Button -->
+                    <button id="process-btn" class="btn btn-primary btn-large" disabled>
+                        <i data-lucide="play" class="btn-icon"></i>
+                        Process Cases
+                    </button>
+
+                    <!-- Inference Parameters (Read-Only) -->
+                    <div class="inference-params-panel">
+                        <h3 class="inference-params-title">
+                            <i data-lucide="sliders-horizontal"></i>
+                            Inference Parameters
+                            <span class="inference-params-badge">Locked</span>
+                        </h3>
+                        <div class="param-grid">
+                            <div class="param-item" data-tooltip="Set to 0 for fully deterministic, reproducible outputs (greedy decoding).">
+                                <span class="param-label">temperature</span>
+                                <span class="param-value">0</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Nucleus sampling disabled (=1.0) — all tokens considered. Combined with temp=0 for deterministic output.">
+                                <span class="param-label">top_p</span>
+                                <span class="param-value">1.0</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Maximum number of output tokens per LLM call.">
+                                <span class="param-label">max_tokens</span>
+                                <span class="param-value">16384</span>
+                            </div>
+                            <div class="param-item" data-tooltip="Request timeout in seconds per LLM call.">
+                                <span class="param-label">timeout</span>
+                                <span class="param-value">900s</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Progress Section (Hidden by default) -->
+                <section id="progress-section" class="card hidden">
+                    <h2>
+                        <i data-lucide="loader-2" class="section-icon spinning"></i>
+                        Processing...
+                    </h2>
+
+                    <!-- Streaming Indicator -->
+                    <div class="streaming-indicator" id="streaming-indicator">
+                        <span class="streaming-dot"></span>
+                        <span>Live streaming enabled</span>
+                    </div>
+
+                    <!-- Current Case Info -->
+                    <div class="current-case-info" id="current-case-info">
+                        <div class="current-case-label" id="current-case-label">Initializing...</div>
+                        <div class="current-layer-label" id="current-layer-label">Preparing pipeline</div>
+                    </div>
+
+                    <!-- Layer Progress (populated dynamically by renderDynamicLayerSteps) -->
+                    <div class="layer-progress" id="layer-progress">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Execution Timeline -->
+                    <div class="execution-timeline-panel">
+                        <h3 class="timeline-panel-title">
+                            <i data-lucide="clock"></i>
+                            Execution Timeline
+                        </h3>
+                        <div id="execution-timeline" class="execution-timeline">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Live Output Panel -->
+                    <div class="live-output-panel" id="live-output-panel">
+                        <div class="live-output-header">
+                            <div class="live-output-tabs" id="live-output-tabs-container">
+                                <!-- Populated dynamically by renderDynamicLiveOutputTabs -->
+                            </div>
+                            <div class="live-output-status" id="live-output-status">
+                                <span class="live-dot"></span>
+                                Waiting...
+                            </div>
+                        </div>
+                        <div class="live-output-body">
+                            <pre class="live-output-text"
+                                id="live-output-text"><span class="cursor-blink">|</span></pre>
+                        </div>
+                    </div>
+
+                    <!-- Overall Progress -->
+                    <div class="progress-overall">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                        </div>
+                        <p class="progress-text" id="progress-text">0 of 0 cases completed</p>
+                        <button id="cancel-job-btn" class="btn btn-cancel btn-sm" onclick="cancelJob()"
+                            style="margin-top: var(--space-md);">
+                            <i data-lucide="stop-circle" class="btn-icon"></i>
+                            Cancel Job
+                        </button>
+                    </div>
+
+                    <!-- Per-Case Status -->
+                    <div class="case-status-list" id="case-status-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </section>
+
+                <!-- Results Section (Hidden by default) -->
+                <section id="results-section" class="card hidden">
+                    <h2>
+                        <i data-lucide="bar-chart-2" class="section-icon"></i>
+                        Results
+                    </h2>
+
+                    <!-- Cancelled Job State -->
+                    <div id="cancelled-job-state" class="cancelled-job-state hidden">
+                        <i data-lucide="x-circle" class="cancelled-icon"></i>
+                        <h3>Job cancelled by user</h3>
+                        <p>No layer outputs available.</p>
+                    </div>
+
+                    <!-- Run Info Banner -->
+                    <div id="run-info-banner" class="run-info-banner hidden">
+                        <span><i data-lucide="cpu"></i> MODEL: <strong id="run-info-model">—</strong></span>
+                        <span><i data-lucide="lock"></i> PIPELINE: <strong>LOCKED</strong></span>
+                        <span><i data-lucide="hash"></i> SNAPSHOT HASH: <code id="run-info-hash">—</code></span>
+                    </div>
+
+                    <!-- Summary Stats -->
+                    <div class="results-summary" id="results-summary">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Execution Timeline (post-run) -->
+                    <details class="results-timeline-details" id="results-timeline-wrap">
+                        <summary class="results-timeline-summary">
+                            <i data-lucide="clock"></i>
+                            Execution Timeline
+                        </summary>
+                        <div id="results-execution-timeline" class="execution-timeline">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </details>
+
+                    <!-- Locked Execution Config Banner -->
+                    <div id="locked-config-banner" class="locked-config-banner hidden">
+                        <div class="locked-config-header">
+                            <i data-lucide="lock"></i>
+                            <span>Reproducible Execution Snapshot</span>
+                        </div>
+                        <div id="locked-config-description" class="locked-config-description hidden">
+                            <p>This run was executed with a frozen configuration to guarantee reproducibility.</p>
+                            <p>Model version, prompts, and pipeline structure are locked and cannot be modified for this
+                                run.
+                                You can replay this exact configuration using "Replay This Run".</p>
+                            <div class="locked-config-actions">
+                                <button class="btn btn-sm btn-primary" id="replay-this-run-btn">
+                                    <i data-lucide="refresh-cw"></i> Replay This Run
+                                </button>
+                                <button class="btn-secondary" id="mark-baseline-btn"
+                                    style="background: #ffffff !important; color: #1a1a1a !important; font-weight: 600 !important; cursor: pointer; border: 1px solid rgba(0,0,0,0.1) !important;">
+                                    <i data-lucide="flag"></i> Mark as Baseline
+                                </button>
+                            </div>
+                        </div>
+                        <div class="locked-config-details">
+                            <span>Model: <strong id="locked-config-model">—</strong></span>
+                            <span>Snapshot Hash: <code id="locked-config-hash"
+                                    title="Hash of the pipeline configuration used for this run. Ensures deterministic reproducibility.">—</code></span>
+                            <span>Created: <strong id="locked-config-created">—</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- Pipeline Snapshot Viewer -->
+                    <details class="snapshot-details">
+                        <summary class="snapshot-summary">
+                            <i data-lucide="layers"></i>
+                            Pipeline Snapshot (Audit)
+                        </summary>
+                        <div id="snapshot-viewer">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </details>
+
+                    <!-- Execution Metrics -->
+                    <details class="metrics-details" id="metrics-details-wrap">
+                        <summary class="metrics-summary">
+                            <i data-lucide="trending-up"></i>
+                            Execution Metrics
+                        </summary>
+                        <div id="metrics-viewer">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </details>
+
+                    <!-- Run Comparison -->
+                    <details class="compare-details" id="compare-details-wrap">
+                        <summary class="compare-summary">
+                            <i data-lucide="copy-check"></i>
+                            Compare Runs
+                        </summary>
+                        <div id="compare-viewer">
+                            <div class="compare-controls">
+                                <label class="compare-label">Select a completed job to compare against:</label>
+                                <select id="compare-job-select" class="compare-select">
+                                    <option value="">— Select job —</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="runComparison()">Compare</button>
+                            </div>
+                            <div id="compare-results">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- View Toggle -->
+                    <div class="view-toggle">
+                        <button class="view-toggle-btn active" data-view="table" onclick="switchView('table')">
+                            <i data-lucide="table"></i>
+                            Table View
+                        </button>
+                        <button class="view-toggle-btn" data-view="cards" onclick="switchView('cards')">
+                            <i data-lucide="layout"></i>
+                            Card View
+                        </button>
+                    </div>
+
+                    <!-- Results Table View -->
+                    <div id="results-table-container">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Case Results List (Card View) -->
+                    <div class="case-results hidden" id="case-results">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="action-button-groups">
+                        <div class="action-group">
+                            <span class="action-group-label">Run Actions</span>
+                            <div class="action-group-buttons">
+                                <button class="btn btn-sm btn-primary" id="replay-btn-bottom">
+                                    <i data-lucide="refresh-cw" class="btn-icon"></i>
+                                    Replay Run
+                                </button>
+                                <button class="btn btn-sm btn-secondary" id="baseline-btn-bottom">
+                                    <i data-lucide="flag" class="btn-icon"></i>
+                                    Mark as Baseline
+                                </button>
+                            </div>
+                        </div>
+                        <div class="action-group">
+                            <span class="action-group-label">Export</span>
+                            <div class="action-group-buttons">
+                                <button id="export-btn" class="btn btn-sm btn-secondary">
+                                    <i data-lucide="download" class="btn-icon"></i>
+                                    Export JSON
+                                </button>
+                                <button id="audit-export-btn" class="btn btn-sm btn-secondary"
+                                    onclick="downloadAuditPackage()">
+                                    <i data-lucide="shield-check" class="btn-icon"></i>
+                                    Download Audit
+                                </button>
+                                <button class="btn btn-sm btn-secondary" onclick="exportSavedCases()">
+                                    <i data-lucide="bookmark" class="btn-icon"></i>
+                                    Export Saved Cases
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Saved Cases Panel -->
+                    <div id="saved-cases-panel" class="saved-cases-panel hidden">
+                        <h3><i data-lucide="bookmark-check"></i> Saved Cases</h3>
+                        <div id="saved-cases-list">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <div style="margin-top: var(--space-md);">
+                        <button id="new-analysis-btn" class="btn btn-outline">
+                            <i data-lucide="refresh-cw" class="btn-icon"></i>
+                            New Analysis
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== PROMPTS PAGE ===================== -->
+            <div id="page-prompts" class="page">
+                <section class="card">
+                    <h2>
+                        <i data-lucide="file-text"></i>
+                        Prompt Templates
+                    </h2>
+                    <p class="section-description">
+                        Customize the prompts sent to the LLM for each pipeline layer.
+                        Changes take effect on the next processing run.
+                    </p>
+
+                    <!-- Import/Export Actions -->
+                    <div class="prompt-actions" style="margin-bottom: var(--space-lg);">
+                        <button class="btn btn-outline btn-sm" onclick="exportPrompts()">
+                            <i data-lucide="download" class="btn-icon"></i>
+                            Export Prompts
+                        </button>
+                        <input type="file" id="import-prompts-input" class="hidden" accept=".json"
+                            onchange="importPrompts(event)">
+                        <button class="btn btn-outline btn-sm"
+                            onclick="document.getElementById('import-prompts-input').click()">
+                            <i data-lucide="upload" class="btn-icon"></i>
+                            Import Prompts
+                        </button>
+                    </div>
+
+                    <!-- Prompt Layer Tabs (populated dynamically by renderDynamicPromptTabs) -->
+                    <div class="prompt-tabs" id="prompt-tabs-container">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Prompt Editor -->
+                    <div class="prompt-editor-wrapper">
+                        <div class="prompt-editor-header">
+                            <span class="prompt-source-badge" id="prompt-source-badge">Default</span>
+                            <span class="prompt-layer-name" id="prompt-layer-name">Layer 1 — Clinical Text Pre-Processor
+                                (CTP)</span>
+                        </div>
+                        <textarea id="prompt-editor" class="prompt-editor" placeholder="Loading prompt template..."
+                            rows="20"></textarea>
+                        <div class="prompt-editor-footer">
+                            <div class="prompt-char-count" id="prompt-char-count">0 characters</div>
+                            <div class="prompt-actions">
+                                <button id="prompt-reset-btn" class="btn btn-outline btn-sm" onclick="resetPrompt()">
+                                    <i data-lucide="rotate-ccw"></i>
+                                    Reset to Default
+                                </button>
+                                <button id="prompt-delete-btn" class="btn btn-cancel btn-sm hidden"
+                                    onclick="deleteCustomLayer()">
+                                    <i data-lucide="trash-2"></i>
+                                    Delete Layer
+                                </button>
+                                <button id="prompt-save-btn" class="btn btn-primary btn-sm" onclick="savePrompt()">
+                                    <i data-lucide="save"></i>
+                                    Save Prompt
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Version History Panel -->
+                    <div class="version-history-wrapper">
+                        <h4 class="version-history-title">Version History</h4>
+                        <div id="version-history-panel" class="version-history-panel">
+                            <p class="text-muted">Select a layer to see version history.</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== LOGS PAGE ===================== -->
+            <div id="page-logs" class="page">
+                <section class="card">
+                    <h2>
+                        <i data-lucide="terminal"></i>
+                        Application Logs
+                    </h2>
+                    <p class="section-description">Real-time application logs for debugging and monitoring.</p>
+
+                    <div class="log-controls">
+                        <select id="log-level-filter" class="log-filter-select" onchange="refreshLogs()">
+                            <option value="">All Levels</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="INFO">INFO</option>
+                        </select>
+                        <input type="text" id="log-search" class="log-search-input" placeholder="Search logs..."
+                            oninput="refreshLogs()">
+                        <button class="btn btn-sm btn-outline" onclick="refreshLogs()">Refresh</button>
+                        <label class="log-auto-refresh">
+                            <input type="checkbox" id="log-auto-refresh" checked onchange="toggleLogAutoRefresh()">
+                            Auto-refresh
+                        </label>
+                    </div>
+
+                    <div class="log-container" id="log-container">
+                        <div class="log-loading">Loading logs...</div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== ADMIN PAGE ===================== -->
+            <div id="page-admin" class="page">
+                <section class="card">
+                    <h2>
+                        <i data-lucide="users"></i>
+                        User Management
+                    </h2>
+                    <p class="section-description">Approve, manage, or deactivate user accounts.</p>
+
+                    <div class="admin-users-list" id="admin-users-list">
+                        <div class="log-loading">Loading users...</div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===================== OPERATIONS PAGE ===================== -->
+            <div id="page-operations" class="page">
+
+                <!-- Section 1: System Health Summary -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="activity"></i>
+                        System Health Summary
+                    </h2>
+                    <div class="ops-kpi-grid" id="ops-health-grid">
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-active-jobs">—</span><span
+                                class="ops-kpi-label">Active Jobs</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-jobs-today">—</span><span
+                                class="ops-kpi-label">Jobs Today</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-success-rate">—</span><span
+                                class="ops-kpi-label">Success Rate</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-failed-jobs">—</span><span
+                                class="ops-kpi-label">Failed Jobs</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-total-jobs">—</span><span
+                                class="ops-kpi-label">Total Jobs</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-avg-runtime">—</span><span
+                                class="ops-kpi-label">Avg Runtime</span></div>
+                    </div>
+                </section>
+
+                <!-- Section 2: Runtime Status -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="cpu"></i>
+                        Runtime Status
+                    </h2>
+                    <div class="ops-kpi-grid ops-kpi-grid-4" id="ops-runtime-grid">
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-model">—</span><span
+                                class="ops-kpi-label">Active Model</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-backend">—</span><span
+                                class="ops-kpi-label">Inference Backend</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-worker-status">—</span><span
+                                class="ops-kpi-label">Worker Status</span></div>
+                        <div class="ops-kpi"><span class="ops-kpi-value" id="ops-queue-size">—</span><span
+                                class="ops-kpi-label">Queue Size</span></div>
+                    </div>
+                </section>
+
+                <!-- Section 3: Failure Analytics -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="alert-triangle"></i>
+                        Failure Analytics
+                    </h2>
+                    <div id="ops-failure-content">
+                        <div class="ops-loading">Loading…</div>
+                    </div>
+                </section>
+
+                <!-- Section 4: Slowest Layers -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="clock"></i>
+                        Slowest Layers
+                    </h2>
+                    <div id="ops-slow-layers-content">
+                        <div class="ops-loading">Loading…</div>
+                    </div>
+                </section>
+
+                <!-- Section 5: Determinism Score -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="shield"></i>
+                        Determinism Score
+                    </h2>
+                    <div id="ops-determinism-content">
+                        <div class="ops-loading">Loading…</div>
+                    </div>
+                </section>
+
+                <!-- Section 6: Regression Safety -->
+                <section class="card ops-card">
+                    <h2 class="ops-section-title">
+                        <i data-lucide="check-circle"></i>
+                        Regression Safety
+                    </h2>
+                    <div id="ops-regression-content">
+                        <div class="ops-regression-header">
+                            <div class="ops-regression-meta">
+                                <span id="ops-regression-timestamp">Last run: —</span>
+                                <span id="ops-regression-passrate">Pass rate: —</span>
+                            </div>
+                            <button class="btn btn-sm btn-primary" id="ops-run-regression-btn"
+                                onclick="runRegressionCheck()">Run Regression Check</button>
+                        </div>
+                        <div id="ops-regression-results">
+                            <div class="ops-empty">No regression results yet. Click "Run Regression Check" to validate
+                                baselines.</div>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+
+        </main>
+
+        <!-- Model Management Modal -->
+        <div class="modal-overlay hidden" id="model-modal-overlay">
+            <div class="modal" id="model-modal">
+                <div class="modal-header">
+                    <h3>Model Management</h3>
+                    <button class="modal-close" onclick="closeModelModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <!-- Pull New Model -->
+                    <div class="model-pull-section">
+                        <label class="section-label">Pull New Model</label>
+                        <div id="model-pull-section-inner">
+                            <!-- Populated by renderModelPullDropdown() -->
+                            <p>Loading available models...</p>
+                        </div>
+                        <div id="model-pull-status" class="model-pull-status hidden"></div>
+                    </div>
+
+                    <!-- Available Models -->
+                    <div class="model-list-section">
+                        <label class="section-label">Installed Models</label>
+                        <div id="model-list" class="model-list">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Container -->
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>SNAP-AI v2.0.0 | Secure On-Premise Clinical NLP Platform</p>
+            <div id="footer-status" class="footer-status"></div>
+        </footer>
+    </div>
+
+</body>
+
+</html>

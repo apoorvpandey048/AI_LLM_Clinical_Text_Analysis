@@ -75,16 +75,16 @@ class TestUploadEndpoints:
             assert data["data"]["case_count"] >= 1
 
     def test_upload_invalid_file_type(self, client):
-        """Uploading non-DOCX file should fail."""
+        """Uploading unsupported file type should fail."""
         response = client.post(
             "/api/v1/upload",
-            files={"file": ("test.txt", b"Hello", "text/plain")}
+            files={"file": ("test.csv", b"Hello", "text/csv")}
         )
         
         assert response.status_code == 400
         data = response.json()
         assert data["success"] is False
-        assert "docx" in data["error"]["message"].lower()
+        assert "unsupported" in data["error"]["message"].lower() or "allowed" in data["error"]["message"].lower()
 
 
 class TestJobsEndpoints:

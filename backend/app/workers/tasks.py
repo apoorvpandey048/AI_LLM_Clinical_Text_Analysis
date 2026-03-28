@@ -378,6 +378,7 @@ def _process_case_impl(
     task_id: str = None,
     loop: asyncio.AbstractEventLoop = None,
     pipeline_layers: list[dict] | None = None,
+    source_file: str | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation for processing a single clinical case.
@@ -525,6 +526,7 @@ def _process_case_impl(
         publisher.publish_case_complete(
             job_id, case_number, result.success,
             result.final_verdict, result.final_cci,
+            source_file=source_file,
         )
 
         # Save result to database
@@ -709,6 +711,7 @@ def process_batch(
                 case_id, job_id, text, case_number,
                 loop=loop,
                 pipeline_layers=pipeline_snapshot if pipeline_snapshot else None,
+                source_file=case.get("source_file"),
             )
 
             results.append(result)

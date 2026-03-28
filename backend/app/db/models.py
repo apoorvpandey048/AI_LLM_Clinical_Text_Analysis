@@ -210,6 +210,9 @@ class JobCase(Base):
     case_number = Column(Integer, nullable=False)
     case_label = Column(String(100), nullable=True)
 
+    # Source file (for multi-file uploads)
+    source_file = Column(String(255), nullable=True)
+
     # Status
     status = Column(
         SQLEnum(CaseStatus),
@@ -268,6 +271,7 @@ class JobCase(Base):
             "case_id": str(self.id),
             "case_number": self.case_number,
             "case_label": self.case_label,
+            "source_file": self.source_file,
             "status": self.status.value,
             "input_text": self.input_text,
             "final_verdict": self.final_verdict,

@@ -92,6 +92,7 @@ async def generate_job_events(
                     {
                         "case_number": c.case_number,
                         "case_label": c.case_label or f"Case #{c.case_number}",
+                        "source_file": c.source_file,
                         "status": c.status.value,
                         "final_verdict": c.final_verdict,
                         "final_cci": c.final_cci,

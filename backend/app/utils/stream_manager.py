@@ -107,6 +107,7 @@ class StreamPublisher:
         success: bool,
         verdict: str | None = None,
         cci: float | None = None,
+        source_file: str | None = None,
     ) -> None:
         """Publish a case completion event."""
         event = {
@@ -117,6 +118,8 @@ class StreamPublisher:
             "verdict": verdict,
             "cci": cci,
         }
+        if source_file:
+            event["source_file"] = source_file
         channel = get_channel_name(job_id)
         self._redis.publish(channel, json.dumps(event))
 

@@ -123,7 +123,7 @@ const BUILTIN_LAYERS = ['layer1_ctp', 'layer2_cie', 'layer3_ccc'];
 // ============================================
 
 const state = {
-    selectedFile: null,
+    selectedFiles: [],
     textContent: '',
     currentJobId: null,
     pollInterval: null,
@@ -467,33 +467,66 @@ function initDropzone() {
         e.preventDefault();
         dropzone.classList.remove('dragover');
         if (state.isProcessing) return;
-        const file = e.dataTransfer.files[0];
-        if (file && file.name.endsWith('.docx')) {
-            handleFileSelect(file);
-        } else {
-            showToast('Please upload a .docx file', 'error');
+        const droppedFiles = Array.from(e.dataTransfer.files);
+        const allowedExts = ['.docx', '.pdf', '.txt'];
+        const validFiles = droppedFiles.filter(f => allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+        const invalidFiles = droppedFiles.filter(f => !allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+        if (invalidFiles.length > 0) {
+            showToast(`Skipped ${invalidFiles.length} unsupported file(s). Allowed: .docx, .pdf, .txt`, 'warning');
+        }
+        if (validFiles.length > 0) {
+            handleFilesSelect(validFiles);
+        } else if (invalidFiles.length > 0) {
+            showToast('No supported files dropped. Allowed: .docx, .pdf, .txt', 'error');
         }
     });
 
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files[0]) handleFileSelect(e.target.files[0]);
+        if (e.target.files.length > 0) handleFilesSelect(Array.from(e.target.files));
     });
 }
 
-function handleFileSelect(file) {
-    state.selectedFile = file;
+function handleFilesSelect(newFiles) {
+    // Merge with existing selection (avoid duplicates by name)
+    const existingNames = new Set(state.selectedFiles.map(f => f.name));
+    for (const f of newFiles) {
+        if (!existingNames.has(f.name)) {
+            state.selectedFiles.push(f);
+            existingNames.add(f.name);
+        }
+    }
+    renderFileInfo();
+    updateProcessButton();
+}
+
+function renderFileInfo() {
     const info = document.getElementById('file-info');
+    if (state.selectedFiles.length === 0) {
+        info.classList.add('hidden');
+        return;
+    }
     info.classList.remove('hidden');
+    const fileChips = state.selectedFiles.map((f, idx) => `
+        <span class="file-chip">
+            <i data-lucide="file"></i> ${escapeHtml(f.name)} (${formatFileSize(f.size)})
+            <button class="file-chip-remove" onclick="removeFile(${idx})">&times;</button>
+        </span>
+    `).join('');
     info.innerHTML = `
-    <span><i data-lucide="file"></i> ${file.name} (${formatFileSize(file.size)})</span>
-    <button class="btn btn-sm btn-outline" onclick="clearFile()">Remove</button>
-  `;
+        <div class="file-chips">${fileChips}</div>
+        <button class="btn btn-sm btn-outline" onclick="clearFile()">Remove All</button>
+    `;
     if (window.lucide) lucide.createIcons();
+}
+
+function removeFile(idx) {
+    state.selectedFiles.splice(idx, 1);
+    renderFileInfo();
     updateProcessButton();
 }
 
 function clearFile() {
-    state.selectedFile = null;
+    state.selectedFiles = [];
     document.getElementById('file-info').classList.add('hidden');
     document.getElementById('file-input').value = '';
     updateProcessButton();
@@ -518,8 +551,8 @@ function initProcessButton() {
     document.getElementById('process-btn').addEventListener('click', async () => {
         if (state.isProcessing) return;
         const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
-        if (activeTab === 'file' && state.selectedFile) {
-            await processFile(state.selectedFile);
+        if (activeTab === 'file' && state.selectedFiles.length > 0) {
+            await processFiles(state.selectedFiles);
         } else if (activeTab === 'text' && state.textContent.trim()) {
             await processText(state.textContent);
         }
@@ -529,7 +562,7 @@ function initProcessButton() {
 function updateProcessButton() {
     const btn = document.getElementById('process-btn');
     const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
-    const hasFile = activeTab === 'file' && state.selectedFile;
+    const hasFile = activeTab === 'file' && state.selectedFiles.length > 0;
     const hasText = activeTab === 'text' && state.textContent.trim();
     btn.disabled = state.isProcessing || (!hasFile && !hasText);
 }
@@ -547,15 +580,20 @@ function setCancelButtonEnabled(enabled) {
 // API: Process File / Text
 // ============================================
 
-async function processFile(file) {
+async function processFiles(files) {
     // GPU safety check
     if (state.systemInfo?.gpu_busy) {
         showToast('GPU resources currently busy. Please retry shortly.', 'warning');
         return;
     }
 
+    if (files.length > 10) {
+        showToast('Maximum 10 files per upload', 'error');
+        return;
+    }
+
     const formData = new FormData();
-    formData.append('file', file);
+    files.forEach(file => formData.append('files', file));
 
     try {
         state.isProcessing = true;
@@ -566,10 +604,13 @@ async function processFile(file) {
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
 
         const data = unwrapApiResponse(await res.json());
+        if (data.warnings && data.warnings.length > 0) {
+            data.warnings.forEach(w => showToast(w, 'warning'));
+        }
         state.currentJobId = data.job_id;
         initializeProgressUI(data.case_count || 1);
         startStreaming(data.job_id);
-        showToast(`Processing ${data.case_count || 1} case(s)...`, 'info');
+        showToast(data.message || `Processing ${data.case_count || 1} case(s)...`, 'info');
     } catch (err) {
         showError(err.message);
         state.isProcessing = false;
