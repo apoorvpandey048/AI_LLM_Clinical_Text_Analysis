@@ -162,7 +162,7 @@
                         <i data-lucide="file-up" class="section-icon"></i>
                         Upload Clinical Cases
                     </h2>
-                    <p class="section-description">Upload a DOCX file or paste clinical text directly.</p>
+                    <p class="section-description">Upload DOCX, PDF, or TXT files (multiple allowed) or paste clinical text directly.</p>
 
                     <!-- Tab Navigation -->
                     <div class="tab-nav">
@@ -177,9 +177,9 @@
                                 <span class="dropzone-icon">
                                     <i data-lucide="upload-cloud" class="dropzone-icon-svg"></i>
                                 </span>
-                                <p>Drag & drop DOCX file here</p>
-                                <p class="dropzone-hint">or click to browse</p>
-                                <input type="file" id="file-input" accept=".docx" hidden>
+                                <p>Drag & drop files here (DOCX, PDF, TXT)</p>
+                                <p class="dropzone-hint">or click to browse — multiple files supported</p>
+                                <input type="file" id="file-input" accept=".docx,.pdf,.txt" multiple hidden>
                             </div>
                         </div>
                         <div id="file-info" class="file-info hidden"></div>
