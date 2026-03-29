@@ -5236,4 +5236,318 @@ button {
   color: var(--text-primary);
 }
 
-
+
+/* ============================================
+   Execution Mode Panel
+   ============================================ */
+
+.execution-mode-panel {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.execution-mode-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 14px;
+  color: var(--text-primary);
+}
+
+.execution-mode-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.execution-mode-badge.chained {
+  background: rgba(124, 77, 255, 0.15);
+  color: #b388ff;
+}
+
+.execution-mode-badge.comparison {
+  background: rgba(255, 167, 38, 0.15);
+  color: #ffb74d;
+}
+
+.execution-mode-badge.custom {
+  background: rgba(255, 167, 38, 0.2);
+  color: #ffa726;
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+/* Toggle Switch */
+.toggle-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toggle-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch input[type="checkbox"] {
+  display: none;
+}
+
+.toggle-slider {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--bg-hover);
+  border-radius: 12px;
+  transition: background 0.25s ease;
+  flex-shrink: 0;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: all 0.25s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent-blue);
+}
+
+.toggle-switch input:checked + .toggle-slider::after {
+  left: 23px;
+  background: #fff;
+}
+
+.toggle-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.toggle-hint {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  padding-left: 56px;
+  margin-top: -4px;
+}
+
+.toggle-hint.comparison-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ffa726;
+  padding-left: 56px;
+}
+
+.toggle-hint .warning-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.execution-mode-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================
+   Execution Mode Label (on case cards)
+   ============================================ */
+
+.execution-mode-label {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+
+.chained-label {
+  background: rgba(124, 77, 255, 0.15);
+  color: #b388ff;
+}
+
+.comparison-label {
+  background: rgba(255, 167, 38, 0.15);
+  color: #ffb74d;
+}
+
+/* ============================================
+   Comparison Result Card
+   ============================================ */
+
+.comparison-result-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.comparison-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.comparison-header .case-number {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Delta Bar */
+.comparison-delta-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+}
+
+.delta-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.delta-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.delta-value {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.delta-up {
+  background: rgba(239, 83, 80, 0.1);
+}
+.delta-up .delta-value {
+  color: #ef5350;
+}
+
+.delta-down {
+  background: rgba(102, 187, 106, 0.1);
+}
+.delta-down .delta-value {
+  color: #66bb6a;
+}
+
+.delta-same {
+  background: rgba(102, 187, 106, 0.08);
+}
+.delta-same .delta-value {
+  color: #66bb6a;
+}
+
+.delta-changed {
+  background: rgba(255, 167, 38, 0.12);
+}
+.delta-changed .delta-value {
+  color: #ffa726;
+}
+
+/* Side-by-Side Panels */
+.comparison-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.comparison-panel {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel-independent {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.panel-chained {
+  border-left: 3px solid #b388ff;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.panel-title i {
+  width: 16px;
+  height: 16px;
+}
+
+.panel-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.comparison-diff-details {
+  margin-top: 8px;
+}
+
+/* Responsive Comparison */
+@media (max-width: 768px) {
+  .comparison-panels {
+    grid-template-columns: 1fr;
+  }
+  .comparison-delta-bar {
+    grid-template-columns: 1fr;
+  }
+}

@@ -7,6 +7,21 @@ Supports additional custom layers that run after the built-in pipeline.
 
 import json
 
+# Maximum characters for injected previous-layer JSON to prevent context window overflow
+_MAX_CHAIN_CONTEXT_CHARS = 12000
+
+
+def _build_chain_context(label: str, output: dict) -> str:
+    """Build a context injection block for chained execution.
+
+    Serialises *output* to JSON and truncates if it exceeds the safety limit.
+    Returns a markdown-style block that is **prepended** to the user prompt.
+    """
+    raw = json.dumps(output, indent=2, ensure_ascii=False)
+    if len(raw) > _MAX_CHAIN_CONTEXT_CHARS:
+        raw = raw[:_MAX_CHAIN_CONTEXT_CHARS] + "\n... [TRUNCATED]"
+    return f"=== {label} ===\n{raw}\n\n"
+
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
@@ -89,6 +104,7 @@ class PipelineOrchestrator:
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
         temperature: float | None = None,
         seed: int | None = _UNSET,
+        chained_mode: bool = False,
     ) -> PipelineResult:
         """
         Execute the complete pipeline.
@@ -109,6 +125,7 @@ class PipelineOrchestrator:
             on_layer_complete: Async callback (layer_name, success, duration_ms)
             temperature: Runtime temperature override
             seed: Seed for reproducible sampling (_UNSET = use config default, None = no seed)
+            chained_mode: When True, inject previous layer outputs as context into subsequent layers
 
         Returns:
             PipelineResult with all layer outputs
@@ -123,10 +140,11 @@ class PipelineOrchestrator:
                 on_layer_complete=on_layer_complete,
                 temperature=temperature,
                 seed=seed,
+                chained_mode=chained_mode,
             )
 
-        # ── Legacy execution path (unchanged) ──
-        logger.info("pipeline_start", text_length=len(raw_text), temperature=temperature)
+        # ── Legacy execution path ──
+        logger.info("pipeline_start", text_length=len(raw_text), temperature=temperature, chained_mode=chained_mode)
 
         total_duration_ms = 0
         total_tokens_input = 0
@@ -184,6 +202,13 @@ class PipelineOrchestrator:
         # Extract clean text for Layer 2
         clean_text = layer1_result.output.get("clean_course_text", "")
 
+        # ── Chained mode: inject L1 output as context for L2 ──
+        l2_clean_text = clean_text
+        if chained_mode and layer1_result.output:
+            chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", layer1_result.output)
+            l2_clean_text = chain_ctx + clean_text
+            logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
+
         # ====== Layer 2: CIE ======
         if on_layer_start:
             await on_layer_start("layer2_cie")
@@ -191,7 +216,7 @@ class PipelineOrchestrator:
 
         try:
             layer2_result = await self.layer2.execute(
-                clean_text=clean_text,
+                clean_text=l2_clean_text,
                 custom_prompt=custom_prompts.get("layer2_cie"),
                 on_token=make_token_cb("layer2_cie"),
                 temperature_override=temperature,
@@ -229,9 +254,16 @@ class PipelineOrchestrator:
             await on_layer_start("layer3_ccc")
         logger.info("LAYER_START", layer="layer3_ccc")
 
+        # ── Chained mode: inject L1 output as additional context for L3 ──
+        l3_clean_text = clean_text
+        if chained_mode and layer1_result.output:
+            chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", layer1_result.output)
+            l3_clean_text = chain_ctx + clean_text
+            logger.info("chained_context_injected", target_layer="layer3_ccc", context_chars=len(chain_ctx))
+
         try:
             layer3_result = await self.layer3.execute(
-                clean_text=clean_text,
+                clean_text=l3_clean_text,
                 layer2_output=layer2_result.output,
                 custom_prompt=custom_prompts.get("layer3_ccc"),
                 on_token=make_token_cb("layer3_ccc"),
@@ -466,6 +498,7 @@ class PipelineOrchestrator:
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
         temperature: float | None = None,
         seed: int | None = _UNSET,
+        chained_mode: bool = False,
     ) -> PipelineResult:
         """
         Execute pipeline with dynamic layer ordering from a snapshot.
@@ -550,8 +583,14 @@ class PipelineOrchestrator:
                         context["layer1_output"] = result.output
 
                 elif is_builtin and name == "layer2_cie":
+                    l2_input = context.get("clean_text", "")
+                    # Chained mode: prepend L1 output context
+                    if chained_mode and context.get("layer1_output"):
+                        chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", context["layer1_output"])
+                        l2_input = chain_ctx + l2_input
+                        logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
                     result = await self.layer2.execute(
-                        clean_text=context.get("clean_text", ""),
+                        clean_text=l2_input,
                         custom_prompt=prompt,
                         on_token=make_token_cb(name),
                         temperature_override=temperature,
@@ -563,8 +602,14 @@ class PipelineOrchestrator:
 
                 elif is_builtin and name == "layer3_ccc":
                     l2_out = context.get("layer2_output", {})
+                    l3_input = context.get("clean_text", "")
+                    # Chained mode: prepend L1 output context
+                    if chained_mode and context.get("layer1_output"):
+                        chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", context["layer1_output"])
+                        l3_input = chain_ctx + l3_input
+                        logger.info("chained_context_injected", target_layer="layer3_ccc", context_chars=len(chain_ctx))
                     result = await self.layer3.execute(
-                        clean_text=context.get("clean_text", ""),
+                        clean_text=l3_input,
                         layer2_output=l2_out,
                         custom_prompt=prompt,
                         on_token=make_token_cb(name),

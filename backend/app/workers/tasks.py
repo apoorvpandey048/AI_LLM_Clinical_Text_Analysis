@@ -139,6 +139,75 @@ def _get_runtime_seed() -> int | None:
     return settings.llm_seed
 
 
+def _get_chained_mode() -> bool:
+    """Get chained execution mode flag from Redis.
+
+    Returns True when chained execution is enabled (layers receive
+    previous layer outputs as context).  Default: False.
+    """
+    try:
+        import redis
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        val = r.get("snapai:chained_mode")
+        r.close()
+        if val is not None:
+            return val.lower() in ("true", "1", "yes")
+    except Exception:
+        pass
+    return False
+
+
+def _get_comparison_mode() -> bool:
+    """Get comparison mode flag from Redis.
+
+    Returns True when comparison mode is enabled (run both independent
+    and chained pipelines, then diff results).  Default: False.
+    """
+    try:
+        import redis
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        val = r.get("snapai:comparison_mode")
+        r.close()
+        if val is not None:
+            return val.lower() in ("true", "1", "yes")
+    except Exception:
+        pass
+    return False
+
+
+def _compute_comparison(independent: dict, chained: dict) -> dict:
+    """Compute a structured diff between independent and chained results.
+
+    Returns a comparison dict with CCI delta, grade differences,
+    and verdict change indicator.
+    """
+    ind_cci = independent.get("final_cci") or 0
+    chn_cci = chained.get("final_cci") or 0
+
+    ind_verdict = independent.get("final_verdict", "")
+    chn_verdict = chained.get("final_verdict", "")
+
+    # Grade-level comparison
+    ind_complications = (independent.get("layer2_output") or {}).get("complications", [])
+    chn_complications = (chained.get("layer2_output") or {}).get("complications", [])
+
+    ind_grades = sorted([c.get("cd_grade", "?") for c in ind_complications])
+    chn_grades = sorted([c.get("cd_grade", "?") for c in chn_complications])
+
+    return {
+        "cci_delta": round(chn_cci - ind_cci, 2),
+        "cci_independent": ind_cci,
+        "cci_chained": chn_cci,
+        "grade_difference": ind_grades != chn_grades,
+        "grades_independent": ind_grades,
+        "grades_chained": chn_grades,
+        "verdict_changed": ind_verdict != chn_verdict,
+        "verdict_independent": ind_verdict,
+        "verdict_chained": chn_verdict,
+        "complication_count_independent": len(ind_complications),
+        "complication_count_chained": len(chn_complications),
+    }
+
 def _get_custom_prompts() -> dict[str, str]:
     """Get custom prompts for BUILT-IN layers from the database.
     
@@ -437,6 +506,8 @@ def _process_case_impl(
         active_model = _get_active_model()
         runtime_temperature = _get_runtime_temperature()
         runtime_seed = _get_runtime_seed()
+        chained_mode = _get_chained_mode()
+        comparison_mode = _get_comparison_mode()
 
         # Build label lookup from snapshot (for streaming events)
         layer_labels: dict[str, str] = {}
@@ -491,66 +562,165 @@ def _process_case_impl(
                 error_message=error_message,
             )
 
-        # Run pipeline with streaming and per-case temperature
-        result = loop.run_until_complete(
-            orchestrator.execute(
-                raw_text=raw_text,
-                pipeline_layers=pipeline_layers,
-                custom_prompts=custom_prompts if custom_prompts else None,
-                extra_layers=extra_layers if extra_layers else None,
-                on_token=make_token_callback(),
-                on_layer_start=on_layer_start,
-                on_layer_complete=on_layer_complete,
-                temperature=runtime_temperature,
-                seed=runtime_seed,
+        # ── Helper to build a result_dict from a PipelineResult ──
+        def _result_to_dict(result, mode_label: str) -> dict:
+            return {
+                "case_id": case_id,
+                "case_number": case_number,
+                "job_id": job_id,
+                "success": result.success,
+                "layer1_output": result.layer1_result.output if result.layer1_result else None,
+                "layer2_output": result.layer2_result.output if result.layer2_result else None,
+                "layer3_output": result.layer3_result.output if result.layer3_result else None,
+                "layer1_raw_output": result.layer1_result.raw_response if result.layer1_result else None,
+                "layer2_raw_output": result.layer2_result.raw_response if result.layer2_result else None,
+                "layer3_raw_output": result.layer3_result.raw_response if result.layer3_result else None,
+                "extra_layer_outputs": {
+                    name: lr.output for name, lr in result.extra_layer_results.items()
+                } if result.extra_layer_results else None,
+                "extra_layer_raw_outputs": {
+                    name: lr.raw_response for name, lr in result.extra_layer_results.items()
+                } if result.extra_layer_results else None,
+                "final_verdict": result.final_verdict,
+                "final_cci": result.final_cci,
+                "total_duration_ms": result.total_duration_ms,
+                "total_tokens_input": result.total_tokens_input,
+                "total_tokens_output": result.total_tokens_output,
+                "error": result.error,
+                "model_used": active_model,
+                "temperature_used": runtime_temperature,
+                "seed_used": runtime_seed,
+                "execution_mode": mode_label,
+                "processed_at": datetime.utcnow().isoformat() + "Z",
+            }
+
+        # =============================================
+        # COMPARISON MODE — run both pipelines
+        # =============================================
+        if comparison_mode:
+            logger.info("PIPELINE-COMPARISON-START", case_id=case_id, job_id=job_id)
+
+            # Pass 1: Independent (no chaining, no streaming — silent)
+            logger.info("PIPELINE-INDEPENDENT-START", case_id=case_id)
+            try:
+                ind_result = loop.run_until_complete(
+                    orchestrator.execute(
+                        raw_text=raw_text,
+                        pipeline_layers=pipeline_layers,
+                        custom_prompts=custom_prompts if custom_prompts else None,
+                        extra_layers=extra_layers if extra_layers else None,
+                        on_token=None,  # no streaming for independent pass
+                        on_layer_start=None,
+                        on_layer_complete=None,
+                        temperature=runtime_temperature,
+                        seed=runtime_seed,
+                        chained_mode=False,
+                    )
+                )
+                ind_dict = _result_to_dict(ind_result, "independent")
+                logger.info("PIPELINE-INDEPENDENT-END", case_id=case_id, success=ind_result.success)
+            except Exception as e:
+                logger.error("PIPELINE-INDEPENDENT-FAILED", case_id=case_id, error=str(e))
+                ind_dict = {
+                    "success": False, "error": str(e), "execution_mode": "independent",
+                    "final_verdict": None, "final_cci": None,
+                    "layer2_output": None, "layer3_output": None,
+                }
+
+            # Pass 2: Chained (with streaming)
+            logger.info("PIPELINE-CHAINED-START", case_id=case_id)
+            try:
+                chn_result = loop.run_until_complete(
+                    orchestrator.execute(
+                        raw_text=raw_text,
+                        pipeline_layers=pipeline_layers,
+                        custom_prompts=custom_prompts if custom_prompts else None,
+                        extra_layers=extra_layers if extra_layers else None,
+                        on_token=make_token_callback(),
+                        on_layer_start=on_layer_start,
+                        on_layer_complete=on_layer_complete,
+                        temperature=runtime_temperature,
+                        seed=runtime_seed,
+                        chained_mode=True,
+                    )
+                )
+                chn_dict = _result_to_dict(chn_result, "chained")
+                logger.info("PIPELINE-CHAINED-END", case_id=case_id, success=chn_result.success)
+            except Exception as e:
+                logger.error("PIPELINE-CHAINED-FAILED", case_id=case_id, error=str(e))
+                chn_dict = {
+                    "success": False, "error": str(e), "execution_mode": "chained",
+                    "final_verdict": None, "final_cci": None,
+                    "layer2_output": None, "layer3_output": None,
+                }
+
+            # Compute comparison diff
+            comparison_diff = _compute_comparison(ind_dict, chn_dict)
+
+            # Build merged result — primary display uses chained results
+            result_dict = chn_dict.copy()
+            result_dict["execution_mode"] = "comparison"
+            result_dict["independent"] = ind_dict
+            result_dict["chained"] = chn_dict
+            result_dict["comparison"] = comparison_diff
+
+            # Use the chained result's success / verdict / cci as primary
+            result_dict["success"] = chn_dict.get("success", False) or ind_dict.get("success", False)
+
+            logger.info(
+                "PIPELINE-COMPARISON-END",
+                case_id=case_id,
+                cci_delta=comparison_diff.get("cci_delta"),
+                verdict_changed=comparison_diff.get("verdict_changed"),
+                grade_difference=comparison_diff.get("grade_difference"),
             )
-        )
+
+        # =============================================
+        # SINGLE MODE — independent or chained
+        # =============================================
+        else:
+            effective_mode = chained_mode
+            mode_label = "chained" if effective_mode else "independent"
+            logger.info(f"PIPELINE-{mode_label.upper()}-START", case_id=case_id)
+
+            result = loop.run_until_complete(
+                orchestrator.execute(
+                    raw_text=raw_text,
+                    pipeline_layers=pipeline_layers,
+                    custom_prompts=custom_prompts if custom_prompts else None,
+                    extra_layers=extra_layers if extra_layers else None,
+                    on_token=make_token_callback(),
+                    on_layer_start=on_layer_start,
+                    on_layer_complete=on_layer_complete,
+                    temperature=runtime_temperature,
+                    seed=runtime_seed,
+                    chained_mode=effective_mode,
+                )
+            )
+
+            logger.info(
+                f"PIPELINE-{mode_label.upper()}-END",
+                case_id=case_id,
+                success=result.success,
+                duration_ms=result.total_duration_ms,
+            )
+
+            result_dict = _result_to_dict(result, mode_label)
 
         logger.info(
             "task_completed",
             task_id=task_id,
             case_id=case_id,
             job_id=job_id,
-            success=result.success,
-            duration_ms=result.total_duration_ms,
+            success=result_dict.get("success"),
+            execution_mode=result_dict.get("execution_mode"),
             model_used=active_model,
         )
 
-        result_dict = {
-            "case_id": case_id,
-            "case_number": case_number,
-            "job_id": job_id,
-            "success": result.success,
-            "layer1_output": result.layer1_result.output if result.layer1_result else None,
-            "layer2_output": result.layer2_result.output if result.layer2_result else None,
-            "layer3_output": result.layer3_result.output if result.layer3_result else None,
-            # Raw LLM outputs for review
-            "layer1_raw_output": result.layer1_result.raw_response if result.layer1_result else None,
-            "layer2_raw_output": result.layer2_result.raw_response if result.layer2_result else None,
-            "layer3_raw_output": result.layer3_result.raw_response if result.layer3_result else None,
-            # Extra custom layer outputs
-            "extra_layer_outputs": {
-                name: lr.output for name, lr in result.extra_layer_results.items()
-            } if result.extra_layer_results else None,
-            "extra_layer_raw_outputs": {
-                name: lr.raw_response for name, lr in result.extra_layer_results.items()
-            } if result.extra_layer_results else None,
-            "final_verdict": result.final_verdict,
-            "final_cci": result.final_cci,
-            "total_duration_ms": result.total_duration_ms,
-            "total_tokens_input": result.total_tokens_input,
-            "total_tokens_output": result.total_tokens_output,
-            "error": result.error,
-            "model_used": active_model,
-            "temperature_used": runtime_temperature,
-            "seed_used": runtime_seed,
-            "processed_at": datetime.utcnow().isoformat() + "Z",
-        }
-
         # Publish case completion
         publisher.publish_case_complete(
-            job_id, case_number, result.success,
-            result.final_verdict, result.final_cci,
+            job_id, case_number, result_dict.get("success", False),
+            result_dict.get("final_verdict"), result_dict.get("final_cci"),
             source_file=source_file,
         )
 

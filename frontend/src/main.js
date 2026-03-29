@@ -1926,9 +1926,16 @@ function renderResultsCards(results) {
     window._resultData = results;
 
     const html = results.map((r, i) => {
+        // ── Comparison mode: render side-by-side view ──
+        if (r.execution_mode === 'comparison' && r.independent && r.chained) {
+            return renderComparisonResultCard(r, i);
+        }
+
+        // ── Standard rendering (independent or chained) ──
         const caseNum = r.case_number ?? i + 1;
         const verdict = r.layer3_output?.verdict ?? r.final_verdict ?? '—';
         const cci = r.layer3_output?.cci_score ?? r.final_cci ?? '—';
+        const executionMode = r.execution_mode ?? 'independent';
 
         // Always use server-persisted outputs — never depend on streaming buffers
         const extraOutputs = r.extra_layer_outputs || {};
@@ -1973,6 +1980,7 @@ function renderResultsCards(results) {
               <i data-lucide="activity"></i>
               CCI Stable
             </span>
+            ${executionMode !== 'independent' ? `<span class="execution-mode-label ${executionMode}-label">${executionMode.charAt(0).toUpperCase() + executionMode.slice(1)}</span>` : ''}
           </span>
           <div class="case-result-badges">
             <span class="cci-display">${cci}</span>
@@ -3494,6 +3502,8 @@ async function loadSystemInfo() {
 
         // Populate inference parameter controls
         populateInferenceParams(data);
+        // Populate execution mode controls (chained/comparison)
+        populateExecutionMode(data);
     } catch (err) {
         console.error('System info load failed:', err);
         bar.innerHTML = `
@@ -3680,6 +3690,215 @@ async function saveInferenceParams() {
             if (window.lucide) lucide.createIcons();
         }
     }
+}
+
+// ============================================
+// Execution Mode Controls (Chained + Comparison)
+// ============================================
+
+function populateExecutionMode(data) {
+    const chainedToggle = document.getElementById('chained-mode-toggle');
+    const comparisonToggle = document.getElementById('comparison-mode-toggle');
+    const badge = document.getElementById('execution-mode-badge');
+    const saveBtn = document.getElementById('save-execution-mode-btn');
+
+    if (chainedToggle) chainedToggle.checked = !!data.chained_mode;
+    if (comparisonToggle) comparisonToggle.checked = !!data.comparison_mode;
+
+    // Store initial values
+    state._initialChainedMode = !!data.chained_mode;
+    state._initialComparisonMode = !!data.comparison_mode;
+
+    if (saveBtn) saveBtn.disabled = true;
+
+    // Update badge
+    if (badge) {
+        if (data.comparison_mode) {
+            badge.textContent = 'Comparison';
+            badge.className = 'execution-mode-badge comparison';
+        } else if (data.chained_mode) {
+            badge.textContent = 'Chained';
+            badge.className = 'execution-mode-badge chained';
+        } else {
+            badge.textContent = 'Independent';
+            badge.className = 'execution-mode-badge';
+        }
+    }
+}
+
+function markExecutionModeDirty() {
+    const saveBtn = document.getElementById('save-execution-mode-btn');
+    if (saveBtn) saveBtn.disabled = false;
+
+    const badge = document.getElementById('execution-mode-badge');
+    if (badge) {
+        badge.textContent = 'Unsaved';
+        badge.className = 'execution-mode-badge custom';
+    }
+}
+
+async function saveExecutionMode() {
+    const chainedToggle = document.getElementById('chained-mode-toggle');
+    const comparisonToggle = document.getElementById('comparison-mode-toggle');
+    const saveBtn = document.getElementById('save-execution-mode-btn');
+
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+    }
+
+    try {
+        const chainedEnabled = chainedToggle?.checked ?? false;
+        const comparisonEnabled = comparisonToggle?.checked ?? false;
+
+        // Save chained mode
+        const res1 = await authFetch(`${API_BASE}/chained-mode`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: chainedEnabled }),
+        });
+        if (!res1.ok) throw new Error('Failed to save chained mode');
+
+        // Save comparison mode
+        const res2 = await authFetch(`${API_BASE}/comparison-mode`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: comparisonEnabled }),
+        });
+        if (!res2.ok) throw new Error('Failed to save comparison mode');
+
+        // Refresh system info
+        await loadSystemInfo();
+
+        const mode = comparisonEnabled ? 'Comparison' : (chainedEnabled ? 'Chained' : 'Independent');
+        showToast(`Execution mode set to: ${mode}`, 'success');
+    } catch (err) {
+        showToast(`Failed to save execution mode: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) {
+            saveBtn.innerHTML = '<i data-lucide="save" class="btn-icon"></i> Save Execution Mode';
+            saveBtn.disabled = true;
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+}
+
+// ============================================
+// Comparison Results Renderer
+// ============================================
+
+function renderComparisonResultCard(r, caseIndex) {
+    const ind = r.independent || {};
+    const chn = r.chained || {};
+    const cmp = r.comparison || {};
+
+    const indVerdict = ind.final_verdict ?? '—';
+    const chnVerdict = chn.final_verdict ?? '—';
+    const indCci = ind.final_cci ?? '—';
+    const chnCci = chn.final_cci ?? '—';
+
+    const cciDelta = cmp.cci_delta ?? 0;
+    const cciDeltaClass = cciDelta > 0 ? 'delta-up' : (cciDelta < 0 ? 'delta-down' : 'delta-same');
+    const cciDeltaIcon = cciDelta > 0 ? '↑' : (cciDelta < 0 ? '↓' : '=');
+
+    const verdictChanged = cmp.verdict_changed ?? false;
+    const gradesDifferent = cmp.grade_difference ?? false;
+
+    const indComplications = (ind.layer2_output?.complications || []);
+    const chnComplications = (chn.layer2_output?.complications || []);
+
+    const indGrades = indComplications.map(c => c.cd_grade || '?');
+    const chnGrades = chnComplications.map(c => c.cd_grade || '?');
+
+    return `
+    <div class="comparison-result-card">
+        <div class="comparison-header">
+            <span class="case-number">Case ${r.case_number ?? caseIndex + 1}</span>
+            <span class="execution-mode-label comparison-label">Comparison Mode</span>
+        </div>
+
+        <div class="comparison-delta-bar">
+            <div class="delta-item ${cciDeltaClass}">
+                <span class="delta-label">CCI Δ</span>
+                <span class="delta-value">${cciDeltaIcon} ${Math.abs(cciDelta).toFixed(1)}</span>
+            </div>
+            <div class="delta-item ${verdictChanged ? 'delta-changed' : 'delta-same'}">
+                <span class="delta-label">Verdict</span>
+                <span class="delta-value">${verdictChanged ? '⚠ Changed' : '✓ Same'}</span>
+            </div>
+            <div class="delta-item ${gradesDifferent ? 'delta-changed' : 'delta-same'}">
+                <span class="delta-label">Grades</span>
+                <span class="delta-value">${gradesDifferent ? '⚠ Different' : '✓ Same'}</span>
+            </div>
+        </div>
+
+        <div class="comparison-panels">
+            <div class="comparison-panel panel-independent">
+                <h4 class="panel-title"><i data-lucide="split-square-horizontal"></i> Independent</h4>
+                <div class="panel-stats">
+                    <div class="stat-row">
+                        <span class="stat-label">Verdict</span>
+                        <span class="verdict-badge verdict-${(indVerdict + '').toLowerCase().replace(/\\s/g, '')}">${indVerdict}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">CCI</span>
+                        <span class="cci-value">${indCci}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Complications</span>
+                        <span>${indComplications.length}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">CD Grades</span>
+                        <div class="cd-grades">${indGrades.map(g => `<span class="cd-grade-badge">${g}</span>`).join('') || '<span class="no-grades">None</span>'}</div>
+                    </div>
+                </div>
+                <details class="json-details">
+                    <summary>Layer 2 JSON <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${caseIndex}]?.independent?.layer2_output ?? {}, this)">Copy</button></summary>
+                    <pre class="json-tree">${escapeHtml(JSON.stringify(ind.layer2_output || {}, null, 2))}</pre>
+                </details>
+                <details class="json-details">
+                    <summary>Layer 3 JSON <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${caseIndex}]?.independent?.layer3_output ?? {}, this)">Copy</button></summary>
+                    <pre class="json-tree">${escapeHtml(JSON.stringify(ind.layer3_output || {}, null, 2))}</pre>
+                </details>
+            </div>
+
+            <div class="comparison-panel panel-chained">
+                <h4 class="panel-title"><i data-lucide="link"></i> Chained</h4>
+                <div class="panel-stats">
+                    <div class="stat-row">
+                        <span class="stat-label">Verdict</span>
+                        <span class="verdict-badge verdict-${(chnVerdict + '').toLowerCase().replace(/\\s/g, '')}">${chnVerdict}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">CCI</span>
+                        <span class="cci-value">${chnCci}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Complications</span>
+                        <span>${chnComplications.length}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">CD Grades</span>
+                        <div class="cd-grades">${chnGrades.map(g => `<span class="cd-grade-badge">${g}</span>`).join('') || '<span class="no-grades">None</span>'}</div>
+                    </div>
+                </div>
+                <details class="json-details">
+                    <summary>Layer 2 JSON <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${caseIndex}]?.chained?.layer2_output ?? {}, this)">Copy</button></summary>
+                    <pre class="json-tree">${escapeHtml(JSON.stringify(chn.layer2_output || {}, null, 2))}</pre>
+                </details>
+                <details class="json-details">
+                    <summary>Layer 3 JSON <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${caseIndex}]?.chained?.layer3_output ?? {}, this)">Copy</button></summary>
+                    <pre class="json-tree">${escapeHtml(JSON.stringify(chn.layer3_output || {}, null, 2))}</pre>
+                </details>
+            </div>
+        </div>
+
+        <details class="json-details comparison-diff-details">
+            <summary>Comparison Diff JSON</summary>
+            <pre class="json-tree">${escapeHtml(JSON.stringify(cmp, null, 2))}</pre>
+        </details>
+    </div>`;
 }
 
 // ============================================
@@ -5042,6 +5261,9 @@ window.updateTemperature = updateTemperature;
 window.updateSeed = updateSeed;
 window.clearSeed = clearSeed;
 window.saveInferenceParams = saveInferenceParams;
+// Execution Mode
+window.markExecutionModeDirty = markExecutionModeDirty;
+window.saveExecutionMode = saveExecutionMode;
 window.clearFile = clearFile;
 window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;

@@ -242,6 +242,39 @@
                             </button>
                         </div>
                     </div>
+
+                    <!-- Execution Mode Panel -->
+                    <div class="execution-mode-panel">
+                        <h3 class="execution-mode-title">
+                            <i data-lucide="git-compare"></i>
+                            Execution Mode
+                            <span class="execution-mode-badge" id="execution-mode-badge">Independent</span>
+                        </h3>
+                        <div class="toggle-group">
+                            <label class="toggle-switch" data-tooltip="When enabled, Layer 2 receives Layer 1 output as context, and Layer 3 receives both.">
+                                <input type="checkbox" id="chained-mode-toggle" onchange="markExecutionModeDirty()">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">Enable Chained Execution</span>
+                            </label>
+                            <div class="toggle-hint">Layers receive previous layer structured JSON as additional context</div>
+
+                            <label class="toggle-switch" data-tooltip="Runs both independent + chained pipelines for each case. Results shown side-by-side.">
+                                <input type="checkbox" id="comparison-mode-toggle" onchange="markExecutionModeDirty()">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">Run Comparison Mode</span>
+                            </label>
+                            <div class="toggle-hint comparison-warning">
+                                <i data-lucide="alert-triangle" class="warning-icon"></i>
+                                <span>⚠ Runs both pipelines per case — <strong>2× LLM cost</strong></span>
+                            </div>
+                        </div>
+                        <div class="execution-mode-actions" id="execution-mode-actions">
+                            <button class="btn btn-xs btn-primary" id="save-execution-mode-btn" onclick="saveExecutionMode()" disabled>
+                                <i data-lucide="save" class="btn-icon"></i>
+                                Save Execution Mode
+                            </button>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Progress Section (Hidden by default) -->
