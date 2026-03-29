@@ -51,6 +51,7 @@ class LLMClient(ABC):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         timeout: int = 600,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response from the LLM.
@@ -61,6 +62,7 @@ class LLMClient(ABC):
             temperature: Sampling temperature (0.0 = deterministic)
             max_tokens: Maximum tokens to generate
             timeout: Request timeout in seconds
+            seed: Seed for reproducible sampling (None = non-deterministic)
 
         Returns:
             LLMResponse with the result
@@ -78,6 +80,7 @@ class LLMClient(ABC):
         max_tokens: int = 4096,
         timeout: int = 600,
         on_token: Callable[[str], Awaitable[None]] | None = None,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response with streaming tokens.
@@ -92,6 +95,7 @@ class LLMClient(ABC):
             max_tokens: Maximum tokens to generate
             timeout: Request timeout in seconds
             on_token: Async callback invoked with each token chunk
+            seed: Seed for reproducible sampling (None = non-deterministic)
 
         Returns:
             LLMResponse with the complete result
@@ -103,6 +107,7 @@ class LLMClient(ABC):
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
+            seed=seed,
         )
 
     @abstractmethod

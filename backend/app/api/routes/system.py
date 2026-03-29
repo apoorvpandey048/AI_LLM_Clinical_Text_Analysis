@@ -58,8 +58,9 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
     """
     request_id = getattr(request.state, "request_id", None)
 
-    # Get active model and runtime temperature from Redis
+    # Get active model and runtime temperature/seed from Redis
     runtime_temperature = settings.llm_temperature
+    runtime_seed = settings.llm_seed
     redis_connected = False
     try:
         r = _get_redis()
@@ -69,6 +70,12 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
         temp = r.get("snapai:temperature")
         if temp is not None:
             runtime_temperature = float(temp)
+        seed_val = r.get("snapai:seed")
+        if seed_val is not None:
+            if seed_val == "" or seed_val.lower() == "none":
+                runtime_seed = None
+            else:
+                runtime_seed = int(seed_val)
         r.close()
     except Exception:
         active_model = settings.llm_model
@@ -139,9 +146,11 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
             "version": "2.0.0",
             # Runtime values for system info bar
             "temperature": runtime_temperature,
+            "seed": runtime_seed,
             "prompt_version": settings.prompt_version,
             "model_version": getattr(settings, 'model_version', settings.llm_model),
             "supports_temperature_override": True,  # Redis-based temp always supported
+            "supports_seed_override": True,  # Redis-based seed always supported
             "gpu_busy": gpu_busy,
         },
         request_id=request_id,
@@ -431,6 +440,75 @@ async def set_temperature(request: Request, admin: User = Depends(require_admin)
         return create_response(
             success=False,
             error=f"Failed to update temperature: {str(e)}",
+            request_id=request_id,
+        )
+
+
+# ============================================
+# Seed Control
+# ============================================
+
+@router.put("/seed")
+async def set_seed(request: Request, admin: User = Depends(require_admin)):
+    """
+    Update runtime LLM seed for reproducibility.
+
+    Stored in Redis so workers pick it up per case.
+    Set to null to disable seed (non-deterministic).
+    """
+    from pydantic import BaseModel
+
+    class SeedConfig(BaseModel):
+        seed: int | None = None
+
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        body = await request.json()
+        config = SeedConfig(**body)
+    except Exception as e:
+        return create_response(
+            success=False,
+            error=f"Invalid request: {str(e)}",
+            request_id=request_id,
+        )
+
+    try:
+        r = _get_redis()
+        if config.seed is None:
+            r.set("snapai:seed", "none")  # Explicit "no seed"
+        else:
+            r.set("snapai:seed", str(config.seed))
+        r.close()
+
+        logger.info("seed_updated", seed=config.seed)
+
+        # Audit log
+        from app.db import get_db, AuditLog
+        db = next(get_db())
+        audit = AuditLog(
+            action="seed_changed",
+            details={"seed": config.seed, "admin": admin.username},
+        )
+        db.add(audit)
+        db.commit()
+        db.close()
+
+        seed_msg = f"Seed set to {config.seed}" if config.seed is not None else "Seed cleared (non-deterministic)"
+        return create_response(
+            success=True,
+            data={
+                "seed": config.seed,
+                "message": seed_msg,
+            },
+            request_id=request_id,
+        )
+
+    except Exception as e:
+        logger.error("seed_update_failed", error=str(e))
+        return create_response(
+            success=False,
+            error=f"Failed to update seed: {str(e)}",
             request_id=request_id,
         )
 

@@ -3434,11 +3434,16 @@ async function loadSystemInfo() {
         }
 
         // Read-only inference parameter display with tooltips
+        const seedDisplay = data.seed != null ? data.seed : 'None';
         const paramHtml = `
             <div class="param-display-panel">
                 <div class="param-item" title="Set to 0 for fully deterministic, reproducible outputs (greedy decoding).">
                     <span class="param-label">temp</span>
                     <span class="param-value">${temperature}</span>
+                </div>
+                <div class="param-item" title="Random seed for reproducible outputs. 'None' = non-deterministic.">
+                    <span class="param-label">seed</span>
+                    <span class="param-value">${seedDisplay}</span>
                 </div>
                 <div class="param-item" title="Nucleus sampling disabled (=1.0). Combined with temp=0 for deterministic output.">
                     <span class="param-label">top_p</span>
@@ -3486,6 +3491,9 @@ async function loadSystemInfo() {
         state.systemInfo = data;
         updateConnectionStatus(statusClass);
         updateFooterStatus(redisOk, llmOk);
+
+        // Populate inference parameter controls
+        populateInferenceParams(data);
     } catch (err) {
         console.error('System info load failed:', err);
         bar.innerHTML = `
@@ -3550,6 +3558,127 @@ async function updateTemperature(value) {
         }
     } catch (err) {
         showToast(`Temperature update failed: ${err.message}`, 'error');
+    }
+}
+
+async function updateSeed(value) {
+    const seed = value === '' || value == null ? null : parseInt(value, 10);
+    if (seed !== null && isNaN(seed)) {
+        showToast('Seed must be a whole number or empty', 'warning');
+        return;
+    }
+    try {
+        const res = await authFetch(`${API_BASE}/system/seed`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seed }),
+        });
+        if (res.ok) {
+            const msg = seed !== null ? `Seed set to ${seed}` : 'Seed cleared (non-deterministic)';
+            showToast(msg, 'success');
+        } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Failed: ${extractErrorMessage(err)}`, 'error');
+        }
+    } catch (err) {
+        showToast(`Seed update failed: ${err.message}`, 'error');
+    }
+}
+
+function clearSeed() {
+    const seedInput = document.getElementById('seed-input');
+    if (seedInput) {
+        seedInput.value = '';
+        markParamsDirty();
+    }
+}
+
+function populateInferenceParams(data) {
+    const tempSlider = document.getElementById('temperature-slider');
+    const tempInput = document.getElementById('temperature-input');
+    const seedInput = document.getElementById('seed-input');
+    const badge = document.getElementById('inference-params-badge');
+    const saveBtn = document.getElementById('save-params-btn');
+
+    if (tempSlider && tempInput) {
+        const temp = data.temperature ?? 0.0;
+        tempSlider.value = temp;
+        tempInput.value = temp;
+
+        // Sync slider <-> input
+        tempSlider.addEventListener('input', () => {
+            tempInput.value = tempSlider.value;
+            markParamsDirty();
+        });
+        tempInput.addEventListener('input', () => {
+            const v = parseFloat(tempInput.value);
+            if (!isNaN(v) && v >= 0 && v <= 1) {
+                tempSlider.value = v;
+            }
+            markParamsDirty();
+        });
+    }
+
+    if (seedInput) {
+        seedInput.value = data.seed != null ? data.seed : '';
+        seedInput.addEventListener('input', markParamsDirty);
+    }
+
+    // Store initial values for dirty detection
+    state._initialTemp = data.temperature ?? 0.0;
+    state._initialSeed = data.seed;
+
+    // Reset dirty state
+    if (saveBtn) saveBtn.disabled = true;
+    if (badge) {
+        const isCustom = (data.temperature != null && data.temperature !== 0) || data.seed != null;
+        badge.textContent = isCustom ? 'Custom' : 'Defaults';
+        badge.className = `inference-params-badge${isCustom ? ' custom' : ''}`;
+    }
+}
+
+function markParamsDirty() {
+    const saveBtn = document.getElementById('save-params-btn');
+    if (saveBtn) saveBtn.disabled = false;
+
+    const badge = document.getElementById('inference-params-badge');
+    if (badge) {
+        badge.textContent = 'Unsaved';
+        badge.className = 'inference-params-badge custom';
+    }
+}
+
+async function saveInferenceParams() {
+    const tempInput = document.getElementById('temperature-input');
+    const seedInput = document.getElementById('seed-input');
+    const saveBtn = document.getElementById('save-params-btn');
+
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+    }
+
+    try {
+        // Save temperature
+        const temp = parseFloat(tempInput?.value ?? '0');
+        await updateTemperature(temp);
+
+        // Save seed
+        const seedVal = seedInput?.value?.trim();
+        await updateSeed(seedVal === '' ? null : seedVal);
+
+        // Refresh system info to update status bar
+        await loadSystemInfo();
+
+        showToast('Inference parameters saved', 'success');
+    } catch (err) {
+        showToast(`Failed to save parameters: ${err.message}`, 'error');
+    } finally {
+        if (saveBtn) {
+            saveBtn.innerHTML = '<i data-lucide="save" class="btn-icon"></i> Save Parameters';
+            saveBtn.disabled = true;
+            if (window.lucide) lucide.createIcons();
+        }
     }
 }
 
@@ -4910,6 +5039,9 @@ window.copyRawOutput = copyRawOutput;
 window.copyToClipboard = copyToClipboard;
 window.downloadJSON = downloadJSON;
 window.updateTemperature = updateTemperature;
+window.updateSeed = updateSeed;
+window.clearSeed = clearSeed;
+window.saveInferenceParams = saveInferenceParams;
 window.clearFile = clearFile;
 window.openModelModal = openModelModal;
 window.closeModelModal = closeModelModal;

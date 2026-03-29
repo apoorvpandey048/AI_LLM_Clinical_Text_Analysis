@@ -198,17 +198,29 @@
                         Process Cases
                     </button>
 
-                    <!-- Inference Parameters (Read-Only) -->
+                    <!-- Inference Parameters (Editable) -->
                     <div class="inference-params-panel">
                         <h3 class="inference-params-title">
                             <i data-lucide="sliders-horizontal"></i>
                             Inference Parameters
-                            <span class="inference-params-badge">Locked</span>
+                            <span class="inference-params-badge" id="inference-params-badge">Defaults</span>
                         </h3>
                         <div class="param-grid">
-                            <div class="param-item" data-tooltip="Set to 0 for fully deterministic, reproducible outputs (greedy decoding).">
+                            <div class="param-item param-item-editable" data-tooltip="Sampling temperature. 0 = deterministic greedy decoding. Higher values increase randomness.">
                                 <span class="param-label">temperature</span>
-                                <span class="param-value">0</span>
+                                <div class="param-control">
+                                    <input type="range" id="temperature-slider" min="0" max="1" step="0.01" value="0" class="param-slider">
+                                    <input type="number" id="temperature-input" min="0" max="1" step="0.01" value="0.0" class="param-number-input">
+                                </div>
+                            </div>
+                            <div class="param-item param-item-editable" data-tooltip="Random seed for reproducible outputs. Leave empty for non-deterministic.">
+                                <span class="param-label">seed</span>
+                                <div class="param-control">
+                                    <input type="number" id="seed-input" placeholder="None (random)" class="param-number-input param-seed-input">
+                                    <button class="btn btn-xs btn-ghost param-clear-btn" id="seed-clear-btn" title="Clear seed (non-deterministic)" onclick="clearSeed()">
+                                        <i data-lucide="x"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="param-item" data-tooltip="Nucleus sampling disabled (=1.0) — all tokens considered. Combined with temp=0 for deterministic output.">
                                 <span class="param-label">top_p</span>
@@ -222,6 +234,12 @@
                                 <span class="param-label">timeout</span>
                                 <span class="param-value">900s</span>
                             </div>
+                        </div>
+                        <div class="param-actions" id="param-actions">
+                            <button class="btn btn-xs btn-primary" id="save-params-btn" onclick="saveInferenceParams()" disabled>
+                                <i data-lucide="save" class="btn-icon"></i>
+                                Save Parameters
+                            </button>
                         </div>
                     </div>
                 </section>

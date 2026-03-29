@@ -4747,6 +4747,115 @@ button {
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* Editable param controls */
+.param-item-editable {
+  cursor: default;
+}
+
+.param-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.param-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #e0e0e0, #bbb);
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.param-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-primary, #c8102e);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.param-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.param-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-primary, #c8102e);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+}
+
+.param-number-input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  width: 65px;
+  padding: 4px 6px;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: var(--radius-sm, 4px);
+  background: #fff;
+  color: var(--color-text, #1a1a1a);
+  text-align: center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.param-number-input:focus {
+  outline: none;
+  border-color: var(--color-primary, #c8102e);
+  box-shadow: 0 0 0 3px rgba(200, 16, 46, 0.12);
+}
+
+.param-seed-input {
+  width: 110px;
+  text-align: left;
+}
+
+.param-seed-input::placeholder {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+.param-clear-btn {
+  padding: 2px 4px !important;
+  min-width: unset !important;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.param-clear-btn:hover {
+  opacity: 1;
+}
+
+.param-clear-btn svg,
+.param-clear-btn i {
+  width: 14px;
+  height: 14px;
+}
+
+.param-actions {
+  margin-top: var(--space-md);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inference-params-badge.custom {
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+
 /* ==========================================
    vLLM Status Banner
    ========================================== */

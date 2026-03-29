@@ -48,6 +48,7 @@ class VLLMClient(LLMClient):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         timeout: int = 600,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response using vLLM.
@@ -82,6 +83,9 @@ class VLLMClient(LLMClient):
             "top_p": 1,
             "max_tokens": max_tokens,
         }
+        # Add seed for reproducibility (only when explicitly set)
+        if seed is not None:
+            payload["seed"] = seed
 
         # Strip fields that can cause HTTP 400 on various vLLM setups
         # (response_format requires guided decoding backends which may not be available)
@@ -96,6 +100,7 @@ class VLLMClient(LLMClient):
             prompt_length=len(prompt),
             system_prompt_length=len(system_prompt) if system_prompt else 0,
             temperature=temperature,
+            seed=seed,
         )
 
         try:
@@ -248,6 +253,7 @@ class VLLMClient(LLMClient):
         max_tokens: int = 4096,
         timeout: int = 600,
         on_token: Callable[[str], Awaitable[None]] | None = None,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response with real-time token streaming via SSE.
@@ -289,6 +295,9 @@ class VLLMClient(LLMClient):
             "max_tokens": max_tokens,
             "stream": True,
         }
+        # Add seed for reproducibility (only when explicitly set)
+        if seed is not None:
+            payload["seed"] = seed
         # Strip fields that can cause HTTP 400 on various vLLM setups
         payload.pop("response_format", None)
         payload.pop("tools", None)
@@ -300,6 +309,7 @@ class VLLMClient(LLMClient):
             model=self.model,
             prompt_length=len(prompt),
             temperature=temperature,
+            seed=seed,
         )
 
         accumulated_content = ""

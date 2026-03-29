@@ -15,6 +15,9 @@ from app.utils import get_logger
 
 logger = get_logger(__name__)
 
+# Sentinel to distinguish "not passed" from "None" for seed_override
+_UNSET = object()
+
 
 @dataclass
 class LayerResult:
@@ -151,6 +154,7 @@ class BaseLayer(ABC):
         custom_prompt: str | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
         temperature_override: float | None = None,
+        seed_override: int | None = _UNSET,
         **kwargs,
     ) -> LayerResult:
         """
@@ -160,6 +164,7 @@ class BaseLayer(ABC):
             custom_prompt: Optional custom prompt to use instead of file
             on_token: Optional async callback for each generated token
             temperature_override: If set, overrides settings temperature (for per-case dynamic control)
+            seed_override: If set, overrides settings seed. Use _UNSET sentinel to indicate "use config default".
             **kwargs: Layer-specific input data
 
         Returns:
@@ -167,8 +172,10 @@ class BaseLayer(ABC):
         """
         # Resolve temperature: per-case override > settings default
         effective_temperature = temperature_override if temperature_override is not None else self.settings.llm_temperature
+        # Resolve seed: per-case override > settings default (None = no seed / non-deterministic)
+        effective_seed = seed_override if seed_override is not _UNSET else self.settings.llm_seed
 
-        logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None, temperature=effective_temperature)
+        logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None, temperature=effective_temperature, seed=effective_seed)
 
         try:
             # Load system prompt (custom or file)
@@ -186,6 +193,7 @@ class BaseLayer(ABC):
                     max_tokens=self.settings.llm_max_tokens,
                     timeout=self.settings.llm_timeout,
                     on_token=on_token,
+                    seed=effective_seed,
                 )
             else:
                 response: LLMResponse = await self.llm_client.generate(
@@ -194,6 +202,7 @@ class BaseLayer(ABC):
                     temperature=effective_temperature,
                     max_tokens=self.settings.llm_max_tokens,
                     timeout=self.settings.llm_timeout,
+                    seed=effective_seed,
                 )
 
             # Check for LLM errors

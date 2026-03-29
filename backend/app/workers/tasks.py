@@ -118,6 +118,27 @@ def _get_runtime_temperature() -> float:
     return settings.llm_temperature
 
 
+def _get_runtime_seed() -> int | None:
+    """Get runtime seed from Redis, falling back to settings.
+    
+    Called per case to ensure dynamically updated seed
+    is picked up immediately, even for queued jobs.
+    Returns None when no seed is set (non-deterministic).
+    """
+    try:
+        import redis
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        seed = r.get("snapai:seed")
+        r.close()
+        if seed is not None:
+            if seed == "" or seed.lower() == "none":
+                return None
+            return int(seed)
+    except Exception:
+        pass
+    return settings.llm_seed
+
+
 def _get_custom_prompts() -> dict[str, str]:
     """Get custom prompts for BUILT-IN layers from the database.
     
@@ -336,6 +357,7 @@ def save_case_result(job_id: str, case_number: int, result: dict) -> None:
                     "cci": result.get("final_cci"),
                     "model_used": result.get("model_used"),
                     "temperature_used": result.get("temperature_used"),
+                    "seed_used": result.get("seed_used"),
                 },
                 duration_ms=result.get("total_duration_ms"),
                 tokens_input=result.get("total_tokens_input"),
@@ -414,6 +436,7 @@ def _process_case_impl(
         # Get active model, custom prompts, and runtime temperature — all per case
         active_model = _get_active_model()
         runtime_temperature = _get_runtime_temperature()
+        runtime_seed = _get_runtime_seed()
 
         # Build label lookup from snapshot (for streaming events)
         layer_labels: dict[str, str] = {}
@@ -479,6 +502,7 @@ def _process_case_impl(
                 on_layer_start=on_layer_start,
                 on_layer_complete=on_layer_complete,
                 temperature=runtime_temperature,
+                seed=runtime_seed,
             )
         )
 
@@ -519,6 +543,7 @@ def _process_case_impl(
             "error": result.error,
             "model_used": active_model,
             "temperature_used": runtime_temperature,
+            "seed_used": runtime_seed,
             "processed_at": datetime.utcnow().isoformat() + "Z",
         }
 

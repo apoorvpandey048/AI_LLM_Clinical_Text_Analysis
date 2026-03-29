@@ -49,6 +49,7 @@ class OllamaClient(LLMClient):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         timeout: int = 600,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response using Ollama (non-streaming).
@@ -79,6 +80,8 @@ class OllamaClient(LLMClient):
             },
             "format": "json",
         }
+        if seed is not None:
+            payload["options"]["seed"] = seed
 
         logger.debug(
             "ollama_request",
@@ -155,6 +158,7 @@ class OllamaClient(LLMClient):
         max_tokens: int = 4096,
         timeout: int = 600,
         on_token: Callable[[str], Awaitable[None]] | None = None,
+        seed: int | None = None,
     ) -> LLMResponse:
         """
         Generate a response with real-time token streaming.
@@ -189,6 +193,8 @@ class OllamaClient(LLMClient):
             },
             "format": "json",
         }
+        if seed is not None:
+            payload["options"]["seed"] = seed
 
         logger.debug(
             "ollama_stream_request",

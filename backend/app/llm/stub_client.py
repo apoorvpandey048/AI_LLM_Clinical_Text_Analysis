@@ -20,6 +20,7 @@ class StubLLMClient(LLMClient):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         timeout: int = 600,
+        seed: int | None = None,
     ) -> LLMResponse:
         start = time.time()
         content = '{"stub": true, "prompt_preview": ' + repr(prompt[:120]) + '}'
@@ -49,6 +50,7 @@ class StubLLMClient(LLMClient):
         max_tokens: int = 4096,
         timeout: int = 600,
         on_token: Callable[[str], Awaitable[None]] | None = None,
+        seed: int | None = None,
     ) -> LLMResponse:
         # simple streaming: send a few token fragments to callback
         import asyncio

@@ -15,7 +15,7 @@ from app.llm import LLMClient
 from app.pipeline.layer1_ctp import Layer1CTP
 from app.pipeline.layer2_cie import Layer2CIE
 from app.pipeline.layer3_ccc import Layer3CCC
-from app.pipeline.base import LayerResult
+from app.pipeline.base import LayerResult, _UNSET
 from app.utils import get_logger
 
 logger = get_logger(__name__)
@@ -88,6 +88,7 @@ class PipelineOrchestrator:
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
         temperature: float | None = None,
+        seed: int | None = _UNSET,
     ) -> PipelineResult:
         """
         Execute the complete pipeline.
@@ -107,6 +108,7 @@ class PipelineOrchestrator:
             on_layer_start: Async callback (layer_name) when layer begins
             on_layer_complete: Async callback (layer_name, success, duration_ms)
             temperature: Runtime temperature override
+            seed: Seed for reproducible sampling (_UNSET = use config default, None = no seed)
 
         Returns:
             PipelineResult with all layer outputs
@@ -120,6 +122,7 @@ class PipelineOrchestrator:
                 on_layer_start=on_layer_start,
                 on_layer_complete=on_layer_complete,
                 temperature=temperature,
+                seed=seed,
             )
 
         # ── Legacy execution path (unchanged) ──
@@ -149,6 +152,7 @@ class PipelineOrchestrator:
                 custom_prompt=custom_prompts.get("layer1_ctp"),
                 on_token=make_token_cb("layer1_ctp"),
                 temperature_override=temperature,
+                seed_override=seed,
             )
         except Exception as exc:
             logger.exception("PIPELINE_LAYER_CRASH", layer="layer1_ctp")
@@ -191,6 +195,7 @@ class PipelineOrchestrator:
                 custom_prompt=custom_prompts.get("layer2_cie"),
                 on_token=make_token_cb("layer2_cie"),
                 temperature_override=temperature,
+                seed_override=seed,
             )
         except Exception as exc:
             logger.exception("PIPELINE_LAYER_CRASH", layer="layer2_cie")
@@ -231,6 +236,7 @@ class PipelineOrchestrator:
                 custom_prompt=custom_prompts.get("layer3_ccc"),
                 on_token=make_token_cb("layer3_ccc"),
                 temperature_override=temperature,
+                seed_override=seed,
             )
         except Exception as exc:
             logger.exception("PIPELINE_LAYER_CRASH", layer="layer3_ccc")
@@ -286,6 +292,7 @@ class PipelineOrchestrator:
                 on_layer_start=on_layer_start,
                 on_layer_complete=on_layer_complete,
                 temperature=temperature,
+                seed=seed,
             )
             for r in extra_layer_results.values():
                 total_duration_ms += r.duration_ms
@@ -324,6 +331,7 @@ class PipelineOrchestrator:
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
         temperature: float | None = None,
+        seed: int | None = _UNSET,
     ) -> dict[str, LayerResult]:
         """
         Execute custom/extra layers sequentially.
@@ -338,6 +346,7 @@ class PipelineOrchestrator:
             on_layer_start: Layer start callback
             on_layer_complete: Layer complete callback
             temperature: Runtime temperature override
+            seed: Seed for reproducible sampling
 
         Returns:
             Dict mapping layer_name to LayerResult
@@ -346,6 +355,7 @@ class PipelineOrchestrator:
         from app.config import get_settings
         config = get_settings()
         effective_temperature = temperature if temperature is not None else config.llm_temperature
+        effective_seed = seed if seed is not _UNSET else config.llm_seed
 
         for layer_config in extra_layers:
             layer_name = layer_config.get("layer_name", "")
@@ -391,6 +401,7 @@ class PipelineOrchestrator:
                         max_tokens=config.llm_max_tokens,
                         timeout=config.llm_timeout,
                         on_token=token_cb,
+                        seed=effective_seed,
                     )
                 else:
                     response = await self.llm_client.generate(
@@ -399,6 +410,7 @@ class PipelineOrchestrator:
                         temperature=effective_temperature,
                         max_tokens=config.llm_max_tokens,
                         timeout=config.llm_timeout,
+                        seed=effective_seed,
                     )
 
                 result = LayerResult(
@@ -453,6 +465,7 @@ class PipelineOrchestrator:
         on_layer_start: Callable[[str], Awaitable[None]] | None = None,
         on_layer_complete: Callable[[str, bool, int], Awaitable[None]] | None = None,
         temperature: float | None = None,
+        seed: int | None = _UNSET,
     ) -> PipelineResult:
         """
         Execute pipeline with dynamic layer ordering from a snapshot.
@@ -529,6 +542,7 @@ class PipelineOrchestrator:
                         custom_prompt=prompt,
                         on_token=make_token_cb(name),
                         temperature_override=temperature,
+                        seed_override=seed,
                     )
                     layer1_result = result
                     if result.success and result.output:
@@ -541,6 +555,7 @@ class PipelineOrchestrator:
                         custom_prompt=prompt,
                         on_token=make_token_cb(name),
                         temperature_override=temperature,
+                        seed_override=seed,
                     )
                     layer2_result = result
                     if result.success and result.output:
@@ -554,6 +569,7 @@ class PipelineOrchestrator:
                         custom_prompt=prompt,
                         on_token=make_token_cb(name),
                         temperature_override=temperature,
+                        seed_override=seed,
                     )
                     layer3_result = result
                     if result.success and result.output:
@@ -568,6 +584,7 @@ class PipelineOrchestrator:
                         prev_custom_results=extra_results,
                         on_token=on_token,
                         temperature=temperature,
+                        seed=seed,
                     )
                     extra_results[name] = result
 
@@ -671,6 +688,7 @@ class PipelineOrchestrator:
         prev_custom_results: dict[str, LayerResult],
         on_token: Callable[[str, str], Awaitable[None]] | None = None,
         temperature: float | None = None,
+        seed: int | None = _UNSET,
     ) -> LayerResult:
         """
         Execute a single custom layer with the accumulated pipeline context.
@@ -682,10 +700,12 @@ class PipelineOrchestrator:
             prev_custom_results: Results from earlier custom layers (for chaining)
             on_token: Token streaming callback
             temperature: Temperature override
+            seed: Seed for reproducible sampling
         """
         from app.config import get_settings
         config = get_settings()
         effective_temperature = temperature if temperature is not None else config.llm_temperature
+        effective_seed = seed if seed is not _UNSET else config.llm_seed
 
         # Build user prompt with pipeline context
         user_prompt = (
@@ -723,6 +743,7 @@ class PipelineOrchestrator:
                     max_tokens=config.llm_max_tokens,
                     timeout=config.llm_timeout,
                     on_token=token_cb,
+                    seed=effective_seed,
                 )
             else:
                 response = await self.llm_client.generate(
@@ -731,6 +752,7 @@ class PipelineOrchestrator:
                     temperature=effective_temperature,
                     max_tokens=config.llm_max_tokens,
                     timeout=config.llm_timeout,
+                    seed=effective_seed,
                 )
 
             return LayerResult(
