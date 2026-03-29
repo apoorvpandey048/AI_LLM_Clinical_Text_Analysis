@@ -206,7 +206,7 @@ class BaseLayer(ABC):
                 return LayerResult(
                     success=False,
                     output=None,
-                    raw_response=response.content,
+                    raw_response=response.reasoning or response.content,
                     tokens_input=response.tokens_input,
                     tokens_output=response.tokens_output,
                     duration_ms=response.duration_ms,
@@ -226,7 +226,7 @@ class BaseLayer(ABC):
                 return LayerResult(
                     success=False,
                     output=None,
-                    raw_response=response.content,
+                    raw_response=response.reasoning or response.content,
                     tokens_input=response.tokens_input,
                     tokens_output=response.tokens_output,
                     duration_ms=response.duration_ms,
@@ -246,7 +246,7 @@ class BaseLayer(ABC):
                 return LayerResult(
                     success=False,
                     output=response.parsed_json,
-                    raw_response=response.content,
+                    raw_response=response.reasoning or response.content,
                     tokens_input=response.tokens_input,
                     tokens_output=response.tokens_output,
                     duration_ms=response.duration_ms,
@@ -264,10 +264,14 @@ class BaseLayer(ABC):
                 duration_ms=response.duration_ms,
             )
 
+            # Prefer reasoning text (model's thinking chain) as raw output
+            # when available; otherwise fall back to the raw content string
+            raw_response_text = response.reasoning or response.content
+
             return LayerResult(
                 success=True,
                 output=response.parsed_json,
-                raw_response=response.content,
+                raw_response=raw_response_text,
                 tokens_input=response.tokens_input,
                 tokens_output=response.tokens_output,
                 duration_ms=response.duration_ms,

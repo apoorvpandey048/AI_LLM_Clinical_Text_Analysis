@@ -33,6 +33,7 @@ class LLMResponse:
     duration_ms: int
     success: bool
     error: str | None = None
+    reasoning: str | None = None
 
 
 class LLMClient(ABC):

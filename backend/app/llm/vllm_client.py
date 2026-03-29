@@ -157,6 +157,7 @@ class VLLMClient(LLMClient):
                 model=self.model,
                 duration_ms=duration_ms,
                 success=True,
+                reasoning=reasoning_content if reasoning_content else None,
             )
 
         except httpx.TimeoutException as e:
@@ -397,6 +398,7 @@ class VLLMClient(LLMClient):
                 model=self.model,
                 duration_ms=duration_ms,
                 success=True,
+                reasoning=accumulated_reasoning if accumulated_reasoning else None,
             )
 
         except httpx.TimeoutException:

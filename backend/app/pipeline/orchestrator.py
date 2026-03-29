@@ -404,7 +404,7 @@ class PipelineOrchestrator:
                 result = LayerResult(
                     success=response.success,
                     output=response.parsed_json,
-                    raw_response=response.content,
+                    raw_response=response.reasoning or response.content,
                     tokens_input=response.tokens_input,
                     tokens_output=response.tokens_output,
                     duration_ms=response.duration_ms,
@@ -736,7 +736,7 @@ class PipelineOrchestrator:
             return LayerResult(
                 success=response.success,
                 output=response.parsed_json,
-                raw_response=response.content,
+                raw_response=response.reasoning or response.content,
                 tokens_input=response.tokens_input,
                 tokens_output=response.tokens_output,
                 duration_ms=response.duration_ms,
