@@ -3752,7 +3752,7 @@ async function saveExecutionMode() {
         const comparisonEnabled = comparisonToggle?.checked ?? false;
 
         // Save chained mode
-        const res1 = await authFetch(`${API_BASE}/chained-mode`, {
+        const res1 = await authFetch(`${API_BASE}/system/chained-mode`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: chainedEnabled }),
@@ -3760,7 +3760,7 @@ async function saveExecutionMode() {
         if (!res1.ok) throw new Error('Failed to save chained mode');
 
         // Save comparison mode
-        const res2 = await authFetch(`${API_BASE}/comparison-mode`, {
+        const res2 = await authFetch(`${API_BASE}/system/comparison-mode`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: comparisonEnabled }),
