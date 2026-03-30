@@ -30,7 +30,6 @@ settings = get_settings()
 router = APIRouter(prefix="/api/v1", tags=["Upload"])
 
 # Safety limits
-MAX_FILES_PER_UPLOAD = 10
 MAX_TOTAL_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
@@ -190,13 +189,6 @@ async def upload_cases(
     file_errors = []
 
     if all_files:
-        # ── Safety checks ──
-        if len(all_files) > MAX_FILES_PER_UPLOAD:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Too many files. Maximum is {MAX_FILES_PER_UPLOAD} files per upload",
-            )
-
         # Validate extensions upfront
         for f in all_files:
             ext = Path(f.filename).suffix.lower() if f.filename else ""
