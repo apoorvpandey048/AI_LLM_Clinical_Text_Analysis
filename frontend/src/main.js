@@ -587,11 +587,6 @@ async function processFiles(files) {
         return;
     }
 
-    if (files.length > 10) {
-        showToast('Maximum 10 files per upload', 'error');
-        return;
-    }
-
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
 
