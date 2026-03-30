@@ -376,11 +376,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle unexpected exceptions."""
+    import traceback
     request_id = getattr(request.state, "request_id", None)
     logger.error(
         "unhandled_exception",
         request_id=request_id,
+        path=request.url.path,
+        method=request.method,
         error=str(exc),
+        traceback=traceback.format_exc(),
     )
     return JSONResponse(
         status_code=500,

@@ -30,7 +30,7 @@ settings = get_settings()
 router = APIRouter(prefix="/api/v1", tags=["Upload"])
 
 # Safety limits
-MAX_TOTAL_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_TOTAL_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
 
@@ -171,6 +171,14 @@ async def upload_cases(
     Each file may contain multiple cases. All cases are flattened into one job.
     """
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+
+    logger.info(
+        "upload_handler_entered",
+        request_id=request_id,
+        files_count=len(files) if files else 0,
+        has_single_file=bool(file and file.filename),
+        has_text=bool(text),
+    )
 
     # Collect all files (merge 'file' into 'files' for backward compat)
     all_files: List[UploadFile] = list(files) if files else []
