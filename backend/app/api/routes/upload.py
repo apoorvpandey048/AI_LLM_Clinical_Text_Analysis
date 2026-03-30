@@ -253,7 +253,15 @@ async def upload_cases(
                     temp_path.unlink()
 
         source_type = "file"
-        source_filename = ", ".join(source_filenames) if source_filenames else None
+        # Truncate to fit VARCHAR(255) — with many files, show count instead
+        if source_filenames:
+            joined = ", ".join(source_filenames)
+            if len(joined) > 255:
+                source_filename = f"{len(source_filenames)} files: {joined[:200]}..."
+            else:
+                source_filename = joined
+        else:
+            source_filename = None
 
     else:
         # Text-only upload (existing path)
