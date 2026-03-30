@@ -664,6 +664,29 @@ def _process_case_impl(
             result_dict["chained"] = chn_dict
             result_dict["comparison"] = comparison_diff
 
+            # Store comparison data inside extra_layer_outputs so save_case_result
+            # persists it (no schema change needed — reuses existing JSON column)
+            existing_extras = result_dict.get("extra_layer_outputs") or {}
+            existing_extras["__comparison_data__"] = {
+                "execution_mode": "comparison",
+                "independent": {
+                    "layer1_output": ind_dict.get("layer1_output"),
+                    "layer2_output": ind_dict.get("layer2_output"),
+                    "layer3_output": ind_dict.get("layer3_output"),
+                    "final_verdict": ind_dict.get("final_verdict"),
+                    "final_cci": ind_dict.get("final_cci"),
+                },
+                "chained": {
+                    "layer1_output": chn_dict.get("layer1_output"),
+                    "layer2_output": chn_dict.get("layer2_output"),
+                    "layer3_output": chn_dict.get("layer3_output"),
+                    "final_verdict": chn_dict.get("final_verdict"),
+                    "final_cci": chn_dict.get("final_cci"),
+                },
+                "comparison": comparison_diff,
+            }
+            result_dict["extra_layer_outputs"] = existing_extras
+
             # Use the chained result's success / verdict / cci as primary
             result_dict["success"] = chn_dict.get("success", False) or ind_dict.get("success", False)
 

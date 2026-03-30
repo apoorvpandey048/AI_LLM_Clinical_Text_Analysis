@@ -1922,6 +1922,20 @@ function renderResultsCards(results) {
 
     const html = results.map((r, i) => {
         // ── Comparison mode: render side-by-side view ──
+        // Check for comparison data in extra_layer_outputs (persisted via DB)
+        const compData = r.extra_layer_outputs?.__comparison_data__;
+        if (compData && compData.independent && compData.chained) {
+            // Normalize: merge comparison data into r for the renderer
+            const compResult = {
+                ...r,
+                execution_mode: 'comparison',
+                independent: compData.independent,
+                chained: compData.chained,
+                comparison: compData.comparison || {},
+            };
+            return renderComparisonResultCard(compResult, i);
+        }
+        // Also check direct keys (from SSE/streaming before DB round-trip)
         if (r.execution_mode === 'comparison' && r.independent && r.chained) {
             return renderComparisonResultCard(r, i);
         }
@@ -1935,7 +1949,8 @@ function renderResultsCards(results) {
         // Always use server-persisted outputs — never depend on streaming buffers
         const extraOutputs = r.extra_layer_outputs || {};
         const extraRawOutputs = r.extra_layer_raw_outputs || {};
-        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs)])];
+        const allExtraKeys = [...new Set([...Object.keys(extraOutputs), ...Object.keys(extraRawOutputs)])]
+            .filter(k => k !== '__comparison_data__');  // Exclude comparison data from regular layer rendering
 
         // Extra layer JSON sections — IDs only, content set in post-render pass
         const extraJsonSections = allExtraKeys.map(key => {
