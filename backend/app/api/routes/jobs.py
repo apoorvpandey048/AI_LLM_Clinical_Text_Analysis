@@ -648,103 +648,144 @@ async def cancel_job(
     _check_job_ownership(job, user)
 
     # Check if job can be cancelled
-    if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.STOPPING]:
+    cancellable = [JobStatus.QUEUED, JobStatus.PROCESSING]
+    # Safely check for STOPPING (may not exist in older enum)
+    if hasattr(JobStatus, "STOPPING"):
+        cancellable.append(JobStatus.STOPPING)
+
+    if job.status not in cancellable:
         raise HTTPException(
             status_code=409,
             detail=f"Job cannot be cancelled — current status: {job.status.value}",
         )
 
     # Already stopping — don't double-process
-    if job.status == JobStatus.STOPPING:
+    if hasattr(JobStatus, "STOPPING") and job.status == JobStatus.STOPPING:
         return create_response(
             success=True,
             data={"message": "Job is already stopping", "job_id": job_id},
             request_id=request_id,
         )
 
-    if job.status == JobStatus.QUEUED:
-        # Not started yet — cancel immediately
-        job.status = JobStatus.CANCELLED
-        job.completed_at = datetime.utcnow()
-
-        # Revoke Celery task if available
-        if job.celery_task_id:
-            try:
-                from app.workers.celery_app import celery_app
-                celery_app.control.revoke(job.celery_task_id, terminate=False)
-            except Exception as e:
-                logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
-
-        # Mark queued cases as cancelled
-        queued_cases = db.query(JobCase).filter(
-            JobCase.job_id == job_uuid,
-            JobCase.status.in_([CaseStatus.QUEUED]),
-        ).all()
-        for case in queued_cases:
-            case.status = CaseStatus.FAILED
-            case.error_message = "Job cancelled by user"
-
-        cancel_mode = "immediate"
-    else:
-        # PROCESSING — set to STOPPING so worker checks before next case
-        job.status = JobStatus.STOPPING
-        cancel_mode = "graceful"
-
-    # Count completed cases so far
-    completed_cases = db.query(JobCase).filter(
-        JobCase.job_id == job_uuid,
-        JobCase.status == CaseStatus.COMPLETED,
-    ).count()
-    total_cases = db.query(JobCase).filter(
-        JobCase.job_id == job_uuid,
-    ).count()
-
-    # Audit log
-    audit = AuditLog(
-        request_id=uuid.UUID(request_id) if request_id else None,
-        job_id=job.id,
-        action="job_cancelled",
-        details={
-            "cancel_mode": cancel_mode,
-            "completed_cases": completed_cases,
-            "total_cases": total_cases,
-        },
-    )
-    db.add(audit)
-    db.commit()
-
-    logger.info(
-        "JOB_CANCEL_REQUESTED",
-        request_id=request_id,
-        job_id=job_id,
-        cancel_mode=cancel_mode,
-        completed_cases=completed_cases,
-        total_cases=total_cases,
-    )
-
-    # Emit SSE event so frontend updates immediately
     try:
-        from app.utils.stream_manager import StreamPublisher
-        pub = StreamPublisher()
-        if cancel_mode == "immediate":
-            pub.publish_job_failed(job_id, "Job cancelled by user")
-        else:
-            pub.publish_job_failed(job_id, f"Job stopping gracefully ({completed_cases}/{total_cases} cases completed)")
-        pub.close()
-    except Exception as sse_err:
-        logger.warning("cancel_sse_emit_failed", job_id=job_id, error=str(sse_err))
+        if job.status == JobStatus.QUEUED:
+            # Not started yet — cancel immediately
+            job.status = JobStatus.CANCELLED
+            job.completed_at = datetime.utcnow()
 
-    return create_response(
-        success=True,
-        data={
-            "message": "Job stopping gracefully" if cancel_mode == "graceful" else "Job cancelled",
-            "job_id": job_id,
-            "cancel_mode": cancel_mode,
-            "completed_cases": completed_cases,
-            "total_cases": total_cases,
-        },
-        request_id=request_id,
-    )
+            # Revoke Celery task if available
+            if job.celery_task_id:
+                try:
+                    from app.workers.celery_app import celery_app
+                    celery_app.control.revoke(job.celery_task_id, terminate=False)
+                except Exception as e:
+                    logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
+
+            # Mark queued cases as cancelled
+            queued_cases = db.query(JobCase).filter(
+                JobCase.job_id == job_uuid,
+                JobCase.status.in_([CaseStatus.QUEUED]),
+            ).all()
+            for case in queued_cases:
+                case.status = CaseStatus.FAILED
+                case.error_message = "Job cancelled by user"
+
+            cancel_mode = "immediate"
+        else:
+            # PROCESSING — try STOPPING first, fall back to CANCELLED if enum not migrated
+            try:
+                job.status = JobStatus.STOPPING
+                db.flush()  # test if DB accepts the new enum value
+                cancel_mode = "graceful"
+            except Exception:
+                db.rollback()
+                # Fallback: set to CANCELLED directly
+                job = db.query(Job).filter(Job.id == job_uuid).first()
+                job.status = JobStatus.CANCELLED
+                job.completed_at = datetime.utcnow()
+
+                # Mark remaining cases as cancelled
+                remaining = db.query(JobCase).filter(
+                    JobCase.job_id == job_uuid,
+                    JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.PROCESSING]),
+                ).all()
+                for case in remaining:
+                    case.status = CaseStatus.FAILED
+                    case.error_message = "Job cancelled by user"
+
+                # Hard-revoke celery task since we can't do graceful stop
+                if job.celery_task_id:
+                    try:
+                        from app.workers.celery_app import celery_app
+                        celery_app.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
+                    except Exception:
+                        pass
+
+                cancel_mode = "immediate_fallback"
+                logger.warning("stopping_enum_fallback", job_id=job_id)
+
+        # Count completed cases so far
+        completed_cases = db.query(JobCase).filter(
+            JobCase.job_id == job_uuid,
+            JobCase.status == CaseStatus.COMPLETED,
+        ).count()
+        total_cases = db.query(JobCase).filter(
+            JobCase.job_id == job_uuid,
+        ).count()
+
+        # Audit log
+        audit = AuditLog(
+            request_id=uuid.UUID(request_id) if request_id else None,
+            job_id=job.id,
+            action="job_cancelled",
+            details={
+                "cancel_mode": cancel_mode,
+                "completed_cases": completed_cases,
+                "total_cases": total_cases,
+            },
+        )
+        db.add(audit)
+        db.commit()
+
+        logger.info(
+            "JOB_CANCEL_REQUESTED",
+            request_id=request_id,
+            job_id=job_id,
+            cancel_mode=cancel_mode,
+            completed_cases=completed_cases,
+            total_cases=total_cases,
+        )
+
+        # Emit SSE event so frontend updates immediately
+        try:
+            from app.utils.stream_manager import StreamPublisher
+            pub = StreamPublisher()
+            pub.publish_job_failed(job_id, "Job cancelled by user")
+            pub.close()
+        except Exception as sse_err:
+            logger.warning("cancel_sse_emit_failed", job_id=job_id, error=str(sse_err))
+
+        return create_response(
+            success=True,
+            data={
+                "message": "Job stopping gracefully" if cancel_mode == "graceful" else "Job cancelled",
+                "job_id": job_id,
+                "cancel_mode": cancel_mode,
+                "completed_cases": completed_cases,
+                "total_cases": total_cases,
+            },
+            request_id=request_id,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("cancel_job_failed", job_id=job_id, error=str(e), exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cancel job: {str(e)}",
+        )
 
 
 # ============================================

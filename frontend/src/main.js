@@ -3992,31 +3992,41 @@ async function cancelJob() {
     setCancelButtonEnabled(false);
 
     try {
+        console.log('[CANCEL] Requesting cancel for job:', state.currentJobId);
         const res = await authFetch(`${API_BASE}/jobs/${state.currentJobId}/cancel`, {
             method: 'POST',
         });
 
+        const json = await res.json().catch(() => ({}));
+        console.log('[CANCEL] Response:', res.status, json);
+
         if (res.ok) {
             closeStream();
             state.isProcessing = false;
-            state.currentJobId = null;
             updateProcessButton();
-            showToast('Job cancelled', 'info');
-            resetToUpload();
+            const cancelMode = json?.data?.cancel_mode || 'unknown';
+            const completed = json?.data?.completed_cases ?? '?';
+            const total = json?.data?.total_cases ?? '?';
+            showToast(`Job cancelled (${completed}/${total} cases completed)`, 'info');
+            // Load partial results if any cases completed
+            if (state.currentJobId) {
+                loadResults(state.currentJobId);
+            }
+            state.currentJobId = null;
         } else if (res.status === 409) {
-            // Job already finished — re-enable cancel button in case UI is stale
-            const err = await res.json().catch(() => ({}));
-            showToast(`Cannot cancel: ${extractErrorMessage(err)}`, 'warning');
-            // Job is already done — clean up UI
+            // Job already finished — clean up UI
+            showToast(`Cannot cancel: ${extractErrorMessage(json)}`, 'warning');
             state.isProcessing = false;
             state.currentJobId = null;
             updateProcessButton();
         } else {
-            const err = await res.json().catch(() => ({}));
+            // 500 or other error — show actual message
+            const errMsg = json?.error?.message || json?.detail || extractErrorMessage(json) || `Server error (${res.status})`;
             setCancelButtonEnabled(true);
-            showToast(`Failed to cancel: ${extractErrorMessage(err)}`, 'error');
+            showToast(`Failed to cancel: ${errMsg}`, 'error');
         }
     } catch (err) {
+        console.error('[CANCEL] Exception:', err);
         setCancelButtonEnabled(true);
         showToast(`Cancel failed: ${err.message}`, 'error');
     }
