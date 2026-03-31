@@ -1750,9 +1750,17 @@ async function pollJobStatus(jobId) {
             closeStream();
             setCancelButtonEnabled(false);
             state.isProcessing = false;
-            state.currentJobId = null;
             updateProcessButton();
-            showToast('Job was cancelled', 'info');
+            showToast('Job cancelled — showing partial results', 'info');
+            // Load partial results so completed cases are visible
+            if (state.currentJobId || state.lastCompletedJobId) {
+                loadResults(state.currentJobId || state.lastCompletedJobId);
+            }
+            state.currentJobId = null;
+        } else if (data.status === 'stopping') {
+            // Job is stopping gracefully — update UI but keep streaming
+            setCancelButtonEnabled(false);
+            showToast('Stopping job... finishing current case', 'info');
         } else {
             updateProgressUI(data);
         }
@@ -1784,9 +1792,11 @@ async function loadResults(jobId) {
         // Retain the job ID so replay/baseline buttons work after processing resets currentJobId
         state.lastCompletedJobId = jobId;
 
-        // Guard: cancelled jobs
+        // Guard: cancelled jobs — show partial results + cancelled banner
         if (data.status === 'cancelled') {
             renderCancelledJobState();
+            // Still render whatever results exist (partial)
+            renderResults(data);
             document.getElementById('progress-section').classList.add('hidden');
             document.getElementById('results-section').classList.remove('hidden');
             state.isProcessing = false;
@@ -4913,11 +4923,11 @@ function renderCancelledJobState() {
     const cancelledEl = document.getElementById('cancelled-job-state');
     if (cancelledEl) cancelledEl.classList.remove('hidden');
 
-    // Hide sections that don't apply to cancelled jobs
+    // For cancelled jobs, KEEP results visible (partial results)
+    // Only hide sections that don't apply
     const hideIds = [
-        'results-summary', 'results-timeline-wrap', 'locked-config-banner',
+        'results-timeline-wrap', 'locked-config-banner',
         'metrics-details-wrap', 'compare-details-wrap',
-        'results-table-container', 'case-results', 'run-info-banner',
     ];
     hideIds.forEach(id => {
         const el = document.getElementById(id);

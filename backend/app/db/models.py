@@ -57,6 +57,7 @@ class JobStatus(str, enum.Enum):
     """Job processing status."""
     QUEUED = "queued"
     PROCESSING = "processing"
+    STOPPING = "stopping"  # Graceful stop requested — worker will finish current case then halt
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

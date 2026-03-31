@@ -451,7 +451,7 @@ def update_job_status(job_id: str, status: JobStatus) -> None:
         job = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
         if job:
             job.status = status
-            if status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
+            if status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.STOPPING]:
                 job.completed_at = datetime.utcnow()
             db.commit()
     except Exception as e:
@@ -905,11 +905,39 @@ def process_batch(
         )
         pipeline_snapshot = _build_pipeline_snapshot()
 
+    cancelled = False
+
     try:
         for i, case in enumerate(cases):
             case_id = case.get("case_id", str(i + 1))
             text = case.get("text", "")
             case_number = case.get("case_number", i + 1)
+
+            # ── Cancellation check: query job status before each case ──
+            db = SessionLocal()
+            try:
+                job_check = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
+                if job_check and job_check.status in [JobStatus.STOPPING, JobStatus.CANCELLED]:
+                    logger.info(
+                        "JOB_STOPPING_DETECTED",
+                        job_id=job_id,
+                        case_index=i,
+                        completed_so_far=i,
+                        total=len(cases),
+                    )
+                    # Mark remaining cases as cancelled
+                    remaining_cases = db.query(JobCase).filter(
+                        JobCase.job_id == uuid.UUID(job_id),
+                        JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.PROCESSING]),
+                    ).all()
+                    for rc in remaining_cases:
+                        rc.status = CaseStatus.FAILED
+                        rc.error_message = "Job cancelled by user"
+                    db.commit()
+                    cancelled = True
+                    break
+            finally:
+                db.close()
 
             # Update case status to processing
             db = SessionLocal()
@@ -924,13 +952,41 @@ def process_batch(
             finally:
                 db.close()
 
-            # Process each case — reuse the shared event loop + frozen snapshot
-            result = _process_case_impl(
-                case_id, job_id, text, case_number,
-                loop=loop,
-                pipeline_layers=pipeline_snapshot if pipeline_snapshot else None,
-                source_file=case.get("source_file"),
-            )
+            # ── Per-case fail-safe: one case failure must NOT crash the batch ──
+            logger.info("CASE_STARTED", job_id=job_id, case_id=case_id, case_number=case_number, index=i + 1, total=len(cases))
+            try:
+                result = _process_case_impl(
+                    case_id, job_id, text, case_number,
+                    loop=loop,
+                    pipeline_layers=pipeline_snapshot if pipeline_snapshot else None,
+                    source_file=case.get("source_file"),
+                )
+                logger.info(
+                    "CASE_FINISHED",
+                    job_id=job_id,
+                    case_id=case_id,
+                    case_number=case_number,
+                    success=result.get("success", False),
+                )
+            except Exception as case_err:
+                logger.error(
+                    "CASE_FAILED",
+                    job_id=job_id,
+                    case_id=case_id,
+                    case_number=case_number,
+                    error=str(case_err),
+                    exc_info=True,
+                )
+                result = {
+                    "case_id": case_id,
+                    "case_number": case_number,
+                    "job_id": job_id,
+                    "success": False,
+                    "error": str(case_err),
+                    "processed_at": datetime.utcnow().isoformat() + "Z",
+                }
+                # Persist the failure so partial results are visible
+                save_case_result(job_id, case_number, result)
 
             results.append(result)
 
@@ -980,7 +1036,16 @@ def process_batch(
 
     # Determine final job status
     success_count = sum(1 for r in results if r.get("success"))
-    final_status = JobStatus.COMPLETED if success_count == len(cases) else JobStatus.FAILED
+
+    if cancelled:
+        final_status = JobStatus.CANCELLED
+    elif success_count == len(cases):
+        final_status = JobStatus.COMPLETED
+    elif success_count > 0:
+        # Partial success — still mark as completed but with failed count
+        final_status = JobStatus.COMPLETED
+    else:
+        final_status = JobStatus.FAILED
 
     # Update job status
     update_job_status(job_id, final_status)
@@ -988,19 +1053,24 @@ def process_batch(
     # Emit job completion SSE event
     try:
         if job_publisher:
-            job_publisher.publish_job_complete(job_id, len(cases), success_count)
+            if cancelled:
+                job_publisher.publish_job_failed(job_id, f"Job cancelled ({success_count}/{len(cases)} cases completed)")
+            else:
+                job_publisher.publish_job_complete(job_id, len(cases), success_count)
             job_publisher.close()
     except Exception:
         pass
 
-    lifecycle_event = "JOB_COMPLETED" if final_status == JobStatus.COMPLETED else "JOB_FAILED"
+    lifecycle_event = "JOB_CANCELLED" if cancelled else ("JOB_COMPLETED" if final_status == JobStatus.COMPLETED else "JOB_FAILED")
     logger.info(
         lifecycle_event,
         task_id=self.request.id,
         job_id=job_id,
         case_count=len(cases),
         success_count=success_count,
+        processed_count=len(results),
         status=final_status.value,
+        cancelled=cancelled,
     )
 
     return {
@@ -1008,6 +1078,8 @@ def process_batch(
         "status": final_status.value,
         "case_count": len(cases),
         "success_count": success_count,
+        "processed_count": len(results),
+        "cancelled": cancelled,
         "results": results,
     }
 

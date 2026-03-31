@@ -625,9 +625,11 @@ async def cancel_job(
     user: User = Depends(require_auth),
 ):
     """
-    Cancel a running job.
+    Cancel a running job gracefully.
 
-    Revokes the Celery task and marks the job as failed.
+    If job is PROCESSING, sets status to STOPPING so the worker finishes the
+    current case then halts.  If QUEUED (not yet started), cancels immediately.
+    Already-completed cases are preserved as partial results.
     """
     request_id = getattr(request.state, "request_id", None)
 
@@ -646,36 +648,56 @@ async def cancel_job(
     _check_job_ownership(job, user)
 
     # Check if job can be cancelled
-    if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING]:
+    if job.status not in [JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.STOPPING]:
         raise HTTPException(
             status_code=409,
             detail=f"Job cannot be cancelled — current status: {job.status.value}",
         )
 
-    # Revoke Celery task if available
-    revoked = False
-    if job.celery_task_id:
-        try:
-            from app.workers.celery_app import celery_app
-            celery_app.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
-            revoked = True
-            logger.info("celery_task_revoked", job_id=job_id, task_id=job.celery_task_id)
-        except Exception as e:
-            logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
+    # Already stopping — don't double-process
+    if job.status == JobStatus.STOPPING:
+        return create_response(
+            success=True,
+            data={"message": "Job is already stopping", "job_id": job_id},
+            request_id=request_id,
+        )
 
-    # Update job status to CANCELLED
-    job.status = JobStatus.CANCELLED
-    job.completed_at = datetime.utcnow()
+    if job.status == JobStatus.QUEUED:
+        # Not started yet — cancel immediately
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.utcnow()
 
-    # Update any processing cases to failed
-    processing_cases = db.query(JobCase).filter(
+        # Revoke Celery task if available
+        if job.celery_task_id:
+            try:
+                from app.workers.celery_app import celery_app
+                celery_app.control.revoke(job.celery_task_id, terminate=False)
+            except Exception as e:
+                logger.warning("celery_revoke_failed", job_id=job_id, error=str(e))
+
+        # Mark queued cases as cancelled
+        queued_cases = db.query(JobCase).filter(
+            JobCase.job_id == job_uuid,
+            JobCase.status.in_([CaseStatus.QUEUED]),
+        ).all()
+        for case in queued_cases:
+            case.status = CaseStatus.FAILED
+            case.error_message = "Job cancelled by user"
+
+        cancel_mode = "immediate"
+    else:
+        # PROCESSING — set to STOPPING so worker checks before next case
+        job.status = JobStatus.STOPPING
+        cancel_mode = "graceful"
+
+    # Count completed cases so far
+    completed_cases = db.query(JobCase).filter(
         JobCase.job_id == job_uuid,
-        JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.PROCESSING]),
-    ).all()
-
-    for case in processing_cases:
-        case.status = CaseStatus.FAILED
-        case.error_message = "Job cancelled by user"
+        JobCase.status == CaseStatus.COMPLETED,
+    ).count()
+    total_cases = db.query(JobCase).filter(
+        JobCase.job_id == job_uuid,
+    ).count()
 
     # Audit log
     audit = AuditLog(
@@ -683,25 +705,31 @@ async def cancel_job(
         job_id=job.id,
         action="job_cancelled",
         details={
-            "celery_revoked": revoked,
-            "cases_cancelled": len(processing_cases),
+            "cancel_mode": cancel_mode,
+            "completed_cases": completed_cases,
+            "total_cases": total_cases,
         },
     )
     db.add(audit)
     db.commit()
 
     logger.info(
-        "JOB_CANCELLED",
+        "JOB_CANCEL_REQUESTED",
         request_id=request_id,
         job_id=job_id,
-        cases_cancelled=len(processing_cases),
+        cancel_mode=cancel_mode,
+        completed_cases=completed_cases,
+        total_cases=total_cases,
     )
 
-    # Emit SSE job_failed event so the frontend stops its streaming state
+    # Emit SSE event so frontend updates immediately
     try:
         from app.utils.stream_manager import StreamPublisher
         pub = StreamPublisher()
-        pub.publish_job_failed(job_id, "Job cancelled by user")
+        if cancel_mode == "immediate":
+            pub.publish_job_failed(job_id, "Job cancelled by user")
+        else:
+            pub.publish_job_failed(job_id, f"Job stopping gracefully ({completed_cases}/{total_cases} cases completed)")
         pub.close()
     except Exception as sse_err:
         logger.warning("cancel_sse_emit_failed", job_id=job_id, error=str(sse_err))
@@ -709,10 +737,11 @@ async def cancel_job(
     return create_response(
         success=True,
         data={
-            "message": "Job cancelled",
+            "message": "Job stopping gracefully" if cancel_mode == "graceful" else "Job cancelled",
             "job_id": job_id,
-            "celery_revoked": revoked,
-            "cases_cancelled": len(processing_cases),
+            "cancel_mode": cancel_mode,
+            "completed_cases": completed_cases,
+            "total_cases": total_cases,
         },
         request_id=request_id,
     )

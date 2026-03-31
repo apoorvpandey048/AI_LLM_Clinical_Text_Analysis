@@ -210,6 +210,16 @@ def _run_schema_migrations():
             if not exists:
                 conn.execute(text("ALTER TYPE jobstatus ADD VALUE 'cancelled'"))
                 logger.info("enum_value_added", type="jobstatus", value="cancelled")
+
+            # Add 'stopping' to jobstatus enum if not already present
+            exists_stopping = conn.execute(text(
+                "SELECT 1 FROM pg_enum "
+                "JOIN pg_type ON pg_enum.enumtypid = pg_type.oid "
+                "WHERE pg_type.typname = 'jobstatus' AND pg_enum.enumlabel = 'stopping'"
+            )).fetchone()
+            if not exists_stopping:
+                conn.execute(text("ALTER TYPE jobstatus ADD VALUE 'stopping'"))
+                logger.info("enum_value_added", type="jobstatus", value="stopping")
     except Exception as e:
         # Non-fatal: if enum already has the value or type name differs, log and continue
         logger.warning("enum_migration_warning", error=str(e))
