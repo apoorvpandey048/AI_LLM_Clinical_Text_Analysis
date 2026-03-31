@@ -61,8 +61,7 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
     # Get active model and runtime temperature/seed from Redis
     runtime_temperature = settings.llm_temperature
     runtime_seed = settings.llm_seed
-    chained_mode = False
-    comparison_mode = False
+    execution_mode = "independent"
     redis_connected = False
     try:
         r = _get_redis()
@@ -78,13 +77,18 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
                 runtime_seed = None
             else:
                 runtime_seed = int(seed_val)
-        # Execution mode flags
-        cm_val = r.get("snapai:chained_mode")
-        if cm_val is not None:
-            chained_mode = cm_val.lower() in ("true", "1", "yes")
-        comp_val = r.get("snapai:comparison_mode")
-        if comp_val is not None:
-            comparison_mode = comp_val.lower() in ("true", "1", "yes")
+        # Unified execution mode (replaces old chained_mode + comparison_mode flags)
+        em_val = r.get("snapai:execution_mode")
+        if em_val and em_val in ("independent", "chained", "comparison"):
+            execution_mode = em_val
+        else:
+            # Backward compat: migrate from old dual-flag keys
+            comp_val = r.get("snapai:comparison_mode")
+            cm_val = r.get("snapai:chained_mode")
+            if comp_val and comp_val.lower() in ("true", "1", "yes"):
+                execution_mode = "comparison"
+            elif cm_val and cm_val.lower() in ("true", "1", "yes"):
+                execution_mode = "chained"
         r.close()
     except Exception:
         active_model = settings.llm_model
@@ -160,8 +164,10 @@ async def get_system_info(request: Request, user: User = Depends(require_auth)):
             "model_version": getattr(settings, 'model_version', settings.llm_model),
             "supports_temperature_override": True,  # Redis-based temp always supported
             "supports_seed_override": True,  # Redis-based seed always supported
-            "chained_mode": chained_mode,
-            "comparison_mode": comparison_mode,
+            "execution_mode": execution_mode,
+            # Backward compat: keep legacy flags derived from unified mode
+            "chained_mode": execution_mode in ("chained", "comparison"),
+            "comparison_mode": execution_mode == "comparison",
             "gpu_busy": gpu_busy,
         },
         request_id=request_id,
@@ -525,28 +531,25 @@ async def set_seed(request: Request, admin: User = Depends(require_admin)):
 
 
 # ============================================
-# Chained + Comparison Mode Endpoints
+# Unified Execution Mode Endpoint
 # ============================================
 
 
-@router.put("/chained-mode")
-async def set_chained_mode(request: Request, admin: User = Depends(require_admin)):
+@router.put("/execution-mode")
+async def set_execution_mode(request: Request, admin: User = Depends(require_admin)):
     """
-    Toggle chained execution mode.
+    Set execution mode to one of: independent, chained, comparison.
 
-    When enabled, later layers receive previous layer structured JSON
-    outputs as additional context in the user prompt.
+    - independent: Each layer runs independently (default)
+    - chained: Later layers receive previous layer outputs as context
+    - comparison: Runs BOTH independent and chained, shows side-by-side diff (2× cost)
     """
-    from pydantic import BaseModel
-
-    class ChainedModeConfig(BaseModel):
-        enabled: bool = False
-
     request_id = getattr(request.state, "request_id", None)
+    valid_modes = ("independent", "chained", "comparison")
 
     try:
         body = await request.json()
-        config = ChainedModeConfig(**body)
+        mode = body.get("mode", "independent")
     except Exception as e:
         return create_response(
             success=False,
@@ -554,100 +557,87 @@ async def set_chained_mode(request: Request, admin: User = Depends(require_admin
             request_id=request_id,
         )
 
+    if mode not in valid_modes:
+        return create_response(
+            success=False,
+            error=f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes)}",
+            request_id=request_id,
+        )
+
     try:
         r = _get_redis()
-        r.set("snapai:chained_mode", "true" if config.enabled else "false")
+        r.set("snapai:execution_mode", mode)
+        # Clean up old dual-flag keys to prevent confusion
+        r.delete("snapai:chained_mode", "snapai:comparison_mode")
         r.close()
 
-        logger.info("chained_mode_updated", enabled=config.enabled)
+        logger.info("execution_mode_updated", mode=mode)
 
         from app.db import get_db, AuditLog
         db = next(get_db())
         audit = AuditLog(
-            action="chained_mode_changed",
-            details={"enabled": config.enabled, "admin": admin.username},
+            action="execution_mode_changed",
+            details={"mode": mode, "admin": admin.username},
         )
         db.add(audit)
         db.commit()
         db.close()
 
+        mode_desc = {
+            "independent": "Independent — default pipeline",
+            "chained": "Chained — layers receive previous outputs as context",
+            "comparison": "Comparison — runs both pipelines, 2× LLM cost",
+        }
+
         return create_response(
             success=True,
             data={
-                "chained_mode": config.enabled,
-                "message": f"Chained execution {'enabled' if config.enabled else 'disabled'}",
+                "execution_mode": mode,
+                "message": mode_desc.get(mode, mode),
             },
             request_id=request_id,
         )
 
     except Exception as e:
-        logger.error("chained_mode_update_failed", error=str(e))
+        logger.error("execution_mode_update_failed", error=str(e))
         return create_response(
             success=False,
-            error=f"Failed to update chained mode: {str(e)}",
+            error=f"Failed to update execution mode: {str(e)}",
             request_id=request_id,
         )
+
+
+# Legacy endpoints — delegate to unified execution-mode for backward compat
+@router.put("/chained-mode")
+async def set_chained_mode(request: Request, admin: User = Depends(require_admin)):
+    """Legacy: toggle chained mode. Delegates to unified execution-mode."""
+    request_id = getattr(request.state, "request_id", None)
+    try:
+        body = await request.json()
+        enabled = body.get("enabled", False)
+        r = _get_redis()
+        r.set("snapai:execution_mode", "chained" if enabled else "independent")
+        r.delete("snapai:chained_mode", "snapai:comparison_mode")
+        r.close()
+        return create_response(success=True, data={"chained_mode": enabled}, request_id=request_id)
+    except Exception as e:
+        return create_response(success=False, error=str(e), request_id=request_id)
 
 
 @router.put("/comparison-mode")
 async def set_comparison_mode(request: Request, admin: User = Depends(require_admin)):
-    """
-    Toggle comparison mode.
-
-    When enabled, each case runs BOTH independent and chained pipelines.
-    Results include a structured diff (CCI delta, grade differences, verdict change).
-    WARNING: This doubles LLM API calls.
-    """
-    from pydantic import BaseModel
-
-    class ComparisonModeConfig(BaseModel):
-        enabled: bool = False
-
+    """Legacy: toggle comparison mode. Delegates to unified execution-mode."""
     request_id = getattr(request.state, "request_id", None)
-
     try:
         body = await request.json()
-        config = ComparisonModeConfig(**body)
-    except Exception as e:
-        return create_response(
-            success=False,
-            error=f"Invalid request: {str(e)}",
-            request_id=request_id,
-        )
-
-    try:
+        enabled = body.get("enabled", False)
         r = _get_redis()
-        r.set("snapai:comparison_mode", "true" if config.enabled else "false")
+        r.set("snapai:execution_mode", "comparison" if enabled else "independent")
+        r.delete("snapai:chained_mode", "snapai:comparison_mode")
         r.close()
-
-        logger.info("comparison_mode_updated", enabled=config.enabled)
-
-        from app.db import get_db, AuditLog
-        db = next(get_db())
-        audit = AuditLog(
-            action="comparison_mode_changed",
-            details={"enabled": config.enabled, "admin": admin.username},
-        )
-        db.add(audit)
-        db.commit()
-        db.close()
-
-        return create_response(
-            success=True,
-            data={
-                "comparison_mode": config.enabled,
-                "message": f"Comparison mode {'enabled — 2× LLM cost per case' if config.enabled else 'disabled'}",
-            },
-            request_id=request_id,
-        )
-
+        return create_response(success=True, data={"comparison_mode": enabled}, request_id=request_id)
     except Exception as e:
-        logger.error("comparison_mode_update_failed", error=str(e))
-        return create_response(
-            success=False,
-            error=f"Failed to update comparison mode: {str(e)}",
-            request_id=request_id,
-        )
+        return create_response(success=False, error=str(e), request_id=request_id)
 
 
 # ============================================

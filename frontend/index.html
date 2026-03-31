@@ -250,23 +250,28 @@
                             Execution Mode
                             <span class="execution-mode-badge" id="execution-mode-badge">Independent</span>
                         </h3>
-                        <div class="toggle-group">
-                            <label class="toggle-switch" data-tooltip="When enabled, Layer 2 receives Layer 1 output as context, and Layer 3 receives both.">
-                                <input type="checkbox" id="chained-mode-toggle" onchange="markExecutionModeDirty()">
-                                <span class="toggle-slider"></span>
-                                <span class="toggle-label">Enable Chained Execution</span>
+                        <div class="execution-mode-radios" id="execution-mode-radios">
+                            <label class="execution-radio-label">
+                                <input type="radio" name="execution-mode" value="independent" checked onchange="markExecutionModeDirty()">
+                                <span class="execution-radio-content">
+                                    <span class="execution-radio-title">Independent</span>
+                                    <span class="execution-radio-desc">Each layer runs independently (default)</span>
+                                </span>
                             </label>
-                            <div class="toggle-hint">Layers receive previous layer structured JSON as additional context</div>
-
-                            <label class="toggle-switch" data-tooltip="Runs both independent + chained pipelines for each case. Results shown side-by-side.">
-                                <input type="checkbox" id="comparison-mode-toggle" onchange="markExecutionModeDirty()">
-                                <span class="toggle-slider"></span>
-                                <span class="toggle-label">Run Comparison Mode</span>
+                            <label class="execution-radio-label">
+                                <input type="radio" name="execution-mode" value="chained" onchange="markExecutionModeDirty()">
+                                <span class="execution-radio-content">
+                                    <span class="execution-radio-title">Chained</span>
+                                    <span class="execution-radio-desc">Later layers receive previous layer outputs as context</span>
+                                </span>
                             </label>
-                            <div class="toggle-hint comparison-warning">
-                                <i data-lucide="alert-triangle" class="warning-icon"></i>
-                                <span>⚠ Runs both pipelines per case — <strong>2× LLM cost</strong></span>
-                            </div>
+                            <label class="execution-radio-label comparison-option">
+                                <input type="radio" name="execution-mode" value="comparison" onchange="markExecutionModeDirty()">
+                                <span class="execution-radio-content">
+                                    <span class="execution-radio-title">⚠ Comparison</span>
+                                    <span class="execution-radio-desc">Runs both pipelines per case — <strong>2× LLM cost</strong></span>
+                                </span>
+                            </label>
                         </div>
                         <div class="execution-mode-actions" id="execution-mode-actions">
                             <button class="btn btn-xs btn-primary" id="save-execution-mode-btn" onclick="saveExecutionMode()" disabled>

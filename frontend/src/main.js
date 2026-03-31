@@ -3713,53 +3713,68 @@ async function saveInferenceParams() {
 }
 
 // ============================================
-// Execution Mode Controls (Chained + Comparison)
+// Execution Mode Controls (Radio-based)
 // ============================================
 
 function populateExecutionMode(data) {
-    const chainedToggle = document.getElementById('chained-mode-toggle');
-    const comparisonToggle = document.getElementById('comparison-mode-toggle');
-    const badge = document.getElementById('execution-mode-badge');
+    // Read unified execution_mode from system info (default: 'independent')
+    const mode = data.execution_mode || (
+        data.comparison_mode ? 'comparison' :
+        data.chained_mode ? 'chained' : 'independent'
+    );
+
+    // Set the correct radio button
+    const radio = document.querySelector(`input[name="execution-mode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
+
+    // Store initial value for dirty detection
+    state._initialExecutionMode = mode;
+
     const saveBtn = document.getElementById('save-execution-mode-btn');
-
-    if (chainedToggle) chainedToggle.checked = !!data.chained_mode;
-    if (comparisonToggle) comparisonToggle.checked = !!data.comparison_mode;
-
-    // Store initial values
-    state._initialChainedMode = !!data.chained_mode;
-    state._initialComparisonMode = !!data.comparison_mode;
-
     if (saveBtn) saveBtn.disabled = true;
 
     // Update badge
+    const badge = document.getElementById('execution-mode-badge');
     if (badge) {
-        if (data.comparison_mode) {
-            badge.textContent = 'Comparison';
-            badge.className = 'execution-mode-badge comparison';
-        } else if (data.chained_mode) {
-            badge.textContent = 'Chained';
-            badge.className = 'execution-mode-badge chained';
-        } else {
-            badge.textContent = 'Independent';
-            badge.className = 'execution-mode-badge';
-        }
+        const badgeMap = {
+            'comparison': { text: 'Comparison', cls: 'execution-mode-badge comparison' },
+            'chained': { text: 'Chained', cls: 'execution-mode-badge chained' },
+            'independent': { text: 'Independent', cls: 'execution-mode-badge' },
+        };
+        const b = badgeMap[mode] || badgeMap['independent'];
+        badge.textContent = b.text;
+        badge.className = b.cls;
     }
 }
 
 function markExecutionModeDirty() {
+    const selected = document.querySelector('input[name="execution-mode"]:checked')?.value || 'independent';
     const saveBtn = document.getElementById('save-execution-mode-btn');
-    if (saveBtn) saveBtn.disabled = false;
+
+    // Only enable save if value changed from server state
+    if (saveBtn) {
+        saveBtn.disabled = selected === (state._initialExecutionMode || 'independent');
+    }
 
     const badge = document.getElementById('execution-mode-badge');
-    if (badge) {
+    if (badge && selected !== (state._initialExecutionMode || 'independent')) {
         badge.textContent = 'Unsaved';
         badge.className = 'execution-mode-badge custom';
+    } else if (badge) {
+        // Restore badge to match selection
+        const badgeMap = {
+            'comparison': { text: 'Comparison', cls: 'execution-mode-badge comparison' },
+            'chained': { text: 'Chained', cls: 'execution-mode-badge chained' },
+            'independent': { text: 'Independent', cls: 'execution-mode-badge' },
+        };
+        const b = badgeMap[selected] || badgeMap['independent'];
+        badge.textContent = b.text;
+        badge.className = b.cls;
     }
 }
 
 async function saveExecutionMode() {
-    const chainedToggle = document.getElementById('chained-mode-toggle');
-    const comparisonToggle = document.getElementById('comparison-mode-toggle');
+    const selected = document.querySelector('input[name="execution-mode"]:checked')?.value || 'independent';
     const saveBtn = document.getElementById('save-execution-mode-btn');
 
     if (saveBtn) {
@@ -3768,30 +3783,18 @@ async function saveExecutionMode() {
     }
 
     try {
-        const chainedEnabled = chainedToggle?.checked ?? false;
-        const comparisonEnabled = comparisonToggle?.checked ?? false;
-
-        // Save chained mode
-        const res1 = await authFetch(`${API_BASE}/system/chained-mode`, {
+        const res = await authFetch(`${API_BASE}/system/execution-mode`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: chainedEnabled }),
+            body: JSON.stringify({ mode: selected }),
         });
-        if (!res1.ok) throw new Error('Failed to save chained mode');
+        if (!res.ok) throw new Error('Failed to save execution mode');
 
-        // Save comparison mode
-        const res2 = await authFetch(`${API_BASE}/system/comparison-mode`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: comparisonEnabled }),
-        });
-        if (!res2.ok) throw new Error('Failed to save comparison mode');
-
-        // Refresh system info
+        // Refresh system info to sync state
         await loadSystemInfo();
 
-        const mode = comparisonEnabled ? 'Comparison' : (chainedEnabled ? 'Chained' : 'Independent');
-        showToast(`Execution mode set to: ${mode}`, 'success');
+        const modeLabel = { independent: 'Independent', chained: 'Chained', comparison: 'Comparison' };
+        showToast(`Execution mode set to: ${modeLabel[selected] || selected}`, 'success');
     } catch (err) {
         showToast(`Failed to save execution mode: ${err.message}`, 'error');
     } finally {

@@ -139,40 +139,31 @@ def _get_runtime_seed() -> int | None:
     return settings.llm_seed
 
 
-def _get_chained_mode() -> bool:
-    """Get chained execution mode flag from Redis.
+def _get_execution_mode() -> str:
+    """Get unified execution mode from Redis.
 
-    Returns True when chained execution is enabled (layers receive
-    previous layer outputs as context).  Default: False.
+    Returns one of: 'independent', 'chained', 'comparison'.
+    Default: 'independent'.
     """
     try:
         import redis
         r = redis.from_url(settings.redis_url, decode_responses=True)
-        val = r.get("snapai:chained_mode")
+        # Primary: unified key
+        val = r.get("snapai:execution_mode")
+        if val and val in ("independent", "chained", "comparison"):
+            r.close()
+            return val
+        # Backward compat: check old dual-flag keys
+        comp_val = r.get("snapai:comparison_mode")
+        cm_val = r.get("snapai:chained_mode")
         r.close()
-        if val is not None:
-            return val.lower() in ("true", "1", "yes")
+        if comp_val and comp_val.lower() in ("true", "1", "yes"):
+            return "comparison"
+        if cm_val and cm_val.lower() in ("true", "1", "yes"):
+            return "chained"
     except Exception:
         pass
-    return False
-
-
-def _get_comparison_mode() -> bool:
-    """Get comparison mode flag from Redis.
-
-    Returns True when comparison mode is enabled (run both independent
-    and chained pipelines, then diff results).  Default: False.
-    """
-    try:
-        import redis
-        r = redis.from_url(settings.redis_url, decode_responses=True)
-        val = r.get("snapai:comparison_mode")
-        r.close()
-        if val is not None:
-            return val.lower() in ("true", "1", "yes")
-    except Exception:
-        pass
-    return False
+    return "independent"
 
 
 def _compute_comparison(independent: dict, chained: dict) -> dict:
@@ -506,8 +497,9 @@ def _process_case_impl(
         active_model = _get_active_model()
         runtime_temperature = _get_runtime_temperature()
         runtime_seed = _get_runtime_seed()
-        chained_mode = _get_chained_mode()
-        comparison_mode = _get_comparison_mode()
+        execution_mode = _get_execution_mode()  # "independent" | "chained" | "comparison"
+        chained_mode = execution_mode in ("chained", "comparison")
+        comparison_mode = execution_mode == "comparison"
 
         # Build label lookup from snapshot (for streaming events)
         layer_labels: dict[str, str] = {}
