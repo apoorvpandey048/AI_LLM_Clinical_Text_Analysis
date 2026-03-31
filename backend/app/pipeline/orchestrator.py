@@ -14,15 +14,34 @@ _MAX_CHAIN_CONTEXT_CHARS = 12000
 def _build_chain_context(label: str, output: dict) -> str:
     """Build a context injection block for chained execution.
 
-    Serialises *output* to JSON and truncates if it exceeds the safety limit.
+    Serialises *output* to JSON and truncates at key boundaries if it
+    exceeds the safety limit.  This guarantees the injected JSON is
+    always syntactically valid (unlike mid-string truncation).
+
     Returns a markdown-style block that is **prepended** to the user prompt.
     """
     raw = json.dumps(output, indent=2, ensure_ascii=False)
-    if len(raw) > _MAX_CHAIN_CONTEXT_CHARS:
-        raw = raw[:_MAX_CHAIN_CONTEXT_CHARS] + "\n... [TRUNCATED]"
+    if len(raw) <= _MAX_CHAIN_CONTEXT_CHARS:
+        return f"=== {label} ===\n{raw}\n\n"
+
+    # Truncate at key boundaries to keep valid JSON
+    truncated = {}
+    budget = _MAX_CHAIN_CONTEXT_CHARS - 200  # reserve room for structure
+    remaining_keys = list(output.keys())
+    for key in remaining_keys:
+        entry_json = json.dumps({key: output[key]}, ensure_ascii=False)
+        if budget - len(entry_json) < 0:
+            omitted = remaining_keys[len(truncated):]
+            truncated["__truncation_note__"] = f"Omitted keys due to size limit: {omitted}"
+            break
+        truncated[key] = output[key]
+        budget -= len(entry_json)
+
+    raw = json.dumps(truncated, indent=2, ensure_ascii=False)
     return f"=== {label} ===\n{raw}\n\n"
 
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
+from app.pipeline.verdict_calculator import apply_deterministic_verdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
@@ -297,6 +316,10 @@ class PipelineOrchestrator:
                 final_cci=layer2_result.output.get("cci_total"),
                 error=f"Layer 3 failed: {layer3_result.error}",
             )
+
+        # Apply deterministic verdict (overrides LLM verdict with boolean logic)
+        # Preserves LLM verdict as 'llm_suggested_verdict' in the output
+        apply_deterministic_verdict(layer3_result.output)
 
         # Extract final values
         final_verdict = layer3_result.output.get("verdict", "UNKNOWN")
@@ -682,6 +705,7 @@ class PipelineOrchestrator:
         final_cci: float | None = None
 
         if layer3_result and layer3_result.success and layer3_result.output:
+            apply_deterministic_verdict(layer3_result.output)
             final_verdict = layer3_result.output.get("verdict", "UNKNOWN")
         elif layer3_result and not layer3_result.success:
             final_verdict = "LAYER3_FAILED"

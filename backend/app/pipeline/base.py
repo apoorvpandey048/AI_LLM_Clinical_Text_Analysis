@@ -4,6 +4,9 @@ Base Layer class for SNAP-AI pipeline.
 All layers inherit from this base class.
 """
 
+import asyncio
+import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +20,57 @@ logger = get_logger(__name__)
 
 # Sentinel to distinguish "not passed" from "None" for seed_override
 _UNSET = object()
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAYS = [0, 1, 3]  # seconds before each retry
+
+
+def repair_json(raw: str) -> dict | None:
+    """
+    Attempt to repair common LLM JSON errors.
+
+    Handles: markdown fences, trailing commas, unclosed braces/brackets.
+    Returns parsed dict on success, None on failure.
+    """
+    if not raw or not raw.strip():
+        return None
+
+    text = raw.strip()
+
+    # Strip markdown code fences (```json ... ``` or ``` ... ```)
+    text = re.sub(r'^```(?:json)?\s*\n?', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
+    text = text.strip().lstrip('\ufeff')
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Fix trailing commas before } or ]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+
+    # Try again after trailing comma fix
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Fix unclosed braces/brackets
+    open_braces = text.count('{') - text.count('}')
+    if open_braces > 0:
+        text += '}' * open_braces
+
+    open_brackets = text.count('[') - text.count(']')
+    if open_brackets > 0:
+        text += ']' * open_brackets
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
 
 
 @dataclass
@@ -158,13 +212,96 @@ class BaseLayer(ABC):
         **kwargs,
     ) -> LayerResult:
         """
-        Execute the layer with optional streaming.
+        Execute the layer with retry logic for JSON/validation failures.
+
+        Retries up to MAX_RETRIES times on recoverable errors (JSON parse
+        failures, validation errors).  Non-recoverable errors (missing
+        prompt file) fail immediately.
 
         Args:
             custom_prompt: Optional custom prompt to use instead of file
             on_token: Optional async callback for each generated token
-            temperature_override: If set, overrides settings temperature (for per-case dynamic control)
-            seed_override: If set, overrides settings seed. Use _UNSET sentinel to indicate "use config default".
+            temperature_override: If set, overrides settings temperature
+            seed_override: If set, overrides settings seed
+            **kwargs: Layer-specific input data
+
+        Returns:
+            LayerResult with the execution result
+        """
+        last_result = None
+
+        for attempt in range(MAX_RETRIES):
+            if attempt > 0:
+                delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+                logger.warning(
+                    "layer_retry",
+                    layer=self.layer_name,
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    delay_s=delay,
+                    last_error=last_result.error if last_result else None,
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+
+            result = await self._execute_once(
+                custom_prompt=custom_prompt,
+                on_token=on_token,
+                temperature_override=temperature_override,
+                seed_override=seed_override,
+                **kwargs,
+            )
+
+            if result.success:
+                if attempt > 0:
+                    logger.info(
+                        "layer_retry_succeeded",
+                        layer=self.layer_name,
+                        attempt=attempt + 1,
+                    )
+                return result
+
+            last_result = result
+
+            # Don't retry non-recoverable errors
+            if result.error and "Prompt file not found" in result.error:
+                return result
+            if result.error and "Unexpected error" in result.error:
+                return result
+
+            # Recoverable: JSON parse failure, validation failure → retry
+            logger.warning(
+                "layer_attempt_failed",
+                layer=self.layer_name,
+                attempt=attempt + 1,
+                error=result.error,
+            )
+
+        # All retries exhausted
+        logger.error(
+            "layer_all_retries_exhausted",
+            layer=self.layer_name,
+            attempts=MAX_RETRIES,
+            final_error=last_result.error if last_result else None,
+        )
+        return last_result
+
+    async def _execute_once(
+        self,
+        custom_prompt: str | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+        temperature_override: float | None = None,
+        seed_override: int | None = _UNSET,
+        **kwargs,
+    ) -> LayerResult:
+        """
+        Execute a single LLM call attempt.
+
+        Args:
+            custom_prompt: Optional custom prompt to use instead of file
+            on_token: Optional async callback for each generated token
+            temperature_override: If set, overrides settings temperature
+            seed_override: If set, overrides settings seed
             **kwargs: Layer-specific input data
 
         Returns:
@@ -224,28 +361,38 @@ class BaseLayer(ABC):
                     prompt_version=self.settings.prompt_version,
                 )
 
-            # Check for JSON parse failure
-            if response.parsed_json is None:
-                error_msg = "Failed to parse LLM response as JSON"
-                logger.error(
-                    "layer_json_parse_error",
+            # Check for JSON parse failure — try repair before giving up
+            parsed = response.parsed_json
+            if parsed is None:
+                logger.warning(
+                    "layer_json_parse_failed_trying_repair",
                     layer=self.layer_name,
-                    raw_response_excerpt=response.content[:500],
+                    raw_response_excerpt=response.content[:300] if response.content else "",
                 )
-                return LayerResult(
-                    success=False,
-                    output=None,
-                    raw_response=response.reasoning or response.content,
-                    tokens_input=response.tokens_input,
-                    tokens_output=response.tokens_output,
-                    duration_ms=response.duration_ms,
-                    error=error_msg,
-                    layer_name=self.layer_name,
-                    prompt_version=self.settings.prompt_version,
-                )
+                parsed = repair_json(response.content)
+                if parsed is not None:
+                    logger.info("layer_json_repair_succeeded", layer=self.layer_name)
+                else:
+                    error_msg = "Failed to parse LLM response as JSON (repair also failed)"
+                    logger.error(
+                        "layer_json_parse_error",
+                        layer=self.layer_name,
+                        raw_response_excerpt=response.content[:500] if response.content else "",
+                    )
+                    return LayerResult(
+                        success=False,
+                        output=None,
+                        raw_response=response.reasoning or response.content,
+                        tokens_input=response.tokens_input,
+                        tokens_output=response.tokens_output,
+                        duration_ms=response.duration_ms,
+                        error=error_msg,
+                        layer_name=self.layer_name,
+                        prompt_version=self.settings.prompt_version,
+                    )
 
             # Validate output schema
-            is_valid, validation_error = self.validate_output(response.parsed_json)
+            is_valid, validation_error = self.validate_output(parsed)
             if not is_valid:
                 logger.error(
                     "layer_validation_error",
@@ -254,7 +401,7 @@ class BaseLayer(ABC):
                 )
                 return LayerResult(
                     success=False,
-                    output=response.parsed_json,
+                    output=parsed,
                     raw_response=response.reasoning or response.content,
                     tokens_input=response.tokens_input,
                     tokens_output=response.tokens_output,
@@ -279,7 +426,7 @@ class BaseLayer(ABC):
 
             return LayerResult(
                 success=True,
-                output=response.parsed_json,
+                output=parsed,
                 raw_response=raw_response_text,
                 tokens_input=response.tokens_input,
                 tokens_output=response.tokens_output,
@@ -318,3 +465,4 @@ class BaseLayer(ABC):
                 layer_name=self.layer_name,
                 prompt_version=self.settings.prompt_version,
             )
+

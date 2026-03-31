@@ -48,33 +48,17 @@ Output STRICT JSON only."""
 
         Required fields:
         - complications: list
-        - cci_grade_list: list
-        - cci_weights: list
-        - cci_R: number
-        - cci_total: number
-        - cci_check_passed: bool
-        """
-        required_fields = [
-            "complications",
-            "cci_grade_list",
-            "cci_weights",
-            "cci_R",
-            "cci_total",
-            "cci_check_passed",
-        ]
 
-        for field in required_fields:
-            if field not in output:
-                return False, f"Missing required field: {field}"
+        Optional fields (kept for backward compatibility with older prompts):
+        - cci_grade_list, cci_weights, cci_R, cci_total, cci_check_passed
+          (CCI is now computed deterministically in Python; these are ignored)
+        """
+        # Only complications is strictly required
+        if "complications" not in output:
+            return False, "Missing required field: complications"
 
         if not isinstance(output["complications"], list):
             return False, "complications must be an array"
-
-        if not isinstance(output["cci_grade_list"], list):
-            return False, "cci_grade_list must be an array"
-
-        if not isinstance(output["cci_weights"], list):
-            return False, "cci_weights must be an array"
 
         # Validate each complication has required fields
         complication_fields = ["complication", "cd_grade"]
