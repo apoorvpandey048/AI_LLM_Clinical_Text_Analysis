@@ -35,7 +35,6 @@ def compute_verdict(layer3_output: dict) -> str:
     """
     episode_checks = layer3_output.get("episode_checks", [])
     likely_omissions = layer3_output.get("likely_omissions", [])
-    cci_check = layer3_output.get("cci_check", {})
     rule_violation = layer3_output.get("rule_violation", False)
     llm_verdict = layer3_output.get("verdict", "")
 
@@ -50,7 +49,10 @@ def compute_verdict(layer3_output: dict) -> str:
 
     has_omissions = len(likely_omissions) > 0
 
-    has_cci_mismatch = cci_check.get("cci_mismatch", False)
+    # NOTE: cci_mismatch is intentionally IGNORED here.
+    # CCI is computed deterministically by Python (cci_calculator.py),
+    # so the L3 LLM's cci_check comparison is vestigial and produces
+    # inconsistent results between independent/chained modes.
 
     has_rejections = any(
         c.get("action", "").upper() in ("REJECT", "DOWNGRADE", "MERGE", "UPGRADE")
@@ -72,14 +74,13 @@ def compute_verdict(layer3_output: dict) -> str:
     issue_count = sum([
         has_evidence_gaps,
         has_omissions,
-        has_cci_mismatch,
         rule_violation,
     ])
     if issue_count >= 2:
         return "FAIL_REVIEW_REQUIRED"
 
     # Rule 4: Any single issue → PASS_WITH_WARNINGS
-    if has_evidence_gaps or has_omissions or has_cci_mismatch or rule_violation or has_rejections:
+    if has_evidence_gaps or has_omissions or rule_violation or has_rejections:
         return "PASS_WITH_WARNINGS"
 
     # Rule 5: Clean

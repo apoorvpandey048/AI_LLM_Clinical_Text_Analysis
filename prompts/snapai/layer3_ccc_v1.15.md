@@ -441,6 +441,12 @@ OUTPUT FORMAT (STRICT JSON)
   "final_notes": ""
 }
 
+IMPORTANT — CCI CHECK (v1.15):
+CCI is computed by the system, NOT by you. Always set cci_check.cci_mismatch = false
+and cci_check.reported_cci = 0.0 and cci_check.expected_cci = 0.0.
+Do NOT attempt to compute or compare CCI values. The audited_cci block may be left
+with zeroes/empty arrays — the system will compute the real CCI from your final_episode_set.
+
 CRITICAL (v1.15): The final_episode_set MUST be an array of OBJECTS with keys:
 complication, cd_grade, treatment, timing. Do NOT use strings like "Complication – Grade".
 This is required for downstream CCI calculation. Strings will break the pipeline.
