@@ -197,6 +197,30 @@ BINDING EXAMPLES:
   Hyponatremia + albumin given in same admission → Grade II
   Hyponatremia + Tolvaptan → Grade II
 
+CHECK 13 — ROUTINE ICU VASOPRESSOR SUPPORT (v1.15 — BINDING):
+If an episode describes brief, low-dose vasopressor use (norepinephrine, dobutamine)
+in the immediate postoperative period (POD 0, within first 24 hours) after MAJOR surgery:
+
+REJECT if ALL of the following are true:
+  1. Started immediately post-op in ICU (POD 0)
+  2. Duration ≤ 24 hours
+  3. Successfully weaned ("weaned", "ausgeschlichen", "problemlos")
+  4. No documented organ dysfunction, shock, or end-organ damage
+  5. Text describes it as routine hemodynamic management
+
+This is standard ICU protocol after major hepatobiliary/pancreatic/vascular surgery.
+
+BINDING EXAMPLE (F-13 pattern):
+  Layer 2 extracted: "Postoperative hemodynamic instability requiring vasoactive support"
+  Evidence: "low-dose norepinephrine for the first 12 hours, which was successfully weaned"
+  → Duration ≤ 24h, successfully weaned, no organ dysfunction → ROUTINE ICU support
+  → REJECT and REMOVE from final_episode_set.
+
+KEEP as a complication if:
+  - Vasopressor > 24 hours, dose escalation, or multiple vasopressors
+  - Text describes shock, organ failure, or hemodynamic instability
+  - Vasopressor was restarted after weaning
+
 ---
 
 STRUCTURAL / RULE CONSISTENCY CHECK

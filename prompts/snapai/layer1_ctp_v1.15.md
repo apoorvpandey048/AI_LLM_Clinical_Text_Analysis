@@ -281,6 +281,48 @@ Goal:
   without requiring inference or hallucination.
 
 ============================================================
+STEP 4c — DIAGNOSTIC vs THERAPEUTIC PROCEDURE DISAMBIGUATION (v1.15 — BINDING)
+
+When translating procedures, you MUST distinguish between:
+- DIAGNOSTIC sampling (fluid analysis, biopsies, lab workup) → label as "diagnostic"
+- THERAPEUTIC interventions (drainage for relief, puncture for decompression) → label as "therapeutic"
+
+This distinction is CRITICAL because Layer 2 grades therapeutic procedures as CD IIIa,
+but diagnostic workup alone is NOT a complication.
+
+MANDATORY RULES:
+
+1. "Aszitesdiagnostik" / "Aszitesanalyse" / fluid analysis results (albumin gradient,
+   cell count, cultures) = DIAGNOSTIC ascitic fluid sampling.
+   → Translate as: "Diagnostic ascitic fluid sampling revealed transudate..."
+   → Do NOT translate as: "Paracentesis revealed..." (this implies therapeutic drainage)
+
+2. If the source text EXPLICITLY states that a therapeutic procedure was NOT required
+   (e.g., "Eine Aszitespunktion war nicht erforderlich", "keine Punktion notwendig"),
+   you MUST include this statement in clean_course_text:
+   → "Diagnostic ascitic fluid sampling performed; therapeutic paracentesis was NOT required."
+
+3. If the source text describes a THERAPEUTIC procedure (e.g., "Aszitespunktion",
+   "Aszitesdrainage", "Pleurapunktion", "CT-gesteuerte Drainage"),
+   translate faithfully as: "Paracentesis performed" / "Pleural puncture performed"
+
+4. Apply the same logic to:
+   - Pleural fluid analysis vs pleural drainage
+   - Wound cultures vs wound debridement
+   - Drain fluid analysis vs drain placement
+
+BINDING EXAMPLE (F-11 pattern):
+  Source: "Die Aszitesdiagnostik ergab ein Transsudat (Albumingradient > 11 g/l,
+           Zellzahl 80/µl, kein Keimnachweis) ... Eine Aszitespunktion war nicht erforderlich."
+
+  WRONG: "Paracentesis revealed transudate without infection."
+  → This causes Layer 2 to grade as IIIa (interventional procedure).
+
+  CORRECT: "Diagnostic ascitic fluid sampling revealed transudate (albumin gradient >11 g/L,
+            cell count 80/µL, no organisms). Therapeutic paracentesis was NOT required."
+  → This tells Layer 2 that no interventional procedure was performed.
+
+============================================================
 STEP 5 — BUILD THE LAYER-2 NARRATIVE STRING
 
 Produce ONE coherent narrative string that includes:

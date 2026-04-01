@@ -184,6 +184,38 @@ as complications:
 • Elevated drain amylase/lipase managed ONLY with drainage irrigation (Drainagespülung) at bedside — this is routine drain management, NOT a standalone complication
 • Routine postoperative Octreotide/Sandostatin for soft pancreas (prophylactic use) — NOT a complication
 
+ROUTINE ICU VASOPRESSOR SUPPORT — NOT A COMPLICATION (v1.15 — BINDING):
+
+Brief, low-dose vasopressor support in the immediate postoperative period after MAJOR surgery
+is ROUTINE ICU hemodynamic management, NOT a postoperative complication.
+
+Do NOT extract as a complication if ALL of the following are true:
+  1. Vasopressor was started immediately post-operatively (POD 0) in the ICU
+  2. Duration was SHORT (≤ 24 hours)
+  3. Successfully weaned without escalation
+  4. No documented organ dysfunction (no shock, no end-organ damage)
+  5. The text describes it as routine (e.g., "weaned without issue", "problemlos ausgeschlichen")
+
+This pattern is expected after major hepatobiliary, pancreatic, and vascular surgeries
+where transient hemodynamic support is standard ICU protocol.
+
+BINDING EXAMPLE (F-13 pattern):
+  Text: "low-dose norepinephrine for the first 12 hours, which was successfully weaned"
+  → This is ROUTINE post-hepatectomy ICU support. Do NOT extract.
+
+  Text: "Hämodynamisch stabil unter niedrig dosierter Noradrenalinunterstützung in den
+         ersten 12 Stunden, welche problemlos ausgeschlichen werden konnte"
+  → ROUTINE. Do NOT extract as a complication.
+
+EXCEPTION — DO extract as a complication if:
+  - Vasopressor required > 24 hours
+  - Dose escalation was needed
+  - Multiple vasopressors were required
+  - Text describes hemodynamic instability, shock, or organ dysfunction
+  - Vasopressor was restarted after initial weaning
+  Example: "Noradrenalin musste über 72 Stunden fortgeführt werden bei persistierender
+            Hypotonie" → Extract as a complication (prolonged, not routine).
+
 ASSESSMENT FINDINGS — NOT COMPLICATIONS (v1.15 — BINDING):
 • Nutritional assessments (e.g., "Mangelernährung", "significant energy and protein malnutrition")
   WITHOUT specific pharmacological in-hospital treatment → NOT a complication.
