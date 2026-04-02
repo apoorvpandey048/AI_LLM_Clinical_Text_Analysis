@@ -878,13 +878,76 @@ class PipelineOrchestrator:
                         chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", context["layer1_output"])
                         l2_input = chain_ctx + l2_input
                         logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
-                    result = await self.layer2.execute(
+
+                    # ── L2A: Fact Extraction (no grading) ──
+                    if on_layer_start:
+                        await on_layer_start("layer2_cie:extract")
+
+                    l2a_result = await self.layer2a.execute(
                         clean_text=l2_input,
-                        custom_prompt=prompt,
-                        on_token=make_token_cb(name),
+                        on_token=make_token_cb("layer2_cie:extract"),
                         temperature_override=temperature,
                         seed_override=seed,
                     )
+
+                    total_duration_ms += l2a_result.duration_ms
+                    total_tokens_input += l2a_result.tokens_input
+                    total_tokens_output += l2a_result.tokens_output
+
+                    if on_layer_complete:
+                        await _on_layer_complete_with_error("layer2_cie:extract", l2a_result.success, l2a_result.duration_ms)
+
+                    if not l2a_result.success:
+                        logger.error("pipeline_l2a_failed_dynamic", error=l2a_result.error)
+                        result = l2a_result
+                        layer2_result = result
+                        if on_layer_complete:
+                            await _on_layer_complete_with_error(name, False, l2a_result.duration_ms)
+                        continue
+
+                    # ── L2B: CD Grading (treatment-first) ──
+                    if on_layer_start:
+                        await on_layer_start("layer2_cie:grade")
+
+                    extracted_events = l2a_result.output.get("events", [])
+
+                    l2b_result = await self.layer2b.execute(
+                        events=extracted_events,
+                        on_token=make_token_cb("layer2_cie:grade"),
+                        temperature_override=temperature,
+                        seed_override=seed,
+                    )
+
+                    total_duration_ms += l2b_result.duration_ms
+                    total_tokens_input += l2b_result.tokens_input
+                    total_tokens_output += l2b_result.tokens_output
+
+                    if on_layer_complete:
+                        await _on_layer_complete_with_error("layer2_cie:grade", l2b_result.success, l2b_result.duration_ms)
+
+                    # ── Python L2 Aggregator (FINAL AUTHORITY — ALL 7 RULE ENGINES) ──
+                    clean_text_for_l2 = context.get("clean_text", "")
+                    aggregated_l2 = aggregate_layer2(
+                        l2a_output=l2a_result.output if l2a_result.success else None,
+                        l2b_output=l2b_result.output if l2b_result.success else None,
+                        clean_text=clean_text_for_l2,
+                        raw_text=raw_text,
+                    )
+
+                    # Build synthetic LayerResult with aggregated output
+                    l2_total_duration = l2a_result.duration_ms + l2b_result.duration_ms
+                    result = LayerResult(
+                        success=True,
+                        output=aggregated_l2,
+                        raw_response=l2b_result.raw_response,
+                        duration_ms=l2_total_duration,
+                        tokens_input=l2a_result.tokens_input + l2b_result.tokens_input,
+                        tokens_output=l2a_result.tokens_output + l2b_result.tokens_output,
+                        error=None,
+                        prompt_version=self.layer2a.settings.prompt_version,
+                        model_used=l2b_result.model_used,
+                    )
+
                     layer2_result = result
                     if result.success and result.output:
                         context["layer2_output"] = result.output
