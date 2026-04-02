@@ -11,12 +11,14 @@ RULE ENGINES (applied in order):
   4. Conservative merge engine (escalation chains)
   5. CD pre-validation (grade consistency)
   6. Final sanity checker (pattern validation)
+  7. Clinical judgment engine (priority + context + negation + consistency)
 """
 
 import re
 from typing import Any
 
 from app.pipeline.cd_pre_validator import validate_complications
+from app.pipeline.clinical_judgment import apply_clinical_judgment
 from app.pipeline.organ_failure_detector import enforce_iv_grade
 from app.utils import get_logger
 
@@ -638,6 +640,22 @@ def aggregate_layer2(
             removed=pre_sanity - post_sanity,
         )
 
+    # ══════════════════════════════════════════════════════
+    # RULE ENGINE 7: Clinical Judgment (FINAL AUTHORITY)
+    # ══════════════════════════════════════════════════════
+    pre_judgment = len(enriched)
+    enriched = apply_clinical_judgment(
+        events=enriched,
+        raw_text=raw_text,
+    )
+    post_judgment = len(enriched)
+
+    if pre_judgment != post_judgment:
+        logger.info(
+            "clinical_judgment_pruned",
+            removed=pre_judgment - post_judgment,
+        )
+
     # ── Build final output ──
     final_output = {
         "complications": enriched,
@@ -651,6 +669,7 @@ def aggregate_layer2(
             "merges": pre_merge_count - post_merge_count,
             "python_flags": len(validation_flags),
             "sanity_pruned": pre_sanity - post_sanity,
+            "judgment_pruned": pre_judgment - post_judgment,
             "final_count": len(enriched),
         },
     }
