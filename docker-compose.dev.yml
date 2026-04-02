@@ -20,7 +20,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000" # Exposed for dev debugging
+      - "8081:8000" # Exposed for dev debugging (moved to 8081 to free 8000 for vLLM host)
     environment:
       - ENVIRONMENT=development
       - POSTGRES_HOST=postgres
