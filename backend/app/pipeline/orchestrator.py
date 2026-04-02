@@ -53,6 +53,7 @@ def _build_chain_context(label: str, output: dict) -> str:
 
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
 from app.pipeline.cd_pre_validator import validate_complications
+from app.pipeline.layer1_validator import validate_layer1
 from app.pipeline.layer2_aggregator import aggregate_layer2
 from app.pipeline.layer3_aggregator import aggregate_layer3
 from app.pipeline.verdict_calculator import apply_deterministic_verdict
@@ -61,6 +62,8 @@ from typing import Any, Callable, Awaitable
 
 from app.llm import LLMClient
 from app.pipeline.layer1_ctp import Layer1CTP
+from app.pipeline.layer1a_extraction import Layer1AExtraction
+from app.pipeline.layer1b_structuring import Layer1BStructuring
 from app.pipeline.layer2_cie import Layer2CIE
 from app.pipeline.layer2a_extraction import Layer2AExtraction
 from app.pipeline.layer2b_grading import Layer2BGrading
@@ -127,9 +130,11 @@ class PipelineOrchestrator:
             llm_client: The LLM client to use for all layers
         """
         self.llm_client = llm_client
-        self.layer1 = Layer1CTP(llm_client)
-        self.layer2 = Layer2CIE(llm_client)  # kept for backward compat / dynamic mode
+        self.layer1 = Layer1CTP(llm_client)  # kept for backward compat / dynamic mode
         # v2.0 split sub-layers
+        self.layer1a = Layer1AExtraction(llm_client)
+        self.layer1b = Layer1BStructuring(llm_client)
+        self.layer2 = Layer2CIE(llm_client)  # kept for backward compat / dynamic mode
         self.layer2a = Layer2AExtraction(llm_client)
         self.layer2b = Layer2BGrading(llm_client)
         self.layer3 = Layer3CCC(llm_client)  # kept for backward compat / dynamic mode
@@ -203,33 +208,130 @@ class PipelineOrchestrator:
                 await on_token(layer_name, token)
             return cb
 
-        # ====== Layer 1: CTP ======
+        # ====== Layer 1: Split Sub-Layers (SEQUENTIAL) ======
         if on_layer_start:
-            await on_layer_start("layer1_ctp")
+            await on_layer_start("layer1_ctp")  # Grouped: "Layer 1 (Processing)"
         logger.info("LAYER_START", layer="layer1_ctp")
 
+        # ── L1A: Conservative Extraction ──
+        if on_layer_start:
+            await on_layer_start("layer1_ctp:extract")
+
         try:
-            layer1_result = await self.layer1.execute(
+            l1a_result = await self.layer1a.execute(
                 raw_text=raw_text,
-                custom_prompt=custom_prompts.get("layer1_ctp"),
-                on_token=make_token_cb("layer1_ctp"),
+                custom_prompt=custom_prompts.get("layer1a_extraction"),
+                on_token=make_token_cb("layer1a_extraction"),
                 temperature_override=temperature,
                 seed_override=seed,
             )
         except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", layer="layer1_ctp")
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer1a_extraction")
             raise
 
-        total_duration_ms += layer1_result.duration_ms
-        total_tokens_input += layer1_result.tokens_input
-        total_tokens_output += layer1_result.tokens_output
+        total_duration_ms += l1a_result.duration_ms
+        total_tokens_input += l1a_result.tokens_input
+        total_tokens_output += l1a_result.tokens_output
 
         if on_layer_complete:
-            await on_layer_complete("layer1_ctp", layer1_result.success, layer1_result.duration_ms)
+            await on_layer_complete("layer1_ctp:extract", l1a_result.success, l1a_result.duration_ms)
 
+        logger.info(
+            "l1a_complete",
+            success=l1a_result.success,
+            raw_course_len=len(l1a_result.output.get("raw_course_text", "")) if l1a_result.success else 0,
+        )
+
+        if not l1a_result.success:
+            logger.error("pipeline_l1a_failed", error=l1a_result.error)
+            if on_layer_complete:
+                await on_layer_complete("layer1_ctp", False, l1a_result.duration_ms)
+            return PipelineResult(
+                success=False,
+                layer1_result=l1a_result,
+                layer2_result=None,
+                layer3_result=None,
+                total_duration_ms=total_duration_ms,
+                total_tokens_input=total_tokens_input,
+                total_tokens_output=total_tokens_output,
+                final_verdict=None,
+                final_cci=None,
+                error=f"Layer 1A (extraction) failed: {l1a_result.error}",
+            )
+
+        raw_course_text = l1a_result.output.get("raw_course_text", "")
+
+        # ── L1B: Structuring + Normalization ──
+        if on_layer_start:
+            await on_layer_start("layer1_ctp:structure")
+
+        try:
+            l1b_result = await self.layer1b.execute(
+                raw_course_text=raw_course_text,
+                custom_prompt=custom_prompts.get("layer1b_structuring"),
+                on_token=make_token_cb("layer1b_structuring"),
+                temperature_override=temperature,
+                seed_override=seed,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer1b_structuring")
+            raise
+
+        total_duration_ms += l1b_result.duration_ms
+        total_tokens_input += l1b_result.tokens_input
+        total_tokens_output += l1b_result.tokens_output
+
+        if on_layer_complete:
+            await on_layer_complete("layer1_ctp:structure", l1b_result.success, l1b_result.duration_ms)
+
+        logger.info(
+            "l1b_complete",
+            success=l1b_result.success,
+            clean_len=len(l1b_result.output.get("clean_course_text", "")) if l1b_result.success else 0,
+        )
+
+        # ── Python L1 Validation (loss detection) ──
+        clean_course_text = l1b_result.output.get("clean_course_text", "") if l1b_result.success else raw_course_text
+        l1_validation_flags = validate_layer1(
+            raw_text=raw_text,
+            raw_course_text=raw_course_text,
+            clean_course_text=clean_course_text,
+        )
+
+        if l1_validation_flags:
+            logger.warning(
+                "l1_validation_flags_raised",
+                flag_count=len(l1_validation_flags),
+                flags=[f["flag_type"] for f in l1_validation_flags],
+            )
+
+        # Build synthetic LayerResult matching existing schema expectations
+        l1_total_duration = l1a_result.duration_ms + l1b_result.duration_ms
+        layer1_result = LayerResult(
+            success=l1b_result.success,
+            output=l1b_result.output if l1b_result.success else {"clean_course_text": raw_course_text},
+            raw_response=json.dumps({
+                "l1a": l1a_result.raw_response[:500] if l1a_result.raw_response else "",
+                "l1b": l1b_result.raw_response[:500] if l1b_result.raw_response else "",
+            }),
+            tokens_input=l1a_result.tokens_input + l1b_result.tokens_input,
+            tokens_output=l1a_result.tokens_output + l1b_result.tokens_output,
+            duration_ms=l1_total_duration,
+            error=l1b_result.error,
+            layer_name="layer1_ctp",
+            prompt_version=self.layer1a.settings.prompt_version,
+        )
+
+        # Store validation flags and raw course text for debugging
+        layer1_result.output["_l1_validation_flags"] = l1_validation_flags
+        layer1_result.output["_l1a_raw_course_text"] = raw_course_text[:2000]  # truncated for storage
+
+        if on_layer_complete:
+            await on_layer_complete("layer1_ctp", layer1_result.success, l1_total_duration)
         logger.info("LAYER_END", layer="layer1_ctp", success=layer1_result.success)
+
         if not layer1_result.success:
-            logger.error("pipeline_layer1_failed", layer="layer1_ctp", error=layer1_result.error)
+            logger.error("pipeline_layer1_failed", error=layer1_result.error)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
