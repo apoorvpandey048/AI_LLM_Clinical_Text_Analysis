@@ -196,12 +196,44 @@ def aggregate_layer3(
 
     # ── Build final_episode_set for CCI calculator ──
     # Start with L2 complications, apply Python-enforced downgrades
+    # AND evidence-based pruning
     final_episodes = []
+    evidence_pruned = 0
+
     for comp in complications:
         comp_name = comp.get("complication", "")
         grade = comp.get("cd_grade", "")
 
-        # Apply Python downgrades
+        # ── Evidence-based pruning ──
+        # Find matching evidence check
+        ev_check = next(
+            (e for e in episode_checks
+             if e.get("complication", "").lower() == comp_name.lower()),
+            None,
+        )
+
+        if ev_check and ev_check.get("evidence_insufficient", False):
+            confidence = comp.get("confidence", 0.5)
+            if grade == "I":
+                # CD I + insufficient evidence → DROP
+                logger.info(
+                    "l3_evidence_prune",
+                    complication=comp_name,
+                    grade=grade,
+                    reason="CD_I_insufficient_evidence",
+                )
+                evidence_pruned += 1
+                continue
+            elif confidence < 0.5:
+                # CD ≥ II + low confidence + insufficient evidence → flag but keep
+                logger.warning(
+                    "l3_weak_evidence_kept",
+                    complication=comp_name,
+                    grade=grade,
+                    confidence=confidence,
+                )
+
+        # Apply Python downgrades / upgrades
         py_flag = next(
             (f for f in pre_validation_flags
              if f.get("complication", "").lower() == comp_name.lower()),
@@ -227,11 +259,23 @@ def aggregate_layer3(
                     to_grade=grade,
                     reason=py_flag.get("reason", ""),
                 )
+            elif suggested == "UPGRADE_TO_II" and grade == "I":
+                grade = "II"
+                logger.info(
+                    "python_upgrade_applied",
+                    complication=comp_name,
+                    from_grade=comp.get("cd_grade"),
+                    to_grade=grade,
+                    reason=py_flag.get("reason", ""),
+                )
 
         final_episodes.append({
             "complication": comp_name,
             "cd_grade": grade,
         })
+
+    if evidence_pruned:
+        logger.info("l3_evidence_pruning_complete", pruned_count=evidence_pruned)
 
     # Add high-confidence omissions to final episodes
     for om in omissions:

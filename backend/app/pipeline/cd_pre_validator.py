@@ -24,6 +24,8 @@ EXEMPT_DRUGS = frozenset({
     # Electrolyte replacements
     "potassium", "kalium", "magnesium", "calcium", "phosphate",
     "sodium chloride", "nacl",
+    # Standard perioperative
+    "laxative", "loperamide", "pantoprazole", "pantoprazol",
 })
 
 # Keywords that indicate an intervention (for Grade III validation)
@@ -36,6 +38,7 @@ INTERVENTION_KEYWORDS = frozenset({
     "sphincterotomy", "dilatation", "dilation",
     "thoracentesis", "paracentesis", "debridement",
     "vacuum", "vac", "lavage", "exploration",
+    "relaparotomie", "punktion",
 })
 
 # Keywords that indicate ICU / organ failure (for Grade IV validation)
@@ -49,6 +52,29 @@ ICU_ORGAN_KEYWORDS = frozenset({
     "single organ", "multi-organ", "multiorgan",
 })
 
+# Non-exempt drugs that REQUIRE minimum Grade II
+GRADE_II_INDICATORS = frozenset({
+    "antibiotic", "antibiotika", "antibiotikatherapie",
+    "ceftriaxon", "ciprofloxacin", "piperacillin", "tazobactam",
+    "meropenem", "metronidazol", "amoxicillin", "cefuroxim",
+    "vancomycin", "clindamycin", "ampicillin",
+    "transfusion", "erythrocyte", "blood products", "blutprodukt",
+    "erythrozytenkonzentrat", "thrombozytenkonzentrat",
+    "tpn", "parenteral nutrition", "parenterale ernährung",
+    "therapeutic heparin", "therapeutic anticoagulation",
+    "octreotid", "sandostatin",
+    "insulin drip", "insulin perfusor",
+    "amiodarone", "amiodaron",
+})
+
+# Prophylaxis keywords — if present, antibiotics may NOT indicate Grade II
+PROPHYLAXIS_KEYWORDS = frozenset({
+    "prophylaxis", "prophylaxe", "prophylactic",
+    "perioperative", "perioperativ",
+    "single-shot", "single shot", "einmaldosis",
+    "standard prophylaxis", "standardprophylaxe",
+})
+
 
 def _text_contains_any(text: str, keywords: frozenset) -> bool:
     """Check if text contains any keyword (case-insensitive)."""
@@ -60,22 +86,48 @@ def _is_only_exempt_drugs(treatment: str) -> bool:
     """Check if treatment mentions ONLY exempt drugs."""
     lower = treatment.lower()
     # Check if ANY non-exempt therapeutic keyword is present
-    non_exempt_indicators = {
-        "antibiotic", "antibiotika", "ceftriaxon", "ciprofloxacin",
-        "piperacillin", "tazobactam", "meropenem", "metronidazol",
-        "amoxicillin", "cefuroxim", "vancomycin", "clindamycin",
-        "transfusion", "erythrocyte", "blood", "blut",
-        "tpn", "parenteral nutrition",
-        "heparin", "enoxaparin", "therapeutic dose",
-        "insulin", "octreotid",
-    }
-    has_non_exempt = any(ind in lower for ind in non_exempt_indicators)
+    has_non_exempt = _text_contains_any(lower, GRADE_II_INDICATORS)
     if has_non_exempt:
+        return False
+
+    # Check if ANY intervention keyword is present
+    has_intervention = _text_contains_any(lower, INTERVENTION_KEYWORDS)
+    if has_intervention:
         return False
 
     # If only exempt drug names are found, flag it
     has_exempt = any(drug in lower for drug in EXEMPT_DRUGS)
     return has_exempt
+
+
+def _is_prophylactic(treatment: str) -> bool:
+    """Check if treatment is prophylactic (not therapeutic)."""
+    return _text_contains_any(treatment, PROPHYLAXIS_KEYWORDS)
+
+
+def _requires_minimum_grade_ii(treatment: str) -> bool:
+    """
+    Check if treatment requires at minimum Grade II.
+
+    Returns True if treatment contains non-exempt pharmacotherapy
+    AND is NOT prophylactic.
+    """
+    if not treatment:
+        return False
+
+    lower = treatment.lower()
+
+    # Check for Grade II indicators
+    has_grade_ii = _text_contains_any(lower, GRADE_II_INDICATORS)
+
+    if not has_grade_ii:
+        return False
+
+    # Check for prophylaxis — prophylactic antibiotics do NOT make Grade II
+    if _is_prophylactic(treatment):
+        return False
+
+    return True
 
 
 def validate_complications(
@@ -90,12 +142,18 @@ def validate_complications(
     These flags are passed to L3 sub-layers as guidance, and
     used by the Python aggregator as FINAL rule enforcement.
 
+    Rules:
+      1. Grade III requires a procedural intervention
+      2. Grade II with only exempt drugs → should be Grade I
+      3. Grade IV requires ICU / organ failure
+      4. Grade I with therapeutic antibiotics/transfusion → should be Grade II
+      5. Grade II with empty treatment → suspicious
+
     Args:
         complications: List of complication dicts from Layer 2.
 
     Returns:
         List of flag dicts, one per complication with issues.
-        Each contains: complication, cd_grade, flag_type, reason.
         Empty list = no issues found.
     """
     flags = []
@@ -146,6 +204,30 @@ def validate_complications(
                     ),
                     "suggested_action": "REVIEW_REQUIRED",
                 })
+
+        # Rule 4: Grade I with therapeutic antibiotics/transfusion → upgrade to II
+        if grade == "I":
+            if _requires_minimum_grade_ii(treatment):
+                flags.append({
+                    "complication": name,
+                    "cd_grade": grade,
+                    "flag_type": "GRADE_I_HAS_GRADE_II_THERAPY",
+                    "reason": (
+                        f"Grade I but treatment contains non-exempt therapy "
+                        f"requiring minimum Grade II: '{treatment[:120]}'"
+                    ),
+                    "suggested_action": "UPGRADE_TO_II",
+                })
+
+        # Rule 5: Grade II with no treatment at all → suspicious
+        if grade == "II" and not treatment.strip():
+            flags.append({
+                "complication": name,
+                "cd_grade": grade,
+                "flag_type": "GRADE_II_NO_TREATMENT",
+                "reason": "Grade II has no treatment documented",
+                "suggested_action": "REVIEW_REQUIRED",
+            })
 
     if flags:
         logger.info(

@@ -442,6 +442,7 @@ class PipelineOrchestrator:
         aggregated_l2 = aggregate_layer2(
             l2a_output=l2a_result.output if l2a_result.success else None,
             l2b_output=l2b_result.output if l2b_result.success else None,
+            clean_text=clean_text,
         )
 
         # Build synthetic LayerResult matching existing schema expectations
