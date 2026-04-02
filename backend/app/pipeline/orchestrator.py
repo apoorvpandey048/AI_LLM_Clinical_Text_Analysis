@@ -53,6 +53,7 @@ def _build_chain_context(label: str, output: dict) -> str:
 
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
 from app.pipeline.cd_pre_validator import validate_complications
+from app.pipeline.layer2_aggregator import aggregate_layer2
 from app.pipeline.layer3_aggregator import aggregate_layer3
 from app.pipeline.verdict_calculator import apply_deterministic_verdict
 from dataclasses import dataclass, field
@@ -61,6 +62,8 @@ from typing import Any, Callable, Awaitable
 from app.llm import LLMClient
 from app.pipeline.layer1_ctp import Layer1CTP
 from app.pipeline.layer2_cie import Layer2CIE
+from app.pipeline.layer2a_extraction import Layer2AExtraction
+from app.pipeline.layer2b_grading import Layer2BGrading
 from app.pipeline.layer3_ccc import Layer3CCC
 from app.pipeline.layer3a_evidence import Layer3AEvidence
 from app.pipeline.layer3b_rules import Layer3BRules
@@ -125,9 +128,11 @@ class PipelineOrchestrator:
         """
         self.llm_client = llm_client
         self.layer1 = Layer1CTP(llm_client)
-        self.layer2 = Layer2CIE(llm_client)
-        self.layer3 = Layer3CCC(llm_client)  # kept for backward compat / dynamic mode
+        self.layer2 = Layer2CIE(llm_client)  # kept for backward compat / dynamic mode
         # v2.0 split sub-layers
+        self.layer2a = Layer2AExtraction(llm_client)
+        self.layer2b = Layer2BGrading(llm_client)
+        self.layer3 = Layer3CCC(llm_client)  # kept for backward compat / dynamic mode
         self.layer3a = Layer3AEvidence(llm_client)
         self.layer3b = Layer3BRules(llm_client)
         self.layer3c = Layer3COmissions(llm_client)
@@ -248,49 +253,121 @@ class PipelineOrchestrator:
             l2_clean_text = chain_ctx + clean_text
             logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
 
-        # ====== Layer 2: CIE ======
+        # ====== Layer 2: Split Sub-Layers (SEQUENTIAL) ======
         if on_layer_start:
-            await on_layer_start("layer2_cie")
+            await on_layer_start("layer2_cie")  # Grouped: "Layer 2 (Extraction)"
         logger.info("LAYER_START", layer="layer2_cie")
 
+        # ── L2A: Fact Extraction (no grading) ──
+        if on_layer_start:
+            await on_layer_start("layer2_cie:extract")
+
         try:
-            layer2_result = await self.layer2.execute(
+            l2a_result = await self.layer2a.execute(
                 clean_text=l2_clean_text,
-                custom_prompt=custom_prompts.get("layer2_cie"),
-                on_token=make_token_cb("layer2_cie"),
+                custom_prompt=custom_prompts.get("layer2a_extraction"),
+                on_token=make_token_cb("layer2a_extraction"),
                 temperature_override=temperature,
                 seed_override=seed,
             )
         except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", layer="layer2_cie")
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer2a_extraction")
             raise
 
-        total_duration_ms += layer2_result.duration_ms
-        total_tokens_input += layer2_result.tokens_input
-        total_tokens_output += layer2_result.tokens_output
+        total_duration_ms += l2a_result.duration_ms
+        total_tokens_input += l2a_result.tokens_input
+        total_tokens_output += l2a_result.tokens_output
 
         if on_layer_complete:
-            await on_layer_complete("layer2_cie", layer2_result.success, layer2_result.duration_ms)
+            await on_layer_complete("layer2_cie:extract", l2a_result.success, l2a_result.duration_ms)
 
-        logger.info("LAYER_END", layer="layer2_cie", success=layer2_result.success)
-        if not layer2_result.success:
-            logger.error("pipeline_layer2_failed", layer="layer2_cie", error=layer2_result.error)
+        logger.info(
+            "l2a_complete",
+            success=l2a_result.success,
+            event_count=len(l2a_result.output.get("events", [])) if l2a_result.success else 0,
+        )
+
+        if not l2a_result.success:
+            logger.error("pipeline_l2a_failed", error=l2a_result.error)
+            # L2A failure is fatal — we have no events to grade
+            if on_layer_complete:
+                await on_layer_complete("layer2_cie", False, l2a_result.duration_ms)
             return PipelineResult(
                 success=False,
                 layer1_result=layer1_result,
-                layer2_result=layer2_result,
+                layer2_result=l2a_result,
                 layer3_result=None,
                 total_duration_ms=total_duration_ms,
                 total_tokens_input=total_tokens_input,
                 total_tokens_output=total_tokens_output,
                 final_verdict=None,
                 final_cci=None,
-                error=f"Layer 2 failed: {layer2_result.error}",
+                error=f"Layer 2A (extraction) failed: {l2a_result.error}",
             )
 
-        # ====== Python CD Pre-Validation Gate ======
+        # ── L2B: CD Grading (treatment-first) ──
+        if on_layer_start:
+            await on_layer_start("layer2_cie:grade")
+
+        extracted_events = l2a_result.output.get("events", [])
+
+        try:
+            l2b_result = await self.layer2b.execute(
+                events=extracted_events,
+                custom_prompt=custom_prompts.get("layer2b_grading"),
+                on_token=make_token_cb("layer2b_grading"),
+                temperature_override=temperature,
+                seed_override=seed,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer2b_grading")
+            raise
+
+        total_duration_ms += l2b_result.duration_ms
+        total_tokens_input += l2b_result.tokens_input
+        total_tokens_output += l2b_result.tokens_output
+
+        if on_layer_complete:
+            await on_layer_complete("layer2_cie:grade", l2b_result.success, l2b_result.duration_ms)
+
+        logger.info(
+            "l2b_complete",
+            success=l2b_result.success,
+            complication_count=len(l2b_result.output.get("complications", [])) if l2b_result.success else 0,
+        )
+
+        # ── Python L2 Aggregator (FINAL AUTHORITY) ──
+        aggregated_l2 = aggregate_layer2(
+            l2a_output=l2a_result.output if l2a_result.success else None,
+            l2b_output=l2b_result.output if l2b_result.success else None,
+        )
+
+        # Build synthetic LayerResult matching existing schema expectations
+        l2_total_duration = l2a_result.duration_ms + l2b_result.duration_ms
+        layer2_result = LayerResult(
+            success=True,  # Aggregator is pure Python, always succeeds
+            output=aggregated_l2,
+            raw_response=json.dumps({
+                "l2a": l2a_result.raw_response[:500] if l2a_result.raw_response else "",
+                "l2b": l2b_result.raw_response[:500] if l2b_result.raw_response else "",
+            }),
+            tokens_input=l2a_result.tokens_input + l2b_result.tokens_input,
+            tokens_output=l2a_result.tokens_output + l2b_result.tokens_output,
+            duration_ms=l2_total_duration,
+            error=None,
+            layer_name="layer2_cie",
+            prompt_version=self.layer2a.settings.prompt_version,
+        )
+
+        if on_layer_complete:
+            await on_layer_complete("layer2_cie", True, l2_total_duration)
+        logger.info("LAYER_END", layer="layer2_cie", success=True)
+
+        # ====== Python CD Pre-Validation Gate (for L3) ======
         logger.info("cd_pre_validation_start")
         complications = layer2_result.output.get("complications", [])
+        pre_validation_flags = layer2_result.output.get("_l2_pre_validation_flags", [])
+        # re-validate after aggregation to catch any remaining issues
         pre_validation_flags = validate_complications(complications)
         logger.info("cd_pre_validation_complete", flag_count=len(pre_validation_flags))
 
