@@ -1,10 +1,21 @@
 """
 Pipeline Orchestrator.
 
-Coordinates the 3-layer pipeline execution with optional streaming.
+Coordinates the multi-layer pipeline execution with optional streaming.
 Supports additional custom layers that run after the built-in pipeline.
+
+Pipeline v2.0 Architecture:
+  L1 (LLM) → validate + retry
+  L2 (LLM) → validate → Python CD pre-check
+  L3A (LLM - evidence)  ┐
+  L3B (LLM - rules)      ├─ run PARALLEL
+  L3C (LLM - omissions)  ┘
+  → Python aggregator (merge + enforce rules + FINAL AUTHORITY)
+  → Python verdict calculator
+  → Python CCI calculator
 """
 
+import asyncio
 import json
 
 # Maximum characters for injected previous-layer JSON to prevent context window overflow
@@ -41,6 +52,8 @@ def _build_chain_context(label: str, output: dict) -> str:
     return f"=== {label} ===\n{raw}\n\n"
 
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
+from app.pipeline.cd_pre_validator import validate_complications
+from app.pipeline.layer3_aggregator import aggregate_layer3
 from app.pipeline.verdict_calculator import apply_deterministic_verdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
@@ -49,6 +62,9 @@ from app.llm import LLMClient
 from app.pipeline.layer1_ctp import Layer1CTP
 from app.pipeline.layer2_cie import Layer2CIE
 from app.pipeline.layer3_ccc import Layer3CCC
+from app.pipeline.layer3a_evidence import Layer3AEvidence
+from app.pipeline.layer3b_rules import Layer3BRules
+from app.pipeline.layer3c_omissions import Layer3COmissions
 from app.pipeline.base import LayerResult, _UNSET
 from app.utils import get_logger
 
@@ -110,7 +126,11 @@ class PipelineOrchestrator:
         self.llm_client = llm_client
         self.layer1 = Layer1CTP(llm_client)
         self.layer2 = Layer2CIE(llm_client)
-        self.layer3 = Layer3CCC(llm_client)
+        self.layer3 = Layer3CCC(llm_client)  # kept for backward compat / dynamic mode
+        # v2.0 split sub-layers
+        self.layer3a = Layer3AEvidence(llm_client)
+        self.layer3b = Layer3BRules(llm_client)
+        self.layer3c = Layer3COmissions(llm_client)
 
     async def execute(
         self,
@@ -268,57 +288,122 @@ class PipelineOrchestrator:
                 error=f"Layer 2 failed: {layer2_result.error}",
             )
 
-        # ====== Layer 3: CCC ======
+        # ====== Python CD Pre-Validation Gate ======
+        logger.info("cd_pre_validation_start")
+        complications = layer2_result.output.get("complications", [])
+        pre_validation_flags = validate_complications(complications)
+        logger.info("cd_pre_validation_complete", flag_count=len(pre_validation_flags))
+
+        # ====== Layer 3: Split Sub-Layers (PARALLEL) ======
         if on_layer_start:
-            await on_layer_start("layer3_ccc")
+            await on_layer_start("layer3_ccc")  # Grouped: "Layer 3 (Auditing)"
         logger.info("LAYER_START", layer="layer3_ccc")
 
-        # ── Chained mode: inject L1 output as additional context for L3 ──
+        # Chained mode: inject L1 output as additional context
         l3_clean_text = clean_text
         if chained_mode and layer1_result.output:
             chain_ctx = _build_chain_context("PREVIOUS LAYER OUTPUT (Layer 1 — Clinical Text Processor)", layer1_result.output)
             l3_clean_text = chain_ctx + clean_text
-            logger.info("chained_context_injected", target_layer="layer3_ccc", context_chars=len(chain_ctx))
+            logger.info("chained_context_injected", target_layer="layer3", context_chars=len(chain_ctx))
 
+        # Sub-progress: Evidence check
+        if on_layer_start:
+            await on_layer_start("layer3_ccc:evidence")
+
+        # Run L3A, L3B, L3C in PARALLEL via asyncio.gather
         try:
-            layer3_result = await self.layer3.execute(
+            l3a_task = self.layer3a.execute(
                 clean_text=l3_clean_text,
-                layer2_output=layer2_result.output,
-                custom_prompt=custom_prompts.get("layer3_ccc"),
-                on_token=make_token_cb("layer3_ccc"),
+                complications=complications,
+                custom_prompt=custom_prompts.get("layer3a_evidence"),
+                on_token=make_token_cb("layer3a_evidence"),
                 temperature_override=temperature,
                 seed_override=seed,
             )
-        except Exception as exc:
-            logger.exception("PIPELINE_LAYER_CRASH", layer="layer3_ccc")
-            raise
-
-        total_duration_ms += layer3_result.duration_ms
-        total_tokens_input += layer3_result.tokens_input
-        total_tokens_output += layer3_result.tokens_output
-
-        if on_layer_complete:
-            await on_layer_complete("layer3_ccc", layer3_result.success, layer3_result.duration_ms)
-
-        logger.info("LAYER_END", layer="layer3_ccc", success=layer3_result.success)
-        if not layer3_result.success:
-            logger.error("pipeline_layer3_failed", layer="layer3_ccc", error=layer3_result.error)
-            # Layer 3 failure is not fatal - we still have Layer 2 results
-            return PipelineResult(
-                success=True,  # Partial success - L1 and L2 completed
-                layer1_result=layer1_result,
-                layer2_result=layer2_result,
-                layer3_result=layer3_result,
-                total_duration_ms=total_duration_ms,
-                total_tokens_input=total_tokens_input,
-                total_tokens_output=total_tokens_output,
-                final_verdict="LAYER3_FAILED",
-                final_cci=layer2_result.output.get("cci_total"),
-                error=f"Layer 3 failed: {layer3_result.error}",
+            l3b_task = self.layer3b.execute(
+                complications=complications,
+                pre_validation_flags=pre_validation_flags,
+                custom_prompt=custom_prompts.get("layer3b_rules"),
+                on_token=make_token_cb("layer3b_rules"),
+                temperature_override=temperature,
+                seed_override=seed,
+            )
+            l3c_task = self.layer3c.execute(
+                clean_text=l3_clean_text,
+                complications=complications,
+                custom_prompt=custom_prompts.get("layer3c_omissions"),
+                on_token=make_token_cb("layer3c_omissions"),
+                temperature_override=temperature,
+                seed_override=seed,
             )
 
+            l3a_result, l3b_result, l3c_result = await asyncio.gather(
+                l3a_task, l3b_task, l3c_task,
+                return_exceptions=False,
+            )
+        except Exception as exc:
+            logger.exception("PIPELINE_LAYER_CRASH", layer="layer3_parallel")
+            raise
+
+        # Accumulate tokens/timing from all sub-layers
+        for sub_result in (l3a_result, l3b_result, l3c_result):
+            total_duration_ms += sub_result.duration_ms
+            total_tokens_input += sub_result.tokens_input
+            total_tokens_output += sub_result.tokens_output
+
+        # Sub-progress events
+        if on_layer_complete:
+            await on_layer_complete("layer3_ccc:evidence", l3a_result.success, l3a_result.duration_ms)
+        if on_layer_start:
+            await on_layer_start("layer3_ccc:rules")
+        if on_layer_complete:
+            await on_layer_complete("layer3_ccc:rules", l3b_result.success, l3b_result.duration_ms)
+        if on_layer_start:
+            await on_layer_start("layer3_ccc:omissions")
+        if on_layer_complete:
+            await on_layer_complete("layer3_ccc:omissions", l3c_result.success, l3c_result.duration_ms)
+
+        logger.info(
+            "layer3_sublayers_complete",
+            l3a_success=l3a_result.success,
+            l3b_success=l3b_result.success,
+            l3c_success=l3c_result.success,
+        )
+
+        # ====== Python Aggregation (FINAL AUTHORITY) ======
+        aggregated_output = aggregate_layer3(
+            layer2_output=layer2_result.output,
+            l3a_output=l3a_result.output if l3a_result.success else None,
+            l3b_output=l3b_result.output if l3b_result.success else None,
+            l3c_output=l3c_result.output if l3c_result.success else None,
+            pre_validation_flags=pre_validation_flags,
+            clean_text=clean_text,
+        )
+
+        # Build a synthetic LayerResult for the aggregated L3 output
+        # This keeps backward compatibility with the rest of the system
+        l3_total_duration = l3a_result.duration_ms + l3b_result.duration_ms + l3c_result.duration_ms
+        layer3_result = LayerResult(
+            success=True,  # Aggregator is pure Python, always succeeds
+            output=aggregated_output,
+            raw_response=json.dumps({
+                "l3a": l3a_result.raw_response[:500] if l3a_result.raw_response else "",
+                "l3b": l3b_result.raw_response[:500] if l3b_result.raw_response else "",
+                "l3c": l3c_result.raw_response[:500] if l3c_result.raw_response else "",
+            }),
+            tokens_input=l3a_result.tokens_input + l3b_result.tokens_input + l3c_result.tokens_input,
+            tokens_output=l3a_result.tokens_output + l3b_result.tokens_output + l3c_result.tokens_output,
+            duration_ms=l3_total_duration,
+            error=None,
+            layer_name="layer3_ccc",
+            prompt_version=self.layer3a.settings.prompt_version,
+        )
+
+        if on_layer_complete:
+            await on_layer_complete("layer3_ccc", True, l3_total_duration)
+        logger.info("LAYER_END", layer="layer3_ccc", success=True)
+
         # Apply deterministic verdict (overrides LLM verdict with boolean logic)
-        # Preserves LLM verdict as 'llm_suggested_verdict' in the output
         apply_deterministic_verdict(layer3_result.output)
 
         # Extract final values
@@ -327,7 +412,7 @@ class PipelineOrchestrator:
         # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic
         final_cci = compute_cci_from_pipeline(
             layer2_output=layer2_result.output,
-            layer3_output=layer3_result.output if layer3_result.success else None,
+            layer3_output=layer3_result.output,
         )
         logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
 

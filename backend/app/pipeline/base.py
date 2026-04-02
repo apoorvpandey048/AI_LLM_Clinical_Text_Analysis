@@ -9,11 +9,13 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 from app.config import get_settings
 from app.llm import LLMClient, LLMResponse
+from app.pipeline.structured_preamble import STRUCTURED_JSON_PREAMBLE
 from app.utils import get_logger
 
 logger = get_logger(__name__)
@@ -24,6 +26,96 @@ _UNSET = object()
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAYS = [0, 1, 3]  # seconds before each retry
+
+
+class ErrorType(Enum):
+    """Typed error categories for self-correction loop."""
+    JSON_ERROR = "JSON_ERROR"          # Malformed JSON syntax
+    SCHEMA_ERROR = "SCHEMA_ERROR"      # Valid JSON but missing/invalid fields
+    LOGIC_ERROR = "LOGIC_ERROR"        # Contradictions in output
+    EVIDENCE_ERROR = "EVIDENCE_ERROR"  # Evidence not grounded in text
+
+
+def classify_error(error_msg: str, output: dict | None) -> ErrorType:
+    """Classify a pipeline error into a typed category.
+
+    Args:
+        error_msg: The error message from the failed attempt.
+        output: The parsed output (if any) from the failed attempt.
+
+    Returns:
+        ErrorType indicating what kind of fix the LLM should attempt.
+    """
+    if output is None:
+        # Couldn't parse JSON at all
+        return ErrorType.JSON_ERROR
+
+    lower = error_msg.lower() if error_msg else ""
+
+    if "missing required field" in lower or "must be" in lower:
+        return ErrorType.SCHEMA_ERROR
+    if "invalid" in lower and ("grade" in lower or "verdict" in lower):
+        return ErrorType.SCHEMA_ERROR
+    if "evidence" in lower:
+        return ErrorType.EVIDENCE_ERROR
+
+    # Default: if we have parsed output but it failed validation
+    return ErrorType.LOGIC_ERROR
+
+
+def build_correction_prompt(
+    error_type: ErrorType,
+    error_msg: str,
+    raw_output_excerpt: str,
+) -> str:
+    """Build a self-correction instruction block for the retry.
+
+    This is appended to the user prompt on retry attempts, giving
+    the LLM specific guidance on what went wrong and how to fix it.
+
+    Args:
+        error_type: Classified error category.
+        error_msg: The specific error message.
+        raw_output_excerpt: First 800 chars of the broken output.
+
+    Returns:
+        Correction instruction string to append to user prompt.
+    """
+    type_instructions = {
+        ErrorType.JSON_ERROR: (
+            "Fix the JSON syntax. Ensure all braces/brackets are closed, "
+            "strings are properly quoted, and no trailing commas exist. "
+            "Do NOT add any text outside the JSON object."
+        ),
+        ErrorType.SCHEMA_ERROR: (
+            "Fix the missing or invalid fields listed below. "
+            "Ensure every required key exists with the correct type. "
+            "Do NOT remove valid fields that were already correct."
+        ),
+        ErrorType.LOGIC_ERROR: (
+            "Fix the logical contradictions listed below. "
+            "Re-examine the clinical text and recompute your reasoning "
+            "for the specific fields that are incorrect."
+        ),
+        ErrorType.EVIDENCE_ERROR: (
+            "Re-ground your output in the source text. "
+            "Find exact verbatim evidence for each claim. "
+            "If no evidence exists, set the appropriate flag."
+        ),
+    }
+
+    instruction = type_instructions.get(error_type, "Fix the errors below.")
+
+    return (
+        f"\n\n--- SELF-CORRECTION (your previous output was invalid) ---\n"
+        f"ERROR TYPE: {error_type.value}\n"
+        f"ERRORS: {error_msg}\n"
+        f"INSTRUCTION: {instruction}\n"
+        f"PREVIOUS OUTPUT (excerpt):\n{raw_output_excerpt}\n"
+        f"--- END CORRECTION ---\n"
+        f"Fix ONLY the listed errors. Preserve all correct parts. "
+        f"Return STRICT JSON only."
+    )
 
 
 def repair_json(raw: str) -> dict | None:
@@ -212,11 +304,12 @@ class BaseLayer(ABC):
         **kwargs,
     ) -> LayerResult:
         """
-        Execute the layer with retry logic for JSON/validation failures.
+        Execute the layer with typed self-correction retry logic.
 
-        Retries up to MAX_RETRIES times on recoverable errors (JSON parse
-        failures, validation errors).  Non-recoverable errors (missing
-        prompt file) fail immediately.
+        On failure, classifies the error (JSON_ERROR, SCHEMA_ERROR,
+        LOGIC_ERROR, EVIDENCE_ERROR) and feeds the error + broken output
+        back into the LLM on retry, giving it specific guidance on what
+        to fix.  Non-recoverable errors fail immediately.
 
         Args:
             custom_prompt: Optional custom prompt to use instead of file
@@ -229,6 +322,7 @@ class BaseLayer(ABC):
             LayerResult with the execution result
         """
         last_result = None
+        correction_suffix = ""  # Appended to user prompt on retries
 
         for attempt in range(MAX_RETRIES):
             if attempt > 0:
@@ -244,11 +338,33 @@ class BaseLayer(ABC):
                 if delay > 0:
                     await asyncio.sleep(delay)
 
+                # ── Build self-correction context ──
+                if last_result and last_result.error:
+                    error_type = classify_error(
+                        last_result.error, last_result.output
+                    )
+                    raw_excerpt = (
+                        last_result.raw_response[:800]
+                        if last_result.raw_response else ""
+                    )
+                    correction_suffix = build_correction_prompt(
+                        error_type=error_type,
+                        error_msg=last_result.error,
+                        raw_output_excerpt=raw_excerpt,
+                    )
+                    logger.info(
+                        "self_correction_injected",
+                        layer=self.layer_name,
+                        attempt=attempt + 1,
+                        error_type=error_type.value,
+                    )
+
             result = await self._execute_once(
                 custom_prompt=custom_prompt,
                 on_token=on_token,
                 temperature_override=temperature_override,
                 seed_override=seed_override,
+                correction_suffix=correction_suffix,
                 **kwargs,
             )
 
@@ -292,6 +408,7 @@ class BaseLayer(ABC):
         on_token: Callable[[str], Awaitable[None]] | None = None,
         temperature_override: float | None = None,
         seed_override: int | None = _UNSET,
+        correction_suffix: str = "",
         **kwargs,
     ) -> LayerResult:
         """
@@ -302,6 +419,7 @@ class BaseLayer(ABC):
             on_token: Optional async callback for each generated token
             temperature_override: If set, overrides settings temperature
             seed_override: If set, overrides settings seed
+            correction_suffix: Self-correction context from previous failed attempt
             **kwargs: Layer-specific input data
 
         Returns:
@@ -315,11 +433,14 @@ class BaseLayer(ABC):
         logger.info("layer_execution_start", layer=self.layer_name, streaming=on_token is not None, temperature=effective_temperature, seed=effective_seed)
 
         try:
-            # Load system prompt (custom or file)
-            system_prompt = self.load_prompt(custom_prompt=custom_prompt)
+            # Load system prompt (custom or file) and prepend structured preamble
+            raw_system_prompt = self.load_prompt(custom_prompt=custom_prompt)
+            system_prompt = STRUCTURED_JSON_PREAMBLE + raw_system_prompt
 
-            # Build user prompt
+            # Build user prompt + append self-correction context (if retrying)
             user_prompt = self.build_user_prompt(**kwargs)
+            if correction_suffix:
+                user_prompt = user_prompt + correction_suffix
 
             # Execute LLM (streaming or non-streaming)
             if on_token is not None:
