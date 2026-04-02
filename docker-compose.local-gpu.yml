@@ -18,11 +18,12 @@
 
 services:
   # --- Disable Ollama (we use vLLM) ---
+  # Replaced with a no-op container that exits immediately.
+  # Cannot use profiles: [disabled] because it breaks depends_on in dev compose.
   ollama:
     image: busybox
     command: [ "true" ]
-    profiles:
-      - disabled
+    restart: "no"
 
   # --- Backend: connect to vLLM on host ---
   backend:
