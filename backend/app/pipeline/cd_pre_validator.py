@@ -164,15 +164,17 @@ def validate_complications(
         name = comp.get("complication", f"Complication {i + 1}")
 
         # Rule 1: Grade III requires an intervention
+        # Check BOTH treatment AND complication name (LLM may put procedure in either)
         if grade in ("IIIa", "IIIb"):
-            if not _text_contains_any(treatment, INTERVENTION_KEYWORDS):
+            combined_for_intervention = name + " " + treatment
+            if not _text_contains_any(combined_for_intervention, INTERVENTION_KEYWORDS):
                 flags.append({
                     "complication": name,
                     "cd_grade": grade,
                     "flag_type": "GRADE_III_NO_INTERVENTION",
                     "reason": (
                         f"Grade {grade} requires a procedural intervention, "
-                        f"but treatment describes: '{treatment[:120]}'"
+                        f"but neither complication nor treatment mention one: '{treatment[:120]}'"
                     ),
                     "suggested_action": "DOWNGRADE_TO_II",
                 })
@@ -192,15 +194,17 @@ def validate_complications(
                 })
 
         # Rule 3: Grade IV requires ICU / organ failure
+        # Check BOTH treatment AND complication name
         if grade in ("IVa", "IVb"):
-            if not _text_contains_any(treatment, ICU_ORGAN_KEYWORDS):
+            combined_for_icu = name + " " + treatment
+            if not _text_contains_any(combined_for_icu, ICU_ORGAN_KEYWORDS):
                 flags.append({
                     "complication": name,
                     "cd_grade": grade,
                     "flag_type": "GRADE_IV_NO_ORGAN_FAILURE",
                     "reason": (
                         f"Grade {grade} requires ICU with organ failure, "
-                        f"but treatment describes: '{treatment[:120]}'"
+                        f"but neither complication nor treatment mention it: '{treatment[:120]}'"
                     ),
                     "suggested_action": "REVIEW_REQUIRED",
                 })

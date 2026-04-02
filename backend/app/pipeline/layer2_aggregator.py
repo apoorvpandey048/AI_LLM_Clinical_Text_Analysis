@@ -343,7 +343,7 @@ def _final_sanity_check(events: list[dict]) -> list[dict]:
     Rules:
     1. If Grade V present → remove minor noise (CD I events)
     2. If too many CD I (>3) → prune lowest confidence ones
-    3. If Grade IV present with no Grade II or III → suspicious but keep
+    3. If ALL events are CD I with low confidence → likely false positives
     """
     grade_v_present = any(e.get("cd_grade") == "V" for e in events)
 
@@ -373,6 +373,26 @@ def _final_sanity_check(events: list[dict]) -> list[dict]:
             original_cd1_count=len(cd_i_events),
             pruned_count=pruned_count,
         )
+
+    # Rule 3: ALL events are CD I with low avg confidence → likely false positives
+    # This catches "no complication" cases where LLM hallucinates borderline events
+    if events and all(e.get("cd_grade") == "I" for e in events):
+        avg_confidence = sum(e.get("confidence", 0.5) for e in events) / len(events)
+        if avg_confidence < 0.6:
+            # Very likely false positives — remove all
+            logger.info(
+                "sanity_prune_all_low_confidence_cd1",
+                count=len(events),
+                avg_confidence=round(avg_confidence, 2),
+            )
+            events = []
+        elif len(events) == 1 and events[0].get("confidence", 0.5) < 0.5:
+            # Single low-confidence CD I → remove
+            logger.info(
+                "sanity_prune_single_weak_cd1",
+                confidence=events[0].get("confidence", 0.5),
+            )
+            events = []
 
     return events
 
