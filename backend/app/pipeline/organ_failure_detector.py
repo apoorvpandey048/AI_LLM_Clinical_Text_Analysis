@@ -55,23 +55,50 @@ ORGAN_SYSTEMS: dict[str, frozenset[str]] = {
 def detect_organ_failures(
     treatment_text: str,
     complication_text: str = "",
+    full_clinical_text: str = "",
 ) -> list[str]:
     """
     Detect which organ systems are involved based on text.
 
+    Checks the event's own text first. If that yields only 1 organ,
+    falls back to the full clinical text to detect multi-organ
+    involvement documented elsewhere in the discharge summary.
+
     Args:
         treatment_text: Treatment/therapy description
         complication_text: Complication description (optional)
+        full_clinical_text: Full discharge summary text (optional fallback)
 
     Returns:
         List of organ system names that are involved.
     """
-    combined = (treatment_text + " " + complication_text).lower()
+    # First check the event-specific text
+    event_text = (treatment_text + " " + complication_text).lower()
 
     involved = []
     for organ, keywords in ORGAN_SYSTEMS.items():
-        if any(kw in combined for kw in keywords):
+        if any(kw in event_text for kw in keywords):
             involved.append(organ)
+
+    # If only 1 organ found in event text but we have the full clinical text,
+    # scan the full text for additional organ system involvement.
+    # This catches cases where organ failures are documented across the
+    # discharge summary, not just in one event's description.
+    if len(involved) <= 1 and full_clinical_text:
+        full_lower = full_clinical_text.lower()
+        full_involved = []
+        for organ, keywords in ORGAN_SYSTEMS.items():
+            if any(kw in full_lower for kw in keywords):
+                full_involved.append(organ)
+
+        # Only use the full scan if it finds MORE organs
+        if len(full_involved) > len(involved):
+            logger.info(
+                "organ_detection_expanded",
+                event_organs=involved,
+                full_text_organs=full_involved,
+            )
+            involved = full_involved
 
     return involved
 
@@ -80,6 +107,7 @@ def enforce_iv_grade(
     current_grade: str,
     treatment_text: str,
     complication_text: str = "",
+    full_clinical_text: str = "",
 ) -> str:
     """
     Enforce IVa vs IVb based on organ system count.
@@ -97,6 +125,7 @@ def enforce_iv_grade(
         current_grade: The LLM-assigned CD grade
         treatment_text: Treatment description
         complication_text: Complication description
+        full_clinical_text: Full discharge summary for fallback organ detection
 
     Returns:
         Corrected grade string (IVa or IVb), or original if no override.
@@ -104,7 +133,9 @@ def enforce_iv_grade(
     if current_grade not in ("IVa", "IVb"):
         return current_grade
 
-    organs = detect_organ_failures(treatment_text, complication_text)
+    organs = detect_organ_failures(
+        treatment_text, complication_text, full_clinical_text
+    )
 
     if len(organs) >= 2:
         correct_grade = "IVb"

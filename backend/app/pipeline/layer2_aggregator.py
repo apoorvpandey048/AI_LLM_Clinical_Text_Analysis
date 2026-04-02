@@ -528,6 +528,7 @@ def aggregate_layer2(
                 current_grade=original,
                 treatment_text=comp.get("treatment", ""),
                 complication_text=comp.get("complication", ""),
+                full_clinical_text=clean_text,
             )
             if corrected != original:
                 comp["cd_grade"] = corrected
