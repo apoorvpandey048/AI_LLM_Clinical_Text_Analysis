@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 16384
     llm_timeout: int = 900  # 15 minutes for large model
     llm_reasoning_level: str = "medium"  # low/medium/high for GPT-OSS-120B
-    llm_seed: int | None = None  # Seed for reproducibility (None = non-deterministic)
+    llm_seed: int | None = 42  # Fixed seed for reproducibility (None = non-deterministic)
 
     # Upload Settings
     max_upload_size_mb: int = 50

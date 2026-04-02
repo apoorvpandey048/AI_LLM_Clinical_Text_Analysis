@@ -344,8 +344,11 @@ def _final_sanity_check(events: list[dict]) -> list[dict]:
     1. If Grade V present → remove minor noise (CD I events)
     2. If too many CD I (>3) → prune lowest confidence ones
     3. If ALL events are CD I with low confidence → likely false positives
+    4. If Grade III+ present → drop untreated CD I (clinical noise)
     """
+    grade_order = {"I": 0, "II": 1, "IIIa": 2, "IIIb": 3, "IVa": 4, "IVb": 5, "V": 6}
     grade_v_present = any(e.get("cd_grade") == "V" for e in events)
+    highest = max((grade_order.get(e.get("cd_grade", "I"), 0) for e in events), default=0) if events else 0
 
     # Rule 1: Grade V + minor noise → prune CD I
     if grade_v_present:
@@ -375,11 +378,9 @@ def _final_sanity_check(events: list[dict]) -> list[dict]:
         )
 
     # Rule 3: ALL events are CD I with low avg confidence → likely false positives
-    # This catches "no complication" cases where LLM hallucinates borderline events
     if events and all(e.get("cd_grade") == "I" for e in events):
         avg_confidence = sum(e.get("confidence", 0.5) for e in events) / len(events)
         if avg_confidence < 0.6:
-            # Very likely false positives — remove all
             logger.info(
                 "sanity_prune_all_low_confidence_cd1",
                 count=len(events),
@@ -387,12 +388,42 @@ def _final_sanity_check(events: list[dict]) -> list[dict]:
             )
             events = []
         elif len(events) == 1 and events[0].get("confidence", 0.5) < 0.5:
-            # Single low-confidence CD I → remove
             logger.info(
                 "sanity_prune_single_weak_cd1",
                 confidence=events[0].get("confidence", 0.5),
             )
             events = []
+
+    # Rule 4: Clinical noise pruner — if Grade IIIa+ exists, drop untreated CD I
+    # In serious surgical cases, transient Grade I symptoms (mild nausea, brief fever)
+    # are clinical noise when a major complication dominates the case.
+    if highest >= 2:  # IIIa or higher
+        TRIVIAL_TREATMENTS = frozenset({
+            "", "observation", "beobachtung", "spontaneous resolution",
+            "spontane besserung", "conservative", "konservativ",
+            "monitoring", "überwachung", "watchful waiting",
+            "no treatment", "keine therapie", "none",
+            "self-limiting", "selbstlimitierend",
+        })
+
+        survivors = []
+        pruned_noise = 0
+        for e in events:
+            if e.get("cd_grade") == "I":
+                treatment = e.get("treatment", "").strip().lower()
+                if treatment in TRIVIAL_TREATMENTS or not treatment:
+                    pruned_noise += 1
+                    logger.info(
+                        "sanity_prune_clinical_noise",
+                        complication=e.get("complication", ""),
+                        reason="untreated_cd1_with_major_complication",
+                    )
+                    continue
+            survivors.append(e)
+
+        if pruned_noise:
+            events = survivors
+            logger.info("sanity_clinical_noise_pruned", count=pruned_noise)
 
     return events
 
@@ -413,6 +444,7 @@ def aggregate_layer2(
     l2a_output: dict | None,
     l2b_output: dict | None,
     clean_text: str = "",
+    raw_text: str = "",
 ) -> dict:
     """
     Merge L2A + L2B outputs into the final Layer 2 schema.
@@ -430,7 +462,8 @@ def aggregate_layer2(
     Args:
         l2a_output: Layer 2A extraction output (or None if failed)
         l2b_output: Layer 2B grading output (or None if failed)
-        clean_text: Original clean course text for death detection
+        clean_text: L1-processed clean course text for death detection
+        raw_text: Original raw discharge summary (for organ failure detection)
 
     Returns:
         Aggregated Layer 2 output dict
@@ -521,6 +554,10 @@ def aggregate_layer2(
     # ══════════════════════════════════════════════════════
     # RULE ENGINE 3: IVa vs IVb Organ Failure Enforcement
     # ══════════════════════════════════════════════════════
+    # Use raw_text as primary source for organ detection (preserves original
+    # German/clinical terminology before L1B normalization), with clean_text as fallback
+    organ_detection_text = raw_text if raw_text else clean_text
+
     for comp in enriched:
         if comp.get("cd_grade") in ("IVa", "IVb"):
             original = comp["cd_grade"]
@@ -528,7 +565,7 @@ def aggregate_layer2(
                 current_grade=original,
                 treatment_text=comp.get("treatment", ""),
                 complication_text=comp.get("complication", ""),
-                full_clinical_text=clean_text,
+                full_clinical_text=organ_detection_text,
             )
             if corrected != original:
                 comp["cd_grade"] = corrected

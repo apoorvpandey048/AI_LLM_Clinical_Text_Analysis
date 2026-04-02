@@ -15,39 +15,71 @@ from app.utils import get_logger
 logger = get_logger(__name__)
 
 # Organ system keyword maps — each set represents one organ system
+# Keywords cover both German originals AND English paraphrases (L1B may translate)
 ORGAN_SYSTEMS: dict[str, frozenset[str]] = {
     "renal": frozenset({
-        "dialysis", "dialyse", "cvvh", "crrt", "hemofiltration",
-        "hämofiltration", "nierenversagen", "renal failure",
-        "acute kidney", "akutes nierenversagen", "anurie", "anuria",
-        "renal replacement", "nierenersatz",
+        # German
+        "dialysis", "dialyse", "cvvh", "cvvhd", "cvvhdf", "crrt",
+        "hemofiltration", "hämofiltration", "hämodiafiltration",
+        "nierenversagen", "akutes nierenversagen", "anurie",
+        "nierenersatz", "niereninsuffizienz", "oligurie",
+        # English paraphrases (L1B may use these)
+        "renal failure", "acute kidney", "kidney failure",
+        "renal replacement", "anuria", "oliguria",
+        "renal dysfunction", "kidney dysfunction",
+        "renal insufficiency", "acute renal",
+        "continuous hemofiltration", "hemodialysis",
+        "renal support", "kidney support",
     }),
     "respiratory": frozenset({
+        # German
         "intubation", "ventilation", "beatmung", "respirator",
-        "ards", "respiratory failure", "respiratorisches versagen",
-        "mechanical ventilation", "maschinelle beatmung",
-        "reintubation", "tracheostomy", "tracheotomie",
-        "oxygen therapy high-flow",  # high-flow only, not nasal cannula
+        "ards", "maschinelle beatmung", "reintubation",
+        "tracheostomy", "tracheotomie", "respiratorisches versagen",
+        # English paraphrases
+        "respiratory failure", "mechanical ventilation",
+        "ventilator", "ventilatory support", "respiratory support",
+        "oxygen therapy high-flow", "high-flow nasal",
+        "respiratory distress", "pulmonary failure",
+        "re-intubation", "ventilated", "intubated",
     }),
     "cardiovascular": frozenset({
-        "vasopressor", "vasopressoren", "noradrenalin", "norepinephrine",
-        "dobutamin", "dobutamine", "catecholamine", "katecholamin",
-        "inotrope", "inotropika", "vasopressin",
-        "cardiovascular failure", "kreislaufversagen",
-        "cardiogenic shock", "kardiogener schock",
-        "cardiac arrest", "herzstillstand", "reanimation", "cpr",
+        # German
+        "vasopressor", "vasopressoren", "noradrenalin",
+        "katecholamin", "inotropika", "kreislaufversagen",
+        "kardiogener schock", "herzstillstand",
+        # English paraphrases
+        "norepinephrine", "dobutamin", "dobutamine",
+        "catecholamine", "inotrope", "vasopressin",
+        "cardiovascular failure", "hemodynamic instability",
+        "cardiogenic shock", "cardiac arrest", "reanimation", "cpr",
+        "vasopressor support", "circulatory failure",
+        "hemodynamic support", "pressor", "pressors",
+        "circulatory support", "shock",
     }),
     "hepatic": frozenset({
-        "liver failure", "leberversagen", "hepatic failure",
-        "hepatisches versagen", "coagulopathy", "koagulopathie",
-        "hepatorenal", "acute liver", "akutes leberversagen",
-        "enc encephalopathy hepatic",
+        # German
+        "leberversagen", "akutes leberversagen",
+        "hepatisches versagen", "koagulopathie",
+        "hepatorenal", "leberdysfunktion",
+        # English paraphrases
+        "liver failure", "hepatic failure", "acute liver",
+        "coagulopathy", "hepatic dysfunction",
+        "liver dysfunction", "hepatic insufficiency",
+        "liver insufficiency", "post-hepatectomy liver failure",
+        "hepatorenal syndrome", "hepatic encephalopathy",
+        "liver support", "phlf",  # Post-Hepatectomy Liver Failure
     }),
     "neurological": frozenset({
-        "coma", "koma", "cerebral", "zerebral",
-        "encephalopathy", "enzephalopathie",
-        "intracranial", "intrakraniell",
-        "brain death", "hirntod",
+        # German
+        "koma", "zerebral", "enzephalopathie",
+        "intrakraniell", "hirntod",
+        # English paraphrases
+        "coma", "cerebral", "encephalopathy",
+        "intracranial", "brain death",
+        "altered mental status", "neurological failure",
+        "neurological dysfunction", "consciousness",
+        "obtunded", "unresponsive",
     }),
 }
 
