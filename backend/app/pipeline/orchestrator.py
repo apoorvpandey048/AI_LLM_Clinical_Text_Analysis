@@ -956,8 +956,8 @@ class PipelineOrchestrator:
                         tokens_input=l2_tok_in,
                         tokens_output=l2_tok_out,
                         error=None if l2_success else (l2a_result.error if l2a_result else "L2A did not execute"),
+                        layer_name="layer2_cie",
                         prompt_version=self.layer2a.settings.prompt_version,
-                        model_used=l2b_result.model_used if l2b_result else (l2a_result.model_used if l2a_result else "unknown"),
                     )
 
                     layer2_result = result
