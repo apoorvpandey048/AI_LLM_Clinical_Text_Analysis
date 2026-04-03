@@ -275,7 +275,8 @@ def _conservative_merge(events: list[dict]) -> list[dict]:
 
     1. DEDUP: Near-duplicate events → merge, keep highest grade
     2. ESCALATION: Same cluster + escalation → single episode, highest grade
-    3. PARALLEL: Different clusters → separate episodes (NO merge)
+    3. SAME-CLUSTER SAME-GRADE: Events in same clinical cluster with same grade → merge
+    4. PARALLEL: Different clusters → separate episodes (NO merge)
 
     Returns merged event list.
     """
@@ -295,6 +296,10 @@ def _conservative_merge(events: list[dict]) -> list[dict]:
         chain = [ev_a]
         chain_indices = {i}
 
+        name_a = (ev_a.get("complication", "") + " " + ev_a.get("event", "")).lower()
+        cluster_a = _get_clinical_cluster(name_a)
+        grade_a = ev_a.get("cd_grade", "I")
+
         for j, ev_b in enumerate(events):
             if j <= i or j in consumed:
                 continue
@@ -302,6 +307,21 @@ def _conservative_merge(events: list[dict]) -> list[dict]:
             if _is_near_duplicate(ev_a, ev_b) or _is_escalation(ev_a, ev_b):
                 chain.append(ev_b)
                 chain_indices.add(j)
+            else:
+                # NEW: Same clinical cluster + same grade → likely same complication
+                name_b = (ev_b.get("complication", "") + " " + ev_b.get("event", "")).lower()
+                cluster_b = _get_clinical_cluster(name_b)
+                grade_b = ev_b.get("cd_grade", "I")
+                if cluster_a and cluster_b and cluster_a == cluster_b and grade_a == grade_b:
+                    chain.append(ev_b)
+                    chain_indices.add(j)
+                    logger.info(
+                        "same_cluster_same_grade_merge",
+                        cluster=cluster_a,
+                        grade=grade_a,
+                        event_a=name_a[:50],
+                        event_b=name_b[:50],
+                    )
 
         if len(chain) > 1:
             # Merge: keep the one with highest grade
@@ -553,6 +573,24 @@ def aggregate_layer2(
         final_count=len(enriched),
     )
 
+    # ── Max events cap: most cases have ≤ 5 distinct complications ──
+    MAX_EVENTS = 6
+    if len(enriched) > MAX_EVENTS:
+        grade_ord = {"V": 6, "IVb": 5, "IVa": 4, "IIIb": 3, "IIIa": 2, "II": 1, "I": 0}
+        # Sort: highest grade first, then highest confidence
+        enriched.sort(
+            key=lambda e: (grade_ord.get(e.get("cd_grade", "I"), 0), e.get("confidence", 0.5)),
+            reverse=True,
+        )
+        pruned_count = len(enriched) - MAX_EVENTS
+        enriched = enriched[:MAX_EVENTS]
+        logger.info(
+            "max_events_cap_applied",
+            original=len(enriched) + pruned_count,
+            kept=MAX_EVENTS,
+            pruned=pruned_count,
+        )
+
     # ══════════════════════════════════════════════════════
     # RULE ENGINE 3: IVa vs IVb Organ Failure Enforcement
     # ══════════════════════════════════════════════════════
@@ -560,6 +598,7 @@ def aggregate_layer2(
     # German/clinical terminology before L1B normalization), with clean_text as fallback
     organ_detection_text = raw_text if raw_text else clean_text
 
+    # 3a: Correct IVa↔IVb classification for events already graded IV
     for comp in enriched:
         if comp.get("cd_grade") in ("IVa", "IVb"):
             original = comp["cd_grade"]
@@ -572,6 +611,61 @@ def aggregate_layer2(
             if corrected != original:
                 comp["cd_grade"] = corrected
                 comp["python_override"] = f"IV_GRADE_{original}_TO_{corrected}"
+
+    # 3b: Upward organ failure detection — scan raw_text for organ failure
+    # evidence that the LLM missed. If a complication mentions ICU/organ keywords
+    # but was graded IIIa or lower, check if raw_text has organ failure evidence.
+    ORGAN_FAILURE_KEYWORDS = re.compile(
+        r"\b(organ\s*failure|organ\s*versagen|multi.?organ|MOF|MODS|"
+        r"septic\s*shock|septischer\s*schock|"
+        r"hepatic\s*failure|leber\s*versagen|liver\s*failure|"
+        r"renal\s*failure|nieren\s*versagen|dialysis|dialyse|CVVH|CVVHD|"
+        r"respiratory\s*failure|beatmung|intubation|intubiert|reintubation|"
+        r"cardiac\s*arrest|reanimation|asystol|"
+        r"circulatory\s*failure|kreislauf\s*versagen|"
+        r"vasopressor.*ICU|katecholamin|noradrenalin.*dauer)\b",
+        re.IGNORECASE,
+    )
+
+    if organ_detection_text and ORGAN_FAILURE_KEYWORDS.search(organ_detection_text):
+        # Check if we already have a Grade IV+ event
+        has_grade_iv = any(comp.get("cd_grade", "").startswith("IV") for comp in enriched)
+        if not has_grade_iv:
+            # Look for the best candidate to upgrade — highest-graded event
+            # with ICU/organ-related keywords
+            ICU_CONTEXT = re.compile(
+                r"\b(ICU|IPS|IMC|intensiv|beatm|intub|vasopressor|"
+                r"katecholamin|dialys|CVVH|organ|sepsis|septic|septisch|"
+                r"schock|shock|reanimation|leber|niere|hepat|renal)\b",
+                re.IGNORECASE,
+            )
+            best_candidate = None
+            best_grade = -1
+            grade_ord = {"I": 0, "II": 1, "IIIa": 2, "IIIb": 3, "IVa": 4, "IVb": 5, "V": 6}
+            for comp in enriched:
+                comp_text = (comp.get("complication", "") + " " + comp.get("treatment", "")).lower()
+                g = grade_ord.get(comp.get("cd_grade", "I"), 0)
+                if ICU_CONTEXT.search(comp_text) and g > best_grade:
+                    best_candidate = comp
+                    best_grade = g
+            if best_candidate and best_grade < 4:  # Below IVa
+                # Determine IVa vs IVb
+                corrected = enforce_iv_grade(
+                    current_grade="IVa",
+                    treatment_text=best_candidate.get("treatment", ""),
+                    complication_text=best_candidate.get("complication", ""),
+                    full_clinical_text=organ_detection_text,
+                )
+                old_grade = best_candidate["cd_grade"]
+                best_candidate["cd_grade"] = corrected
+                best_candidate["python_override"] = f"ORGAN_FAILURE_UPGRADE_{old_grade}_TO_{corrected}"
+                logger.warning(
+                    "organ_failure_upgrade",
+                    complication=best_candidate.get("complication", ""),
+                    from_grade=old_grade,
+                    to_grade=corrected,
+                    reason="organ_failure_evidence_in_raw_text",
+                )
 
     # ══════════════════════════════════════════════════════
     # RULE ENGINE 4: Conservative Merge
