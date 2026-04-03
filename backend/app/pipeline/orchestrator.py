@@ -879,73 +879,85 @@ class PipelineOrchestrator:
                         l2_input = chain_ctx + l2_input
                         logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
 
+                    l2a_result = None
+                    l2b_result = None
+
                     # ── L2A: Fact Extraction (no grading) ──
-                    if on_layer_start:
-                        await on_layer_start("layer2_cie:extract")
+                    try:
+                        if on_layer_start:
+                            await on_layer_start("layer2_cie:extract")
 
-                    l2a_result = await self.layer2a.execute(
-                        clean_text=l2_input,
-                        on_token=make_token_cb("layer2_cie:extract"),
-                        temperature_override=temperature,
-                        seed_override=seed,
-                    )
+                        l2a_result = await self.layer2a.execute(
+                            clean_text=l2_input,
+                            on_token=make_token_cb("layer2_cie:extract"),
+                            temperature_override=temperature,
+                            seed_override=seed,
+                        )
 
-                    total_duration_ms += l2a_result.duration_ms
-                    total_tokens_input += l2a_result.tokens_input
-                    total_tokens_output += l2a_result.tokens_output
-
-                    if on_layer_complete:
-                        await _on_layer_complete_with_error("layer2_cie:extract", l2a_result.success, l2a_result.duration_ms)
-
-                    if not l2a_result.success:
-                        logger.error("pipeline_l2a_failed_dynamic", error=l2a_result.error)
-                        result = l2a_result
-                        layer2_result = result
                         if on_layer_complete:
-                            await _on_layer_complete_with_error(name, False, l2a_result.duration_ms)
-                        continue
+                            await _on_layer_complete_with_error("layer2_cie:extract", l2a_result.success, l2a_result.duration_ms)
+
+                        logger.info("l2a_complete_dynamic", success=l2a_result.success,
+                                    event_count=len(l2a_result.output.get("events", [])) if l2a_result.success else 0)
+
+                    except Exception as l2a_exc:
+                        logger.exception("L2A_CRASH_DYNAMIC", error=str(l2a_exc))
+                        if on_layer_complete:
+                            await _on_layer_complete_with_error("layer2_cie:extract", False, 0, error_message=str(l2a_exc))
 
                     # ── L2B: CD Grading (treatment-first) ──
-                    if on_layer_start:
-                        await on_layer_start("layer2_cie:grade")
+                    if l2a_result and l2a_result.success:
+                        try:
+                            if on_layer_start:
+                                await on_layer_start("layer2_cie:grade")
 
-                    extracted_events = l2a_result.output.get("events", [])
+                            extracted_events = l2a_result.output.get("events", [])
 
-                    l2b_result = await self.layer2b.execute(
-                        events=extracted_events,
-                        on_token=make_token_cb("layer2_cie:grade"),
-                        temperature_override=temperature,
-                        seed_override=seed,
-                    )
+                            l2b_result = await self.layer2b.execute(
+                                events=extracted_events,
+                                on_token=make_token_cb("layer2_cie:grade"),
+                                temperature_override=temperature,
+                                seed_override=seed,
+                            )
 
-                    total_duration_ms += l2b_result.duration_ms
-                    total_tokens_input += l2b_result.tokens_input
-                    total_tokens_output += l2b_result.tokens_output
+                            if on_layer_complete:
+                                await _on_layer_complete_with_error("layer2_cie:grade", l2b_result.success, l2b_result.duration_ms)
 
-                    if on_layer_complete:
-                        await _on_layer_complete_with_error("layer2_cie:grade", l2b_result.success, l2b_result.duration_ms)
+                            logger.info("l2b_complete_dynamic", success=l2b_result.success,
+                                        complication_count=len(l2b_result.output.get("complications", [])) if l2b_result.success else 0)
+
+                        except Exception as l2b_exc:
+                            logger.exception("L2B_CRASH_DYNAMIC", error=str(l2b_exc))
+                            if on_layer_complete:
+                                await _on_layer_complete_with_error("layer2_cie:grade", False, 0, error_message=str(l2b_exc))
 
                     # ── Python L2 Aggregator (FINAL AUTHORITY — ALL 7 RULE ENGINES) ──
+                    # The aggregator handles None inputs gracefully
                     clean_text_for_l2 = context.get("clean_text", "")
                     aggregated_l2 = aggregate_layer2(
-                        l2a_output=l2a_result.output if l2a_result.success else None,
-                        l2b_output=l2b_result.output if l2b_result.success else None,
+                        l2a_output=l2a_result.output if (l2a_result and l2a_result.success) else None,
+                        l2b_output=l2b_result.output if (l2b_result and l2b_result.success) else None,
                         clean_text=clean_text_for_l2,
                         raw_text=raw_text,
                     )
 
+                    # Compute totals from sub-layers
+                    l2_duration = (l2a_result.duration_ms if l2a_result else 0) + (l2b_result.duration_ms if l2b_result else 0)
+                    l2_tok_in = (l2a_result.tokens_input if l2a_result else 0) + (l2b_result.tokens_input if l2b_result else 0)
+                    l2_tok_out = (l2a_result.tokens_output if l2a_result else 0) + (l2b_result.tokens_output if l2b_result else 0)
+
                     # Build synthetic LayerResult with aggregated output
-                    l2_total_duration = l2a_result.duration_ms + l2b_result.duration_ms
+                    l2_success = bool(l2a_result and l2a_result.success)
                     result = LayerResult(
-                        success=True,
+                        success=l2_success,
                         output=aggregated_l2,
-                        raw_response=l2b_result.raw_response,
-                        duration_ms=l2_total_duration,
-                        tokens_input=l2a_result.tokens_input + l2b_result.tokens_input,
-                        tokens_output=l2a_result.tokens_output + l2b_result.tokens_output,
-                        error=None,
+                        raw_response=l2b_result.raw_response if l2b_result else (l2a_result.raw_response if l2a_result else ""),
+                        duration_ms=l2_duration,
+                        tokens_input=l2_tok_in,
+                        tokens_output=l2_tok_out,
+                        error=None if l2_success else (l2a_result.error if l2a_result else "L2A did not execute"),
                         prompt_version=self.layer2a.settings.prompt_version,
-                        model_used=l2b_result.model_used,
+                        model_used=l2b_result.model_used if l2b_result else (l2a_result.model_used if l2a_result else "unknown"),
                     )
 
                     layer2_result = result
