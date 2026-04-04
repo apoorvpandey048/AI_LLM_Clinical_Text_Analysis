@@ -119,7 +119,7 @@ def _apply_hybrid_filter(
             # CD I + weak evidence → DROP
             logger.info(
                 "event_dropped_weak_cd1",
-                event=ev.get("complication", ev.get("event", "")),
+                complication=ev.get("complication", ev.get("event", "")),
                 confidence=ev.get("confidence", 0),
             )
             continue
@@ -128,7 +128,7 @@ def _apply_hybrid_filter(
             ev["_weak_evidence_flag"] = True
             logger.info(
                 "event_flagged_weak_evidence",
-                event=ev.get("complication", ev.get("event", "")),
+                complication=ev.get("complication", ev.get("event", "")),
                 grade=grade,
             )
             filtered.append(ev)
