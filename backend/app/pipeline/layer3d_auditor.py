@@ -85,7 +85,7 @@ Output STRICT JSON only."""
         """
         Validate Layer 3D output schema.
 
-        Expected: {"final_complications": [...], "pruning_notes": "..."}
+        Expected: {"final_complications": [...], "notes": "..."}
         Each complication: {"complication": "...", "cd_grade": "..."}
         """
         if "final_complications" not in output:
