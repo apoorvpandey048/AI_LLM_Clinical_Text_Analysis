@@ -71,6 +71,7 @@ from app.pipeline.layer3_ccc import Layer3CCC
 from app.pipeline.layer3a_evidence import Layer3AEvidence
 from app.pipeline.layer3b_rules import Layer3BRules
 from app.pipeline.layer3c_omissions import Layer3COmissions
+from app.pipeline.layer3d_auditor import Layer3DAuditor
 from app.pipeline.base import LayerResult, _UNSET
 from app.utils import get_logger
 
@@ -141,6 +142,7 @@ class PipelineOrchestrator:
         self.layer3a = Layer3AEvidence(llm_client)
         self.layer3b = Layer3BRules(llm_client)
         self.layer3c = Layer3COmissions(llm_client)
+        self.layer3d = Layer3DAuditor(llm_client)
 
     async def execute(
         self,
@@ -984,6 +986,60 @@ class PipelineOrchestrator:
                     if result.success and result.output:
                         context["layer3_output"] = result.output
 
+                    # ── POST-L3: Run Final Clinical Auditor (L3D) ──
+                    # This is a hardcoded internal step that runs AFTER L3
+                    # to prune noise and enforce clinical consistency.
+                    l2_complications = context.get("layer2_output", {}).get("complications", [])
+                    if l2_complications:
+                        # Compute preliminary CCI for L3D context
+                        from app.pipeline.cci_calculator import compute_cci, extract_grades_from_complications
+                        prelim_grades = extract_grades_from_complications(l2_complications)
+                        prelim_cci = compute_cci(prelim_grades)
+                        l3d_clean_text = context.get("clean_text", "")
+
+                        logger.info("LAYER_START", layer="layer3d_auditor")
+                        try:
+                            l3d_result = await self.layer3d.execute(
+                                clean_text=l3d_clean_text,
+                                complications=l2_complications,
+                                computed_cci=prelim_cci,
+                                on_token=make_token_cb("layer3d_auditor"),
+                                temperature_override=temperature,
+                                seed_override=seed,
+                            )
+
+                            if l3d_result.success and l3d_result.output:
+                                final_comps = l3d_result.output.get("final_complications", [])
+
+                                # PYTHON HARD RULE: Grade V pass-through
+                                # If L2 had Grade V, ensure L3D didn't drop it
+                                l2_has_v = any(c.get("cd_grade") == "V" for c in l2_complications)
+                                l3d_has_v = any(c.get("cd_grade") == "V" for c in final_comps)
+                                if l2_has_v and not l3d_has_v:
+                                    final_comps.append({
+                                        "complication": "Death (in-hospital mortality)",
+                                        "cd_grade": "V",
+                                    })
+                                    logger.warning("grade_v_restored_by_python", reason="l3d_dropped_grade_v")
+
+                                # Store L3D output for CCI calculation
+                                context["l3d_output"] = l3d_result.output
+                                logger.info(
+                                    "l3d_auditor_complete",
+                                    input_count=len(l2_complications),
+                                    output_count=len(final_comps),
+                                    pruned=len(l2_complications) - len(final_comps),
+                                )
+
+                                total_duration_ms += l3d_result.duration_ms
+                                total_tokens_input += l3d_result.tokens_input
+                                total_tokens_output += l3d_result.tokens_output
+                            else:
+                                logger.warning("l3d_auditor_failed", error=l3d_result.error)
+                        except Exception:
+                            logger.exception("l3d_auditor_crash")
+                        logger.info("LAYER_END", layer="layer3d_auditor")
+
                 else:
                     # Custom layer — generic LLM execution
                     result = await self._execute_single_custom_layer(
@@ -1052,12 +1108,26 @@ class PipelineOrchestrator:
             final_verdict = "LAYER3_FAILED"
 
         # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic
+        # Priority: L3D output > L3 output > L2 output
         if layer2_result and layer2_result.output:
-            final_cci = compute_cci_from_pipeline(
-                layer2_output=layer2_result.output,
-                layer3_output=layer3_result.output if (layer3_result and layer3_result.success) else None,
-            )
-            logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
+            l3d_output = context.get("l3d_output")
+            if l3d_output and l3d_output.get("final_complications"):
+                # Use L3D's pruned final list for CCI
+                from app.pipeline.cci_calculator import compute_cci
+                l3d_grades = [c.get("cd_grade", "") for c in l3d_output["final_complications"] if c.get("cd_grade")]
+                final_cci = compute_cci(l3d_grades)
+                logger.info("cci_deterministic", cci=final_cci, source="l3d_auditor", grades=l3d_grades)
+
+                # Also update L3 output's audited_result for downstream consumers
+                if layer3_result and layer3_result.success and layer3_result.output:
+                    layer3_result.output["audited_result"] = layer3_result.output.get("audited_result", {})
+                    layer3_result.output["audited_result"]["final_episode_set"] = l3d_output["final_complications"]
+            else:
+                final_cci = compute_cci_from_pipeline(
+                    layer2_output=layer2_result.output,
+                    layer3_output=layer3_result.output if (layer3_result and layer3_result.success) else None,
+                )
+                logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
 
         # Pipeline is successful if at least L1+L2 succeeded
         success = True
