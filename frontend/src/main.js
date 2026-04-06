@@ -2028,6 +2028,7 @@ function renderResultsCards(results) {
                 Layer 1: CTP — Clinical Text Pre-Processor
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer1_output ?? {}, this)">Copy JSON</button>
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer1_output ?? {}, 'case${caseNum}_layer1_ctp.json')">Download</button>
+                <button class="btn btn-xs btn-stream-dl" onclick="event.stopPropagation(); downloadLayerRaw('${caseId}', 'layer1_ctp', ${i})" title="Download raw streamed text">📄 Raw Stream</button>
               </summary>
               <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l1-${i}"></span></div>
               <pre class="json-tree" id="json-l1-${i}"></pre>
@@ -2038,6 +2039,7 @@ function renderResultsCards(results) {
                 Layer 2: CIE — Complication Info Extraction
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer2_output ?? {}, this)">Copy JSON</button>
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer2_output ?? {}, 'case${caseNum}_layer2_cie.json')">Download</button>
+                <button class="btn btn-xs btn-stream-dl" onclick="event.stopPropagation(); downloadLayerRaw('${caseId}', 'layer2_cie', ${i})" title="Download raw streamed text">📄 Raw Stream</button>
               </summary>
               <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l2-${i}"></span></div>
               <pre class="json-tree" id="json-l2-${i}"></pre>
@@ -2048,6 +2050,7 @@ function renderResultsCards(results) {
                 Layer 3: CCC — CCI Calculation &amp; Cross-Check
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); copyToClipboard(window._resultData[${i}].layer3_output ?? {}, this)">Copy JSON</button>
                 <button class="btn btn-xs btn-copy" onclick="event.stopPropagation(); downloadJSON(window._resultData[${i}].layer3_output ?? {}, 'case${caseNum}_layer3_ccc.json')">Download</button>
+                <button class="btn btn-xs btn-stream-dl" onclick="event.stopPropagation(); downloadLayerRaw('${caseId}', 'layer3_ccc', ${i})" title="Download raw streamed text">📄 Raw Stream</button>
               </summary>
               <div class="output-meta-row"><span class="output-char-count" id="json-charcount-l3-${i}"></span></div>
               <pre class="json-tree" id="json-l3-${i}"></pre>
@@ -2199,6 +2202,147 @@ function downloadJSON(obj, filename) {
     const a = document.createElement('a');
     a.href = url;
     a.download = filename || 'output.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Downloaded ${filename}`, 'success');
+}
+
+// ============================================
+// Per-Layer Stream Downloads
+// ============================================
+
+/**
+ * Download the raw stream text for a specific layer from the API.
+ * Falls back to streaming history or stored raw output if API fails.
+ */
+async function downloadLayerRaw(caseId, layerName, resultIndex) {
+    if (!caseId) {
+        // Fallback: try to use frontend streaming history
+        const result = window._resultData?.[resultIndex];
+        const streamData = result?.layer_stream_data?.[layerName];
+        if (streamData?.raw_stream) {
+            _downloadText(streamData.raw_stream, `snap-ai_${layerName}_raw.txt`);
+            return;
+        }
+        // Try legacy raw output
+        const layerMap = { layer1_ctp: 'layer1_raw_output', layer2_cie: 'layer2_raw_output', layer3_ccc: 'layer3_raw_output' };
+        const rawKey = layerMap[layerName];
+        if (rawKey && result?.[rawKey]) {
+            _downloadText(result[rawKey], `snap-ai_${layerName}_raw.txt`);
+            return;
+        }
+        showToast('No stream data available for this layer', 'warning');
+        return;
+    }
+
+    try {
+        const res = await authFetch(`${API_BASE}/downloads/cases/${caseId}/layers/${layerName}/raw`);
+        if (!res.ok) {
+            // API not available — try frontend fallback
+            const result = window._resultData?.[resultIndex];
+            const streamData = result?.layer_stream_data?.[layerName];
+            if (streamData?.raw_stream) {
+                _downloadText(streamData.raw_stream, `snap-ai_${layerName}_raw.txt`);
+                return;
+            }
+            throw new Error(`Download failed (${res.status})`);
+        }
+        const text = await res.text();
+        _downloadText(text, `snap-ai_${layerName}_raw_${caseId.substring(0, 8)}.txt`);
+    } catch (err) {
+        showToast(`Stream download failed: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Download the parsed JSON from the API for a specific layer.
+ */
+async function downloadLayerJson(caseId, layerName) {
+    try {
+        const res = await authFetch(`${API_BASE}/downloads/cases/${caseId}/layers/${layerName}/json`);
+        if (!res.ok) throw new Error(`Download failed (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snap-ai_${layerName}_parsed_${caseId.substring(0, 8)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast(`Downloaded ${layerName} JSON`, 'success');
+    } catch (err) {
+        showToast(`JSON download failed: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Download the full execution bundle for a layer.
+ */
+async function downloadLayerFull(caseId, layerName) {
+    try {
+        const res = await authFetch(`${API_BASE}/downloads/cases/${caseId}/layers/${layerName}/full`);
+        if (!res.ok) throw new Error(`Download failed (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snap-ai_${layerName}_full_${caseId.substring(0, 8)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast(`Downloaded ${layerName} full bundle`, 'success');
+    } catch (err) {
+        showToast(`Full bundle download failed: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Export all streams for the current session/job.
+ */
+async function downloadStreamExport() {
+    const jobId = state.lastCompletedJobId || state.currentJobId || localStorage.getItem('snapai_last_job_id');
+    if (!jobId) {
+        showToast('No job available to export', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('stream-export-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+
+    try {
+        const res = await authFetch(`${API_BASE}/downloads/jobs/${jobId}/export`);
+        if (!res.ok) throw new Error(`Export failed (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snap-ai_session_${jobId.substring(0, 8)}_streams.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Stream export downloaded', 'success');
+    } catch (err) {
+        showToast(`Stream export failed: ${err.message}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="radio" class="btn-icon"></i> Export Streams'; }
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
+/**
+ * Helper: download text content as a file.
+ */
+function _downloadText(text, filename) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -5351,6 +5495,11 @@ window.downloadAuditPackage = downloadAuditPackage;
 window.toggleSaveCase = toggleSaveCase;
 window.exportSavedCases = exportSavedCases;
 window.markBaseline = markBaseline;
+// Stream Downloads
+window.downloadLayerRaw = downloadLayerRaw;
+window.downloadLayerJson = downloadLayerJson;
+window.downloadLayerFull = downloadLayerFull;
+window.downloadStreamExport = downloadStreamExport;
 // UI State
 window.renderCancelledJobState = renderCancelledJobState;
 window.renderSavedCasesPanel = renderSavedCasesPanel;

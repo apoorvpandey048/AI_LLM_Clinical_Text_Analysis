@@ -17,9 +17,57 @@ from app.pipeline import PipelineOrchestrator
 from app.db.session import SessionLocal
 from app.db.models import Job, JobCase, AuditLog, JobStatus, CaseStatus
 from app.utils import get_logger
+from app.utils.json_utils import safe_json_parse
 
 logger = get_logger(__name__)
 settings = get_settings()
+
+
+class StreamAccumulator:
+    """Captures per-layer stream buffers during pipeline execution.
+
+    Sits alongside the existing StreamPublisher — every token that is
+    forwarded to the UI via Redis pub/sub is ALSO appended here so we
+    can persist the full raw stream for download.
+    """
+
+    def __init__(self):
+        self.buffers: dict[str, str] = {}      # layer_name -> accumulated text
+        self.start_times: dict[str, str] = {}  # layer_name -> ISO timestamp
+        self.end_times: dict[str, str] = {}    # layer_name -> ISO timestamp
+
+    def append(self, layer: str, token: str) -> None:
+        """Append a single token to the specified layer buffer."""
+        if layer not in self.buffers:
+            self.buffers[layer] = ""
+            self.start_times[layer] = datetime.utcnow().isoformat() + "Z"
+        self.buffers[layer] += token
+
+    def finalize_layer(self, layer: str) -> None:
+        """Mark a layer as complete (records end timestamp)."""
+        self.end_times[layer] = datetime.utcnow().isoformat() + "Z"
+
+    def get_layer_data(self) -> dict:
+        """Build per-layer stream data bundles for DB storage.
+
+        Returns:
+            Dict keyed by layer name, each containing:
+            - raw_stream: exact accumulated text (what the UI showed)
+            - assembled_text: same as raw_stream (for clarity)
+            - parsed_json: best-effort JSON parse, or None
+            - start_time: ISO timestamp of first token
+            - end_time: ISO timestamp of layer completion
+        """
+        result = {}
+        for layer, raw_stream in self.buffers.items():
+            result[layer] = {
+                "raw_stream": raw_stream,
+                "assembled_text": raw_stream,
+                "parsed_json": safe_json_parse(raw_stream),
+                "start_time": self.start_times.get(layer),
+                "end_time": self.end_times.get(layer),
+            }
+        return result
 
 
 def _classify_error(error_msg: str | None) -> str | None:
@@ -389,6 +437,8 @@ def save_case_result(job_id: str, case_number: int, result: dict) -> None:
             # Extra custom layer outputs
             case.extra_layer_outputs = result.get("extra_layer_outputs")
             case.extra_layer_raw_outputs = result.get("extra_layer_raw_outputs")
+            # Per-layer stream capture (full raw streams for download)
+            case.layer_stream_data = result.get("layer_stream_data")
             case.final_verdict = result.get("final_verdict")
             case.final_cci = result.get("final_cci")
             case.total_duration_ms = result.get("total_duration_ms")
@@ -522,14 +572,20 @@ def _process_case_impl(
             llm_client.model = active_model
         orchestrator = PipelineOrchestrator(llm_client)
 
+        # ── Stream accumulator: captures per-layer raw streams for download ──
+        accumulator = StreamAccumulator()
+
         # Create streaming callbacks
         def make_token_callback():
-            """Create sync wrapper for token publishing."""
+            """Create sync wrapper for token publishing + accumulation."""
             async def on_token(layer: str, token: str):
+                # Publish to UI via Redis (existing behavior)
                 publisher.publish_token(
                     job_id, case_number, layer, token,
                     label=layer_labels.get(layer),
                 )
+                # Accumulate for per-layer download (new)
+                accumulator.append(layer, token)
             return on_token
 
         async def on_layer_start(layer: str):
@@ -544,6 +600,8 @@ def _process_case_impl(
                 label=layer_labels.get(layer),
                 error_message=error_message,
             )
+            # Finalize layer in stream accumulator
+            accumulator.finalize_layer(layer)
             # Persist metric (one write per layer, not per token)
             save_layer_metric(
                 job_id=job_id,
@@ -573,6 +631,7 @@ def _process_case_impl(
                 "extra_layer_raw_outputs": {
                     name: lr.raw_response for name, lr in result.extra_layer_results.items()
                 } if result.extra_layer_results else None,
+                "layer_stream_data": accumulator.get_layer_data(),
                 "final_verdict": result.final_verdict,
                 "final_cci": result.final_cci,
                 "total_duration_ms": result.total_duration_ms,

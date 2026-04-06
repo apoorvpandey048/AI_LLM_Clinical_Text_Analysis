@@ -239,6 +239,10 @@ class JobCase(Base):
     layer3_raw_output = Column(Text, nullable=True)
     extra_layer_raw_outputs = Column(PortableJSON, nullable=True)  # { "layer_name": "raw text" }
 
+    # Per-layer stream capture (full raw streams for download — exact UI fidelity)
+    # Structure: { "layer_name": { "raw_stream": "...", "parsed_json": {...}, "start_time": "...", "end_time": "..." } }
+    layer_stream_data = Column(PortableJSON, nullable=True)
+
     # Final results
     final_verdict = Column(String(50), nullable=True)
     final_cci = Column(Float, nullable=True)
@@ -292,6 +296,7 @@ class JobCase(Base):
                 "layer2_raw_output": self.layer2_raw_output,
                 "layer3_raw_output": self.layer3_raw_output,
                 "extra_layer_raw_outputs": self.extra_layer_raw_outputs,
+                "layer_stream_data": self.layer_stream_data,
                 "prompt_version": self.prompt_version,
                 "model_version": self.model_version,
                 "total_tokens_input": self.total_tokens_input,

@@ -156,6 +156,8 @@ def _run_schema_migrations():
         "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS source_file VARCHAR(255) NULL",
         # jobs — pipeline snapshot for deterministic execution
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pipeline_snapshot JSONB NULL",
+        # job_cases — per-layer stream capture for download fidelity
+        "ALTER TABLE job_cases ADD COLUMN IF NOT EXISTS layer_stream_data JSONB NULL",
         # jobs — model name + replay provenance (Stage 4)
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS model_name VARCHAR(200) NULL",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS replay_source_id UUID NULL",
@@ -456,6 +458,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.logs import router as logs_router
 from app.api.routes.saved_cases import router as saved_cases_router
+from app.api.routes.downloads import router as downloads_router
 
 app.include_router(auth_router)
 app.include_router(upload_router)
@@ -467,6 +470,7 @@ app.include_router(models_router)
 app.include_router(system_router)
 app.include_router(logs_router)
 app.include_router(saved_cases_router)
+app.include_router(downloads_router)
 
 
 # ============================================

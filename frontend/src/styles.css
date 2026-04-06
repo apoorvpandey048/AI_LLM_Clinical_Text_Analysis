@@ -505,6 +505,25 @@ p {
   border-color: var(--color-primary);
 }
 
+.btn-stream-dl {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  cursor: pointer;
+  margin-left: 4px;
+  transition: all 0.15s;
+  vertical-align: middle;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.btn-stream-dl:hover {
+  background: rgba(16, 185, 129, 0.2);
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
 .btn-ghost {
   background: transparent;
   color: white;
