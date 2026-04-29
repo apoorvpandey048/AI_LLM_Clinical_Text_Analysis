@@ -1,36 +1,72 @@
 {
-    "current_version": "1.15",
+    "current_version": "1.3",
     "layers": {
         "layer1_ctp": {
-            "version": "1.15",
-            "file": "layer1_ctp_v1.15.md",
+            "version": "1.3",
+            "file": "layer1_ctp_v1.3.md",
             "description": "Clinical Text Pre-Processor"
         },
+        "layer1a_extraction": {
+            "version": "1.3",
+            "file": "layer1a_extraction_v1.3.md",
+            "description": "Conservative Clinical Text Extraction"
+        },
+        "layer1b_structuring": {
+            "version": "1.3",
+            "file": "layer1b_structuring_v1.3.md",
+            "description": "Clinical Text Structuring + Normalization"
+        },
         "layer2_cie": {
-            "version": "1.15",
-            "file": "layer2_cie_v1.15.md",
+            "version": "1.3",
+            "file": "layer2_cie_v1.3.md",
             "description": "Complication Inference Engine"
         },
+        "layer2a_extraction": {
+            "version": "1.3",
+            "file": "layer2a_extraction_v1.3.md",
+            "description": "Clinical Event Extraction (Facts Only)"
+        },
+        "layer2b_grading": {
+            "version": "1.3",
+            "file": "layer2b_grading_v1.3.md",
+            "description": "Clavien-Dindo Grading"
+        },
         "layer3_ccc": {
-            "version": "1.15",
-            "file": "layer3_ccc_v1.15.md",
+            "version": "1.3",
+            "file": "layer3_ccc_v1.3.md",
             "description": "Clinical Consistency Challenger"
+        },
+        "layer3a_evidence": {
+            "version": "1.3",
+            "file": "layer3a_evidence_v1.3.md",
+            "description": "Evidence Checker"
+        },
+        "layer3b_rules": {
+            "version": "1.3",
+            "file": "layer3b_rules_v1.3.md",
+            "description": "Rule Violation Checker"
+        },
+        "layer3c_omissions": {
+            "version": "1.3",
+            "file": "layer3c_omissions_v1.3.md",
+            "description": "Omission Detector"
+        },
+        "layer3d_auditor": {
+            "version": "1.3",
+            "file": "layer3d_auditor_v1.3.md",
+            "description": "Final Clinical Auditor"
         }
     },
     "changelog": {
-        "1.15": {
-            "date": "2026-03-23",
+        "1.3": {
+            "date": "2026-04-29",
             "changes": [
-                "Base: v1.8 (16/20 with corrected ground truth — best performing version)",
-                "L2: FIXED wrong Example R — hyponatremia with albumin is Grade II, not I",
-                "L2: Added albumin-anywhere rule for hyponatremia grading",
-                "L2: Added assessment findings rejection (malnutrition, radiologic findings without treatment)",
-                "L2: Added interventional procedure scan (mandatory check for punctures/drainage)",
-                "L2: Added final self-check questions (7 mandatory internal checks)",
-                "L3: FIXED wrong Check 12 — now correctly handles albumin-based Grade II",
-                "L3: Added structured final_episode_set format (objects with complication/cd_grade/treatment/timing)",
-                "L3: Added malnutrition/radiologic/Loperamide rejection in Check 5",
-                "Backend: CCI calculator handles string-format episodes + audited_cci fallback (from v1.14)"
+                "Reverted to baseline v1.3 prompts",
+                "Removed aggressive extraction logic from L2A",
+                "Removed forced treatment-to-complication expansion",
+                "Simplified extraction to moderate recall",
+                "Conservative verifier posture",
+                "Created v1.3 sub-layer prompts matching baseline monolithic prompts"
             ]
         }
     }
