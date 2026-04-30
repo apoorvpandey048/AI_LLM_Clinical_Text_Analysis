@@ -566,10 +566,27 @@ def _process_case_impl(
             extra_layers = _get_extra_layers()
 
         # Create LLM client via factory (respects llm_backend setting)
-        llm_client = get_llm_client()
+        default_client = get_llm_client()
         # Override model if a specific one was selected in Redis
-        if hasattr(llm_client, 'model'):
-            llm_client.model = active_model
+        if hasattr(default_client, 'model'):
+            default_client.model = active_model
+
+        # Check Redis for OpenRouter key
+        import redis
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        or_key = r.get(f"openrouter:{job_id}")
+        r.close()
+
+        if or_key:
+            from app.llm.openrouter_client import OpenRouterClient
+            from app.llm.fallback_client import FallbackLLMClient
+            # Initialize OpenRouter Client and wrap with fallback
+            or_client = OpenRouterClient(api_key=or_key, model="openai/gpt-oss-120b")
+            llm_client = FallbackLLMClient(primary=or_client, fallback=default_client)
+            active_model = "openai/gpt-oss-120b (OpenRouter)" # for logging
+        else:
+            llm_client = default_client
+
         orchestrator = PipelineOrchestrator(llm_client)
 
         # ── Stream accumulator: captures per-layer raw streams for download ──

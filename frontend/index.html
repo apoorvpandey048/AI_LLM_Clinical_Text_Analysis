@@ -72,6 +72,26 @@
             </div>
         </div>
 
+        <!-- OpenRouter API Key Modal -->
+        <div id="openrouter-modal" class="auth-overlay">
+            <div class="auth-container">
+                <div class="auth-logo">
+                    <h2>OpenRouter Setup</h2>
+                </div>
+                <div class="auth-form">
+                    <p style="margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">Enter your OpenRouter API Key. It will be stored securely in memory for the session.</p>
+                    <div class="form-group">
+                        <label for="openrouter-key-input">API Key</label>
+                        <input type="password" id="openrouter-key-input" placeholder="sk-or-v1-..." required>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
+                        <button class="btn btn-ghost" id="openrouter-cancel-btn">Cancel</button>
+                        <button class="btn btn-primary" id="openrouter-save-btn">Connect & Test</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Header -->
         <header class="header">
             <div class="header-content">
@@ -93,6 +113,16 @@
                         <button class="btn btn-sm btn-ghost" onclick="handleLogout()" title="Logout">
                             <i data-lucide="log-out"></i>
                         </button>
+                    </div>
+
+                    <!-- OpenRouter Toggle -->
+                    <div class="openrouter-toggle-container" style="display: flex; align-items: center; gap: 8px; margin-right: 16px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="openrouter-checkbox">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="openrouter-label" style="font-size: 0.9rem; font-weight: 500; color: var(--text-secondary);">OpenRouter API</span>
+                        <span class="status-dot status-idle" id="openrouter-status-dot" title="Idle"></span>
                     </div>
 
                     <!-- Model Selector -->

@@ -165,6 +165,10 @@ const state = {
     activeModel: null,
     availableModels: [],
 
+    // OpenRouter state
+    openRouterEnabled: false,
+    openRouterKey: null,
+
     // System info
     systemInfo: null,
 };
@@ -205,6 +209,8 @@ function initApp() {
         document.getElementById('nav-ops')?.classList.remove('hidden');
         loadAdminUsers();
     }
+    
+    initOpenRouterToggle();
 
     // Role-based visibility: hide Prompts tab for non-admin (supplementary — backend enforces)
     if (authState.user?.role !== 'admin') {
@@ -589,6 +595,10 @@ async function processFiles(files) {
 
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
+    if (state.openRouterEnabled && state.openRouterKey) {
+        formData.append('backend', 'openrouter');
+        formData.append('openrouter_key', state.openRouterKey);
+    }
 
     try {
         state.isProcessing = true;
@@ -625,10 +635,16 @@ async function processText(text) {
         updateProcessButton();
         showProgress();
 
+        const reqBody = { text };
+        if (state.openRouterEnabled && state.openRouterKey) {
+            reqBody.backend = 'openrouter';
+            reqBody.openrouter_key = state.openRouterKey;
+        }
+
         const res = await authFetch(`${API_BASE}/upload/text`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify(reqBody),
         });
         if (!res.ok) throw new Error(`Processing failed: ${res.status}`);
 
@@ -5510,3 +5526,112 @@ window.closeSavedCaseDetail = closeSavedCaseDetail;
 window.renameSavedCaseUI = renameSavedCaseUI;
 window.deleteSavedCaseUI = deleteSavedCaseUI;
 window.saveCaseToCollection = saveCaseToCollection;
+
+// ============================================
+// OpenRouter Integration
+// ============================================
+
+function initOpenRouterToggle() {
+    const toggle = document.getElementById('openrouter-checkbox');
+    const modal = document.getElementById('openrouter-modal');
+    const cancelBtn = document.getElementById('openrouter-cancel-btn');
+    const saveBtn = document.getElementById('openrouter-save-btn');
+    const keyInput = document.getElementById('openrouter-key-input');
+    
+    toggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // Show modal if toggled on
+            modal.classList.add('active');
+            keyInput.focus();
+        } else {
+            // Disable OpenRouter
+            state.openRouterEnabled = false;
+            state.openRouterKey = null;
+            updateOpenRouterStatus('idle');
+            showToast('OpenRouter disabled. Reverting to vLLM.', 'info');
+        }
+    });
+
+    cancelBtn.addEventListener('click', () => {
+        modal.classList.remove('active');
+        toggle.checked = false;
+        state.openRouterEnabled = false;
+        keyInput.value = '';
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const key = keyInput.value.trim();
+        if (!key) {
+            showToast('API Key cannot be empty', 'warning');
+            return;
+        }
+        if (!key.startsWith('sk-')) {
+            showToast('API Key must start with "sk-"', 'error');
+            return;
+        }
+
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = 'Testing...';
+        updateOpenRouterStatus('connecting');
+
+        const success = await testOpenRouterConnection(key);
+
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = 'Connect & Test';
+
+        if (success) {
+            state.openRouterEnabled = true;
+            state.openRouterKey = key;
+            modal.classList.remove('active');
+            keyInput.value = '';
+            showToast('Connected to OpenRouter!', 'success');
+            updateOpenRouterStatus('connected');
+        } else {
+            updateOpenRouterStatus('error');
+            // Keep modal open to allow retry
+        }
+    });
+}
+
+function updateOpenRouterStatus(status) {
+    const dot = document.getElementById('openrouter-status-dot');
+    if (!dot) return;
+    
+    // Remove all status classes
+    dot.classList.remove('status-idle', 'status-connecting', 'status-connected', 'status-error');
+    
+    // Add current status
+    dot.classList.add(\status-\\);
+    dot.title = status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+async function testOpenRouterConnection(apiKey) {
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': \Bearer \\,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': window.location.origin,
+                'X-Title': 'SNAP-AI'
+            },
+            body: JSON.stringify({
+                model: 'openai/gpt-oss-120b',
+                messages: [
+                    { role: 'user', content: 'Hello' }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            showToast(\Invalid API Key or connection failed (\)\, 'error');
+            return false;
+        }
+
+        return true;
+    } catch (err) {
+        showToast(\Connection failed: \\, 'error');
+        return false;
+    }
+}

@@ -4,7 +4,8 @@ from app.llm.client import LLMClient, LLMResponse
 from app.llm.ollama_client import OllamaClient
 from app.llm.vllm_client import VLLMClient
 from app.llm.stub_client import StubLLMClient
-
+from app.llm.openrouter_client import OpenRouterClient
+from app.llm.fallback_client import FallbackLLMClient
 
 def get_llm_client() -> LLMClient:
     """Factory: return an LLM client based on config.
@@ -27,6 +28,6 @@ def get_llm_client() -> LLMClient:
     return VLLMClient()
 
 
-__all__ = ["LLMClient", "LLMResponse", "OllamaClient", "VLLMClient", "StubLLMClient", "get_llm_client"]
+__all__ = ["LLMClient", "LLMResponse", "OllamaClient", "VLLMClient", "StubLLMClient", "OpenRouterClient", "FallbackLLMClient", "get_llm_client"]
 
 

@@ -37,6 +37,8 @@ class TextUploadRequest(BaseModel):
     """Request body for text upload."""
     text: str = Field(..., min_length=10)
     case_id: str | None = None
+    backend: str | None = None
+    openrouter_key: str | None = None
 
 
 class BatchUploadRequest(BaseModel):

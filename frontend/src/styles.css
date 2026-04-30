@@ -5631,3 +5631,8 @@ button {
     grid-template-columns: 1fr;
   }
 }
+/* OpenRouter Status Dots */
+.status-idle { background-color: var(--text-muted); }
+.status-connecting { background-color: var(--warning); animation: pulse 1.5s infinite; }
+.status-connected { background-color: var(--success); }
+.status-error { background-color: var(--danger); }

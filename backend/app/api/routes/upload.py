@@ -158,6 +158,8 @@ async def upload_cases(
     files: List[UploadFile] = File(default=[]),
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
+    backend: str | None = Form(None),
+    openrouter_key: str | None = Form(None),
 ):
     """
     Upload clinical cases for processing.
@@ -343,6 +345,13 @@ async def upload_cases(
     job.started_at = datetime.utcnow()
     db.commit()
 
+    # Store OpenRouter key in Redis temporarily if applicable
+    if backend == "openrouter" and openrouter_key:
+        import redis
+        r = redis.from_url(settings.redis_url)
+        r.setex(f"openrouter:{job.id}", 3600, openrouter_key)
+        r.close()
+
     logger.info(
         "job_queued",
         request_id=request_id,
@@ -430,6 +439,13 @@ async def upload_text(
     job.status = JobStatus.PROCESSING
     job.started_at = datetime.utcnow()
     db.commit()
+
+    # Store OpenRouter key in Redis temporarily if applicable
+    if body.backend == "openrouter" and body.openrouter_key:
+        import redis
+        r = redis.from_url(settings.redis_url)
+        r.setex(f"openrouter:{job.id}", 3600, body.openrouter_key)
+        r.close()
 
     return {
         "success": True,
