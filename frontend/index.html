@@ -117,11 +117,11 @@
 
                     <!-- OpenRouter Toggle -->
                     <div class="openrouter-toggle-container" style="display: flex; align-items: center; gap: 8px; margin-right: 16px;">
-                        <label class="toggle-switch">
+                        <label class="toggle-switch" for="openrouter-checkbox" style="display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer;">
                             <input type="checkbox" id="openrouter-checkbox">
-                            <span class="toggle-slider"></span>
+                            <span class="toggle-slider" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);"></span>
+                            <span class="openrouter-label" style="font-size: 0.9rem; font-weight: 500; color: var(--text-primary);">OpenRouter API</span>
                         </label>
-                        <span class="openrouter-label" style="font-size: 0.9rem; font-weight: 500; color: var(--text-secondary);">OpenRouter API</span>
                         <span class="status-dot status-idle" id="openrouter-status-dot" title="Idle"></span>
                     </div>
 
