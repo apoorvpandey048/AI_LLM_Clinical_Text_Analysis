@@ -108,12 +108,16 @@ class OpenRouterClient(LLMClient):
                 tokens_output=tokens_output,
             )
 
+            parsed_json = self._try_parse_json(output)
+
             return LLMResponse(
-                output=output,
-                raw_response=json.dumps(data),
-                duration_ms=duration_ms,
+                content=output,
+                parsed_json=parsed_json,
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=True,
                 error=None,
             )
 
@@ -123,11 +127,13 @@ class OpenRouterClient(LLMClient):
             error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
             logger.error("openrouter_http_error", error=error_msg)
             return LLMResponse(
-                output="",
-                raw_response=None,
-                duration_ms=duration_ms,
+                content="",
+                parsed_json=None,
                 tokens_input=0,
                 tokens_output=0,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
                 error=error_msg,
             )
         except Exception as e:
@@ -135,11 +141,13 @@ class OpenRouterClient(LLMClient):
             duration_ms = int((end_time - start_time) * 1000)
             logger.error("openrouter_error", error=str(e))
             return LLMResponse(
-                output="",
-                raw_response=None,
-                duration_ms=duration_ms,
+                content="",
+                parsed_json=None,
                 tokens_input=0,
                 tokens_output=0,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
                 error=str(e),
             )
 
@@ -233,12 +241,16 @@ class OpenRouterClient(LLMClient):
                 tokens_output=tokens_output,
             )
 
+            parsed_json = self._try_parse_json(full_output)
+
             return LLMResponse(
-                output=full_output,
-                raw_response=json.dumps(raw_chunks),
-                duration_ms=duration_ms,
+                content=full_output,
+                parsed_json=parsed_json,
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=True,
                 error=None,
             )
 
@@ -257,11 +269,13 @@ class OpenRouterClient(LLMClient):
             error_msg = f"HTTP {e.response.status_code}: {error_text}"
             logger.error("openrouter_stream_http_error", error=error_msg)
             return LLMResponse(
-                output=full_output,
-                raw_response=None,
-                duration_ms=duration_ms,
+                content=full_output,
+                parsed_json=None,
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
                 error=error_msg,
             )
         except Exception as e:
@@ -269,11 +283,13 @@ class OpenRouterClient(LLMClient):
             duration_ms = int((end_time - start_time) * 1000)
             logger.error("openrouter_stream_error", error=str(e))
             return LLMResponse(
-                output=full_output,
-                raw_response=None,
-                duration_ms=duration_ms,
+                content=full_output,
+                parsed_json=None,
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
+                model=self.model,
+                duration_ms=duration_ms,
+                success=False,
                 error=str(e),
             )
 
