@@ -24,6 +24,7 @@ services:
     image: busybox
     command: [ "true" ]
     restart: "no"
+    ports: !reset []
 
   # --- Backend: connect to vLLM on host ---
   backend:
