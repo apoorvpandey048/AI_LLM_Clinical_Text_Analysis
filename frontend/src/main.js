@@ -5601,7 +5601,7 @@ function updateOpenRouterStatus(status) {
     dot.classList.remove('status-idle', 'status-connecting', 'status-connected', 'status-error');
     
     // Add current status
-    dot.classList.add(\status-\\);
+    dot.classList.add(`status-${status}`);
     dot.title = status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -5610,7 +5610,7 @@ async function testOpenRouterConnection(apiKey) {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
-                'Authorization': \Bearer \\,
+                'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': window.location.origin,
                 'X-Title': 'SNAP-AI'
@@ -5625,13 +5625,13 @@ async function testOpenRouterConnection(apiKey) {
 
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
-            showToast(\Invalid API Key or connection failed (\)\, 'error');
+            showToast(`Invalid API Key or connection failed (${response.status})`, 'error');
             return false;
         }
 
         return true;
     } catch (err) {
-        showToast(\Connection failed: \\, 'error');
+        showToast(`Connection failed: ${err.message}`, 'error');
         return false;
     }
 }
