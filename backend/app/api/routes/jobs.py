@@ -568,6 +568,84 @@ async def reprocess_job(
     )
 
 
+@router.post("/{job_id}/resume")
+async def resume_job(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """
+    Resume an interrupted batch job (crash / restart / partial failure).
+
+    Re-enqueues only the cases that are not COMPLETED (QUEUED / FAILED / stale PROCESSING).
+    COMPLETED cases are skipped idempotently by the per-case worker, so this is safe to call
+    repeatedly. Unlike /reprocess it does NOT clear existing results — it finishes the job.
+    """
+    request_id = getattr(request.state, "request_id", None)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    job = db.query(Job).filter(
+        and_(Job.id == job_uuid, Job.deleted_at.is_(None))
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_ownership(job, user)
+
+    # Count what's left to do.
+    remaining = db.query(JobCase).filter(
+        JobCase.job_id == job_uuid,
+        JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.FAILED, CaseStatus.PROCESSING]),
+    ).count()
+
+    if remaining == 0:
+        return create_response(
+            success=True,
+            data={"job_id": job_id, "message": "Nothing to resume — all cases complete",
+                  "cases_queued": 0},
+            request_id=request_id,
+        )
+
+    # Flip back to PROCESSING; the coordinator re-freezes/reuses the snapshot.
+    job.status = JobStatus.PROCESSING
+    job.completed_at = None
+    if not job.started_at:
+        job.started_at = datetime.utcnow()
+
+    audit = AuditLog(
+        request_id=uuid.UUID(request_id) if request_id else None,
+        job_id=job.id,
+        action="job_resumed",
+        details={"cases_remaining": remaining},
+    )
+    db.add(audit)
+    db.commit()
+
+    # Hand off to the fan-out coordinator (re-enqueues only unfinished cases).
+    from app.workers.tasks import start_job
+
+    task = start_job.delay(str(job.id))
+    job.celery_task_id = task.id
+    db.commit()
+
+    logger.info("job_resumed", request_id=request_id, job_id=job_id, cases_remaining=remaining)
+
+    return create_response(
+        success=True,
+        data={
+            "job_id": job_id,
+            "message": f"Resuming {remaining} unfinished case(s)",
+            "cases_queued": remaining,
+        },
+        request_id=request_id,
+    )
+
+
 @router.delete("/{job_id}")
 async def delete_job(
     job_id: str,
