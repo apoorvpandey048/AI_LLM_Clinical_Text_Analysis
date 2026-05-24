@@ -1,3 +1,7 @@
+# ⛔ DEPRECATED for the excel-batch-fanout line of work — DO NOT use.
+#    Runs Ollama IN Docker with a GPU reservation, which contradicts the canonical "vLLM on the
+#    host GPU" runtime (docs/excel-batch-fanout/CANONICAL_RUNTIME.md §3). Retained for history.
+#
 # Remote/DGX deployment overlay
 # Usage: docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d --build
 #

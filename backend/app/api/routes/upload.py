@@ -2,7 +2,9 @@
 Upload API routes.
 
 Handles file and text uploads for processing.
-Supports multiple file uploads (DOCX, PDF, TXT) with multi-case parsing.
+Supports multiple file uploads (DOCX, PDF, TXT, XLSX) with multi-case parsing.
+DOCX/PDF/TXT are split into cases by header regex; XLSX maps one row -> one case
+via labeled-section concatenation (see app.ingestion.excel).
 """
 
 import re
@@ -23,6 +25,7 @@ from app.db.models import JobStatus, CaseStatus
 from app.api.schemas import TextUploadRequest, UploadResponse
 from app.utils import get_logger
 from app.workers.tasks import process_batch
+from app.ingestion import ExcelParseError, parse_excel_cases
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -31,7 +34,7 @@ router = APIRouter(prefix="/api/v1", tags=["Upload"])
 
 # Safety limits
 MAX_TOTAL_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
-ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
+ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt", ".xlsx"}
 
 
 def parse_cases_from_text(text: str) -> list[dict[str, str]]:
@@ -165,11 +168,12 @@ async def upload_cases(
     Upload clinical cases for processing.
 
     Accepts:
-    - Multiple file uploads (DOCX/PDF/TXT) via 'files' field
+    - Multiple file uploads (DOCX/PDF/TXT/XLSX) via 'files' field
     - A single file upload via 'file' field (backward compat)
     - Direct text input via 'text' field
 
-    Cases are separated by headers like "Case #1", "Case #2", etc.
+    DOCX/PDF/TXT: cases are separated by headers like "Case #1", "Fall 1", etc.
+    XLSX: one spreadsheet row becomes one case (labeled-section concatenation).
     Each file may contain multiple cases. All cases are flattened into one job.
     """
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
@@ -229,6 +233,50 @@ async def upload_cases(
 
         for f, contents in file_contents:
             ext = Path(f.filename).suffix.lower()
+
+            # --- Excel (.xlsx): one row -> one case, labeled-section concatenation ---
+            # Parsed directly from bytes (no temp file, read-only iterator) to bound memory.
+            if ext == ".xlsx":
+                try:
+                    result = parse_excel_cases(contents)
+                except ExcelParseError as e:
+                    logger.error("excel_parse_failed", error=str(e), filename=f.filename)
+                    file_errors.append(f"{f.filename}: {e}")
+                    continue
+                except Exception as e:  # defensive: never 500 on a bad spreadsheet
+                    logger.error("excel_parse_unexpected", error=str(e), filename=f.filename)
+                    file_errors.append(f"{f.filename}: could not parse spreadsheet ({e})")
+                    continue
+
+                if not result.cases:
+                    file_errors.append(f"{f.filename}: no cases parsed from spreadsheet")
+                    continue
+
+                for rec in result.cases:
+                    all_cases.append({
+                        "case_label": rec.case_label,
+                        "text": rec.input_text,
+                        "source_file": f.filename,
+                    })
+                source_filenames.append(f.filename)
+
+                rep = result.report
+                logger.info("excel_parsed", filename=f.filename, **rep.as_dict())
+                # Surface non-fatal validation findings (returned to client as warnings).
+                if rep.duplicate_ids:
+                    file_errors.append(f"{f.filename}: {len(rep.duplicate_ids)} duplicate ID(s)")
+                if rep.invalid_id_format:
+                    file_errors.append(
+                        f"{f.filename}: {len(rep.invalid_id_format)} ID(s) not matching OLC-CHI format"
+                    )
+                if rep.missing_ids:
+                    file_errors.append(f"{f.filename}: {len(rep.missing_ids)} row(s) missing an ID")
+                if rep.empty_core_rows:
+                    file_errors.append(
+                        f"{f.filename}: {len(rep.empty_core_rows)} row(s) without core clinical text"
+                    )
+                continue
+
             temp_path = upload_dir / f"{uuid.uuid4()}{ext}"
             try:
                 temp_path.write_bytes(contents)

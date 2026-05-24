@@ -1,0 +1,20 @@
+# Normalize line endings to LF on commit.
+# The repo is edited from a Windows/WSL mount (/mnt/c), which otherwise produces
+# CRLF<->LF churn on ~90 tracked files. This pins everything to LF in the index
+# WITHOUT a one-shot `git add --renormalize` (which would create a noisy mass commit).
+# Files are renormalized lazily, only when individually re-staged.
+* text=auto eol=lf
+
+# Binary assets: never normalize.
+*.xlsx binary
+*.docx binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary

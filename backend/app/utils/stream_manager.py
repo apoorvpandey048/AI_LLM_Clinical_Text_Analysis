@@ -6,6 +6,7 @@ to the SSE endpoint for real-time display in the UI.
 """
 
 import json
+import os
 from typing import AsyncGenerator
 
 import redis.asyncio as aioredis
@@ -15,6 +16,10 @@ from app.config import get_settings
 from app.utils import get_logger
 
 logger = get_logger(__name__)
+
+# Default SSE subscribe lifetime; must outlast a multi-hour batch (RISK_REGISTER R-5).
+# 0 = unbounded. Kept in sync with stream.py SSE_STREAM_TIMEOUT.
+SSE_STREAM_TIMEOUT = int(os.getenv("SSE_STREAM_TIMEOUT", "28800"))
 
 
 def get_channel_name(job_id: str) -> str:
@@ -172,7 +177,7 @@ class StreamSubscriber:
     async def subscribe(
         self,
         job_id: str,
-        timeout: int = 3600,
+        timeout: int = SSE_STREAM_TIMEOUT,
     ) -> AsyncGenerator[dict, None]:
         """
         Subscribe to stream events for a job.
@@ -198,7 +203,7 @@ class StreamSubscriber:
 
             while True:
                 elapsed = asyncio.get_event_loop().time() - start_time
-                if elapsed > timeout:
+                if timeout and timeout > 0 and elapsed > timeout:
                     logger.info("stream_timeout", job_id=job_id)
                     break
 

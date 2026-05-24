@@ -8,6 +8,7 @@ Provides Server-Sent Events for:
 """
 
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import AsyncGenerator
@@ -24,6 +25,11 @@ from app.utils.stream_manager import StreamSubscriber
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Streaming"])
+
+# Live SSE streaming must survive a multi-hour batch (the old hard 3600s cap killed the
+# token stream ~1h in; RISK_REGISTER R-5). Default 8h; set SSE_STREAM_TIMEOUT=0 for unbounded
+# (heartbeats keep the connection live). DB polling remains the durable fallback regardless.
+SSE_STREAM_TIMEOUT = int(os.getenv("SSE_STREAM_TIMEOUT", "28800"))
 
 
 def _get_current_layer(case: JobCase) -> str | None:
@@ -43,7 +49,7 @@ async def generate_job_events(
     job_id: str,
     db_factory,
     poll_interval: float = 1.0,
-    timeout: int = 3600,
+    timeout: int = SSE_STREAM_TIMEOUT,
 ) -> AsyncGenerator[str, None]:
     """
     Generate SSE events for job progress with real-time token streaming.
@@ -111,7 +117,7 @@ async def generate_job_events(
 
         async for event in subscriber.subscribe(job_id, timeout=timeout):
             elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > timeout:
+            if timeout and timeout > 0 and elapsed > timeout:
                 yield f"event: timeout\ndata: {json.dumps({'message': 'Stream timeout'})}\n\n"
                 break
 

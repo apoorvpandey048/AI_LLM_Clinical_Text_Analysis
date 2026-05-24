@@ -34,7 +34,9 @@ TP_SIZE="${VLLM_TP_SIZE:-4}"
 MODEL="${VLLM_MODEL:-openai/gpt-oss-120b}"
 MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
 QUANTIZATION="${VLLM_QUANTIZATION:-mxfp4}"
-PORT=8000
+# Listen port. MUST match the port in VLLM_HOST (.env). Commit a975a81 moved the backend to
+# :8005 but left this script on 8000 — honor VLLM_PORT so they stay in sync (CANONICAL_RUNTIME §5).
+PORT="${VLLM_PORT:-8000}"
 # Configurable runtime knobs (override via env or .env)
 # - VLLM_GPU_MEMORY_UTILIZATION: fraction of GPU memory to reserve for vllm (0.0-1.0)
 # - VLLM_MAX_NUM_SEQS: optional --max-num-seqs value to reduce sampler warmup

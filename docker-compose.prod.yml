@@ -1,3 +1,8 @@
+# ⛔ DEPRECATED for the excel-batch-fanout line of work — DO NOT use for local development.
+#    Canonical runtime is: docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml
+#    (see docs/excel-batch-fanout/CANONICAL_RUNTIME.md §3). This standalone prod stack (Cloudflare
+#    tunnel, read-only mounts) is NOT kept in sync with the batch changes. Retained for history.
+#
 # SNAP-AI Production Docker Compose — STANDALONE
 # Deploy on DGX A100-40GB with GPT-OSS-120B
 #

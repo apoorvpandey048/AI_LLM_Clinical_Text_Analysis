@@ -474,16 +474,16 @@ function initDropzone() {
         dropzone.classList.remove('dragover');
         if (state.isProcessing) return;
         const droppedFiles = Array.from(e.dataTransfer.files);
-        const allowedExts = ['.docx', '.pdf', '.txt'];
+        const allowedExts = ['.docx', '.pdf', '.txt', '.xlsx'];
         const validFiles = droppedFiles.filter(f => allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
         const invalidFiles = droppedFiles.filter(f => !allowedExts.some(ext => f.name.toLowerCase().endsWith(ext)));
         if (invalidFiles.length > 0) {
-            showToast(`Skipped ${invalidFiles.length} unsupported file(s). Allowed: .docx, .pdf, .txt`, 'warning');
+            showToast(`Skipped ${invalidFiles.length} unsupported file(s). Allowed: .docx, .pdf, .txt, .xlsx`, 'warning');
         }
         if (validFiles.length > 0) {
             handleFilesSelect(validFiles);
         } else if (invalidFiles.length > 0) {
-            showToast('No supported files dropped. Allowed: .docx, .pdf, .txt', 'error');
+            showToast('No supported files dropped. Allowed: .docx, .pdf, .txt, .xlsx', 'error');
         }
     });
 
@@ -582,6 +582,11 @@ function setCancelButtonEnabled(enabled) {
     if (btn) btn.disabled = !enabled;
 }
 
+function setResumeButtonEnabled(enabled) {
+    const btn = document.getElementById('resume-job-btn');
+    if (btn) btn.disabled = !enabled;
+}
+
 // ============================================
 // API: Process File / Text
 // ============================================
@@ -673,7 +678,10 @@ function startStreaming(jobId) {
     state.frozenCases = new Set();
     state.layerTimeline = {};
     state.pipelineSnapshot = null;
+    state.lastResumableJobId = jobId;  // remember for the Resume control
+    state.lastProgress = null;
     setCancelButtonEnabled(true);
+    setResumeButtonEnabled(false);
 
     // Pre-populate timeline with PENDING entries for all known layers
     Object.keys(LAYERS).forEach(key => {
@@ -785,6 +793,10 @@ function connectSSE(jobId) {
     state.eventSource.addEventListener('progress', (e) => {
         try {
             const data = JSON.parse(e.data);
+            // A healthy event proves the connection works — refresh the reconnect budget so a
+            // multi-hour batch with intermittent drops never exhausts it (streaming hardening).
+            state.reconnectAttempts = 0;
+            state.lastProgress = data;
             updateProgressUI(data);
         } catch { /* ignore */ }
     });
@@ -812,7 +824,13 @@ function connectSSE(jobId) {
             resolvedJobId = data.job_id || jobId;
         } catch { /* use outer jobId */ }
         loadResults(resolvedJobId);
-        showToast('Processing complete!', 'success');
+        // Partial completion (some cases FAILED) — offer Resume to re-run just those.
+        if (state.lastProgress && (state.lastProgress.failed || 0) > 0) {
+            setResumeButtonEnabled(true);
+            showToast(`Completed with ${state.lastProgress.failed} failed case(s) — Resume to retry`, 'warning');
+        } else {
+            showToast('Processing complete!', 'success');
+        }
         scheduleStallCheck();
     });
 
@@ -827,6 +845,7 @@ function connectSSE(jobId) {
         state.isProcessing = false;
         state.currentJobId = null;
         updateProcessButton();
+        setResumeButtonEnabled(true);  // crash/failure -> Resume re-runs unfinished cases
         try {
             const data = JSON.parse(e.data);
             showProcessingError(data.error || 'Pipeline failed', data);
@@ -834,6 +853,16 @@ function connectSSE(jobId) {
             showProcessingError('Pipeline failed — check server logs');
         }
         scheduleStallCheck();
+    });
+
+    state.eventSource.addEventListener('timeout', () => {
+        // Server closed the stream after its max lifetime (SSE_STREAM_TIMEOUT) — NOT an error.
+        // Re-subscribe transparently so a multi-hour batch keeps streaming live tokens.
+        if (state.isProcessing) {
+            state.reconnectAttempts = 0;
+            closeStream();
+            connectSSE(jobId);
+        }
     });
 
     state.eventSource.addEventListener('error', () => {
@@ -869,6 +898,7 @@ function handleSSEDisconnect(jobId) {
         updateConnectionStatus('disconnected');
         statusEl.classList.remove('streaming');
         statusEl.innerHTML = '<span class="live-dot error"></span> Disconnected - Using fallback polling';
+        setResumeButtonEnabled(true);  // live stream lost; user can Resume if the job stalled
         // Fall back to polling
         startLegacyPolling(jobId);
     }
@@ -4192,6 +4222,50 @@ async function cancelJob() {
     }
 }
 
+/**
+ * Resume an interrupted/partial batch job. Re-runs only the unfinished cases
+ * (POST /jobs/{id}/resume); COMPLETED cases are skipped idempotently by the backend.
+ * Safe to use after a crash, disconnect, or a run that completed with failures.
+ */
+async function resumeJob() {
+    const jobId = state.currentJobId || state.lastResumableJobId || state.lastCompletedJobId;
+    if (!jobId) {
+        showToast('No job to resume', 'warning');
+        return;
+    }
+
+    setResumeButtonEnabled(false);
+    try {
+        console.log('[RESUME] Requesting resume for job:', jobId);
+        const res = await authFetch(`${API_BASE}/jobs/${jobId}/resume`, { method: 'POST' });
+        const json = await res.json().catch(() => ({}));
+        console.log('[RESUME] Response:', res.status, json);
+
+        if (res.ok) {
+            const queued = json?.data?.cases_queued ?? '?';
+            if (queued === 0) {
+                showToast('Nothing to resume — all cases complete', 'info');
+                return;
+            }
+            showToast(`Resuming ${queued} unfinished case(s)...`, 'info');
+            // Re-enter the live processing view and reconnect the stream.
+            state.currentJobId = jobId;
+            state.isProcessing = true;
+            updateProcessButton();
+            showProgress();
+            startStreaming(jobId);
+        } else {
+            const errMsg = json?.error?.message || json?.detail || extractErrorMessage(json) || `Server error (${res.status})`;
+            setResumeButtonEnabled(true);
+            showToast(`Failed to resume: ${errMsg}`, 'error');
+        }
+    } catch (err) {
+        console.error('[RESUME] Exception:', err);
+        setResumeButtonEnabled(true);
+        showToast(`Resume failed: ${err.message}`, 'error');
+    }
+}
+
 // ============================================
 // Prompt Import/Export
 // ============================================
@@ -5467,6 +5541,7 @@ window.setActiveModel = setActiveModel;
 window.deleteModel = deleteModel;
 window.resetToUpload = resetToUpload;
 window.cancelJob = cancelJob;
+window.resumeJob = resumeJob;
 window.exportPrompts = exportPrompts;
 window.importPrompts = importPrompts;
 window.showCreateLayerModal = showCreateLayerModal;

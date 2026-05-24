@@ -33,11 +33,13 @@ services:
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
-      - VLLM_HOST=${VLLM_HOST:-http://131.152.136.65:8000}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8005}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
       - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
+      # Live SSE must outlast a multi-hour batch (0 = unbounded). See CANONICAL_RUNTIME §6.
+      - SSE_STREAM_TIMEOUT=${SSE_STREAM_TIMEOUT:-28800}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - API_WORKERS=4
       - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
@@ -49,15 +51,20 @@ services:
   worker:
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50
+    # Per-case fan-out: consume all three queues (cases + interactive + default coordinator).
+    # --concurrency=2 is the START value; tune against measured single-GPU vLLM headroom
+    # (TESTING_PLAN §4 / RISK_REGISTER R-7). --max-tasks-per-child now recycles per case.
+    command: celery -A app.workers.celery_app worker --loglevel=info -Q cases,interactive,celery --concurrency=${WORKER_CONCURRENCY:-2} --max-tasks-per-child=50
     environment:
       - ENVIRONMENT=production
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
-      - VLLM_HOST=${VLLM_HOST:-http://131.152.136.65:8000}
+      - VLLM_HOST=${VLLM_HOST:-http://host.docker.internal:8005}
       - VLLM_MODEL=${VLLM_MODEL:-openai/gpt-oss-120b}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-16384}
       - LLM_TIMEOUT=900
       - LLM_REASONING_LEVEL=${LLM_REASONING_LEVEL:-low}
+      # Kill-switch: set to 0 to fall back to the legacy sequential batch (rollback path).
+      - BATCH_FANOUT_ENABLED=${BATCH_FANOUT_ENABLED:-1}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - JWT_SECRET=${JWT_SECRET:-snapai-local-secret-2026}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}

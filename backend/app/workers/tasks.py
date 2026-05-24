@@ -6,6 +6,7 @@ Supports streaming token output via Redis pub/sub.
 """
 
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import Any
@@ -879,21 +880,371 @@ def process_case(
 
 
 
+# =====================================================================================
+# Per-case fan-out architecture (replaces the monolithic process_batch loop).
+#
+#   process_batch(shim) ─► _start_job_impl ─► N × process_one_case ─► finalize_job
+#
+# Each process_one_case is a short, idempotent, retryable unit of recovery. Results are
+# persisted to PostgreSQL (not the Redis result backend). The orchestrator/pipeline and the
+# per-case persistence (_process_case_impl / save_case_result) are reused UNCHANGED.
+# =====================================================================================
+
+
+def _fanout_enabled() -> bool:
+    """Kill-switch for per-case fan-out. Default ON. Set BATCH_FANOUT_ENABLED=0/false to fall
+    back to the legacy sequential process_batch (rollback path; IMPLEMENTATION_PLAN §4)."""
+    val = os.getenv("BATCH_FANOUT_ENABLED", "1").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+_RETRYABLE_ERROR_TYPES = {"LLM_ERROR", "TIMEOUT"}
+
+
+def _is_retryable(error_msg: str | None) -> bool:
+    """Transient failures worth retrying (LLM/connection/timeout). Deterministic parse/schema
+    errors are not retried (a retry would just fail the same way)."""
+    return _classify_error(error_msg) in _RETRYABLE_ERROR_TYPES
+
+
+def _retry_backoff_seconds(retries: int) -> int:
+    """Exponential backoff: 30s, 60s, capped at 120s."""
+    return min(30 * (2 ** retries), 120)
+
+
+def _count_cases_by_status(db, job_uuid, statuses) -> int:
+    return db.query(JobCase).filter(
+        JobCase.job_id == job_uuid,
+        JobCase.status.in_(statuses),
+    ).count()
+
+
+def _recompute_job_counts(job_id: str) -> None:
+    """Set Job.completed_count / failed_count to the TRUE values from JobCase rows.
+
+    Authoritative, idempotent count source — unlike save_case_result's incremental +1, this
+    is safe under retries / resume / redelivery (RISK_REGISTER N-3).
+    """
+    db = SessionLocal()
+    try:
+        job_uuid = uuid.UUID(job_id)
+        job = db.query(Job).filter(Job.id == job_uuid).first()
+        if not job:
+            return
+        job.completed_count = _count_cases_by_status(db, job_uuid, [CaseStatus.COMPLETED])
+        job.failed_count = _count_cases_by_status(db, job_uuid, [CaseStatus.FAILED])
+        db.commit()
+    except Exception as e:
+        logger.warning("recompute_job_counts_failed", job_id=job_id, error=str(e))
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _ensure_snapshot(job_id: str) -> list[dict]:
+    """Freeze (or reuse) the pipeline snapshot on the Job. Replay jobs reuse the stored
+    snapshot; fresh jobs build + persist one. Mirrors the legacy snapshot handling."""
+    snapshot = None
+    db = SessionLocal()
+    try:
+        job = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
+        if job and job.pipeline_snapshot:
+            snapshot = job.pipeline_snapshot
+            logger.info("PIPELINE_SNAPSHOT_REUSE", job_id=job_id, layer_count=len(snapshot))
+        else:
+            snapshot = _build_pipeline_snapshot()
+            if job:
+                job.pipeline_snapshot = snapshot
+            logger.info("PIPELINE_SNAPSHOT", job_id=job_id, layer_count=len(snapshot))
+        if job:
+            if not job.started_at:
+                job.started_at = datetime.utcnow()
+            if not job.model_name:
+                job.model_name = _get_active_model()
+            db.commit()
+    except Exception as e:
+        logger.error("PIPELINE_SNAPSHOT_ERROR", job_id=job_id, error=str(e), exc_info=True)
+    finally:
+        db.close()
+    if snapshot is None:
+        snapshot = _build_pipeline_snapshot()
+    return snapshot
+
+
+def _start_job_impl(job_id: str) -> dict[str, Any]:
+    """Coordinator logic: freeze snapshot, fan out one process_one_case per unfinished case.
+
+    Enqueues cases in QUEUED / FAILED / PROCESSING (PROCESSING = stale from a crashed worker).
+    COMPLETED cases are never re-enqueued, and process_one_case skips them anyway, so a stray
+    re-enqueue is harmless. This is the SAME path used by /resume.
+    """
+    update_job_status(job_id, JobStatus.PROCESSING)
+    _ensure_snapshot(job_id)
+
+    db = SessionLocal()
+    try:
+        job_uuid = uuid.UUID(job_id)
+        cases = db.query(JobCase).filter(
+            JobCase.job_id == job_uuid,
+            JobCase.status.in_([CaseStatus.QUEUED, CaseStatus.FAILED, CaseStatus.PROCESSING]),
+        ).order_by(JobCase.case_number).all()
+        to_enqueue = [(str(c.id), c.case_number) for c in cases]
+    finally:
+        db.close()
+
+    for case_id, case_number in to_enqueue:
+        process_one_case.apply_async(args=[job_id, case_id, case_number], queue="cases")
+
+    logger.info("JOB_FANOUT_ENQUEUED", job_id=job_id, enqueued=len(to_enqueue))
+
+    if not to_enqueue:
+        # Nothing to do (e.g. resume of an already-finished job) — finalize immediately.
+        finalize_job.apply_async(args=[job_id], queue="celery")
+
+    return {"job_id": job_id, "enqueued": len(to_enqueue)}
+
+
+@celery_app.task(bind=True, name="start_job")
+def start_job(self, job_id: str) -> dict[str, Any]:
+    """Lightweight coordinator task (no LLM). Used by /resume and by the process_batch shim."""
+    logger.info("START_JOB", task_id=self.request.id, job_id=job_id)
+    return _start_job_impl(job_id)
+
+
+def _set_case_status(job_id: str, case_number: int, status: CaseStatus) -> None:
+    db = SessionLocal()
+    try:
+        case = db.query(JobCase).filter(
+            JobCase.job_id == uuid.UUID(job_id),
+            JobCase.case_number == case_number,
+        ).first()
+        if case:
+            case.status = status
+            db.commit()
+    except Exception as e:
+        logger.warning("set_case_status_failed", job_id=job_id, case_number=case_number, error=str(e))
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _maybe_finalize(job_id: str) -> None:
+    """If no cases remain QUEUED/PROCESSING, enqueue finalize_job (idempotent)."""
+    db = SessionLocal()
+    try:
+        incomplete = _count_cases_by_status(
+            db, uuid.UUID(job_id), [CaseStatus.QUEUED, CaseStatus.PROCESSING]
+        )
+    except Exception as e:
+        logger.warning("maybe_finalize_count_failed", job_id=job_id, error=str(e))
+        incomplete = -1
+    finally:
+        db.close()
+    if incomplete == 0:
+        finalize_job.apply_async(args=[job_id], queue="celery")
+
+
+@celery_app.task(
+    bind=True,
+    name="process_one_case",
+    ignore_result=True,
+    max_retries=2,
+    acks_late=True,
+)
+def process_one_case(self, job_id: str, case_id: str, case_number: int) -> dict[str, Any]:
+    """Process ONE case. Short, idempotent, retryable — the unit of recovery.
+
+    - Skips if already COMPLETED (makes resume trivial; RISK_REGISTER R-2).
+    - Honors cancellation (job STOPPING/CANCELLED).
+    - ignore_result=True so no per-case payload lands in the Redis backend (R-4).
+    - Transient failures retry with backoff; deterministic failures stay FAILED.
+    - The last case to finish triggers finalize_job (DB-driven, no chord; N-2).
+    """
+    db = SessionLocal()
+    raw_text = ""
+    source_file = None
+    snapshot = None
+    try:
+        job = db.query(Job).filter(Job.id == uuid.UUID(job_id)).first()
+        case = db.query(JobCase).filter(
+            JobCase.job_id == uuid.UUID(job_id),
+            JobCase.case_number == case_number,
+        ).first()
+
+        if job is None or case is None:
+            logger.warning("PROCESS_ONE_CASE_MISSING", job_id=job_id, case_number=case_number)
+            return {"skipped": "missing", "case_number": case_number}
+
+        # Cancellation: mark this case terminal so counts settle and finalize can run.
+        if job.status in (JobStatus.STOPPING, JobStatus.CANCELLED):
+            if case.status not in (CaseStatus.COMPLETED, CaseStatus.FAILED):
+                case.status = CaseStatus.FAILED
+                case.error_message = "Job cancelled by user"
+                db.commit()
+            _maybe_finalize(job_id)
+            return {"skipped": "cancelled", "case_number": case_number}
+
+        # Idempotent skip — already done.
+        if case.status == CaseStatus.COMPLETED:
+            _maybe_finalize(job_id)
+            return {"skipped": "already_completed", "case_number": case_number}
+
+        # Claim the case.
+        raw_text = case.input_text or ""
+        source_file = case.source_file
+        snapshot = job.pipeline_snapshot
+        case.status = CaseStatus.PROCESSING
+        db.commit()
+    finally:
+        db.close()
+
+    # Run the pipeline (own event loop per task; impl persists result + status to DB).
+    try:
+        result = _process_case_impl(
+            case_id=case_id,
+            job_id=job_id,
+            raw_text=raw_text,
+            case_number=case_number,
+            task_id=self.request.id,
+            loop=None,
+            pipeline_layers=snapshot if snapshot else None,
+            source_file=source_file,
+        )
+    except Exception as exc:  # _process_case_impl normally swallows errors; defensive net
+        logger.error("PROCESS_ONE_CASE_CRASH", job_id=job_id, case_number=case_number, error=str(exc))
+        result = {"success": False, "error": str(exc)}
+        save_case_result(job_id, case_number, {
+            "case_id": case_id, "case_number": case_number, "job_id": job_id,
+            "success": False, "error": str(exc),
+        })
+
+    # Retry transient failures.
+    if not result.get("success"):
+        err = result.get("error")
+        if _is_retryable(err) and self.request.retries < self.max_retries:
+            # Reset to QUEUED so the "last one finalizes" check stays accurate during backoff.
+            _set_case_status(job_id, case_number, CaseStatus.QUEUED)
+            logger.info(
+                "CASE_RETRY", job_id=job_id, case_number=case_number,
+                attempt=self.request.retries + 1, error=err,
+            )
+            raise self.retry(countdown=_retry_backoff_seconds(self.request.retries))
+
+    _recompute_job_counts(job_id)
+    _maybe_finalize(job_id)
+    return {"case_number": case_number, "success": bool(result.get("success"))}
+
+
+def _finalize_job_impl(job_id: str) -> dict[str, Any]:
+    """Recompute counts from the DB and set the terminal job status. Idempotent — safe to call
+    multiple times (races, redelivery, resume)."""
+    from app.utils.stream_manager import StreamPublisher
+
+    db = SessionLocal()
+    final_status = None
+    total = completed = failed = 0
+    try:
+        job_uuid = uuid.UUID(job_id)
+        job = db.query(Job).filter(Job.id == job_uuid).first()
+        if not job:
+            return {"job_id": job_id, "status": "missing"}
+
+        total = db.query(JobCase).filter(JobCase.job_id == job_uuid).count()
+        completed = _count_cases_by_status(db, job_uuid, [CaseStatus.COMPLETED])
+        failed = _count_cases_by_status(db, job_uuid, [CaseStatus.FAILED])
+        incomplete = total - completed - failed
+        was_cancelling = job.status in (JobStatus.STOPPING, JobStatus.CANCELLED)
+
+        job.completed_count = completed
+        job.failed_count = failed
+
+        if incomplete > 0 and not was_cancelling:
+            # Called too early — leave PROCESSING, just persist refreshed counts.
+            db.commit()
+            return {"job_id": job_id, "status": "still_processing", "incomplete": incomplete}
+
+        if was_cancelling:
+            final_status = JobStatus.CANCELLED
+        elif total > 0 and completed > 0:
+            final_status = JobStatus.COMPLETED  # full or partial success
+        else:
+            final_status = JobStatus.FAILED
+
+        job.status = final_status
+        job.completed_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        logger.error("finalize_job_failed", job_id=job_id, error=str(e), exc_info=True)
+        db.rollback()
+        return {"job_id": job_id, "status": "error", "error": str(e)}
+    finally:
+        db.close()
+
+    # Publish terminal SSE event (best effort).
+    try:
+        pub = StreamPublisher()
+        if final_status == JobStatus.CANCELLED:
+            pub.publish_job_failed(job_id, f"Job cancelled ({completed}/{total} cases completed)")
+        elif final_status == JobStatus.FAILED:
+            pub.publish_job_failed(job_id, f"All cases failed ({failed}/{total})")
+        else:
+            pub.publish_job_complete(job_id, total, completed)
+        pub.close()
+    except Exception:
+        pass
+
+    logger.info(
+        "JOB_FINALIZED", job_id=job_id,
+        status=final_status.value if final_status else None,
+        total=total, completed=completed, failed=failed,
+    )
+    return {
+        "job_id": job_id, "status": final_status.value if final_status else None,
+        "total": total, "completed": completed, "failed": failed,
+    }
+
+
+@celery_app.task(bind=True, name="finalize_job")
+def finalize_job(self, job_id: str) -> dict[str, Any]:
+    """Chord-free finalizer: invoked by the last case to complete (or by start_job when there
+    is nothing to enqueue)."""
+    return _finalize_job_impl(job_id)
+
+
 @celery_app.task(bind=True, name="process_batch")
-def process_batch(
+def process_batch(self, job_id: str, cases: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    """Entry point kept for backward compatibility (upload, reprocess, replay all call this).
+
+    Default: delegates to the per-case fan-out coordinator (start_job). The `cases` arg is no
+    longer needed (the coordinator reads cases from the DB) but is still accepted so existing
+    callers are unchanged.
+
+    Kill-switch: if BATCH_FANOUT_ENABLED is off, runs the LEGACY sequential processor
+    (rollback path; IMPLEMENTATION_PLAN §4).
+    """
+    if not _fanout_enabled():
+        logger.warning("FANOUT_DISABLED_USING_LEGACY", job_id=job_id)
+        return _process_batch_legacy(self, job_id, cases or [])
+
+    logger.info("PROCESS_BATCH_DELEGATE_FANOUT", task_id=self.request.id, job_id=job_id)
+    return _start_job_impl(job_id)
+
+
+def _process_batch_legacy(
     self,
     job_id: str,
     cases: list[dict[str, str]],
 ) -> dict[str, Any]:
     """
-    Process a batch of cases.
+    LEGACY sequential batch processor (kept as a rollback path only).
+
+    Runs every case in ONE task on a shared event loop — the original behavior. Reached only
+    when the fan-out kill-switch (BATCH_FANOUT_ENABLED) is OFF. The default path is the
+    per-case fan-out (start_job / process_one_case).
 
     Args:
         job_id: Job ID for the batch
         cases: List of dicts with 'case_id' and 'text'
-
-    Returns:
-        Dict with batch processing status
     """
     logger.info(
         "JOB_STARTED",
