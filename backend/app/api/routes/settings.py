@@ -62,6 +62,7 @@ async def get_retention_settings(request: Request, user: User = Depends(require_
 async def update_retention_settings(
     settings: RetentionSettings,
     request: Request,
+    db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
     """
@@ -83,16 +84,16 @@ async def update_retention_settings(
         days=settings.days,
     )
 
-    # Audit log
-    from app.db import get_db, AuditLog
-    db = next(get_db())
+    # Audit log — use the injected session (honors get_db override in tests; the
+    # dependency closes it). Previously called next(get_db()) directly, which bypassed
+    # the override and opened a real DB connection.
+    from app.db import AuditLog
     audit = AuditLog(
         action="retention_settings_changed",
         details={"enabled": settings.enabled, "days": settings.days, "admin": admin.username},
     )
     db.add(audit)
     db.commit()
-    db.close()
 
     return create_response(
         success=True,

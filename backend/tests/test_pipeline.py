@@ -119,8 +119,14 @@ class TestLayer2CIE:
         assert is_valid is False
         assert "cd_grade" in error.lower()
 
-    def test_validate_output_missing_cci_total(self, mock_llm_client):
-        """Missing cci_total should fail."""
+    def test_validate_output_cci_total_now_optional(self, mock_llm_client):
+        """cci_total is no longer required (pipeline v2.0).
+
+        CCI is computed deterministically in Python from the CD grades, so the LLM is no
+        longer trusted to emit cci_total. An output with valid complications and no
+        cci_total is therefore VALID. (Replaces the obsolete
+        ``test_validate_output_missing_cci_total``, which asserted the old contract.)
+        """
         layer = Layer2CIE(mock_llm_client)
         output = {
             "complications": [],
@@ -130,8 +136,8 @@ class TestLayer2CIE:
             "cci_check_passed": True,
         }
         is_valid, error = layer.validate_output(output)
-        assert is_valid is False
-        assert "cci_total" in error
+        assert is_valid is True
+        assert error is None
 
     def test_validate_all_cd_grades_valid(self, mock_llm_client):
         """All valid CD grades should pass."""

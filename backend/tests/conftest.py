@@ -65,9 +65,51 @@ def test_db():
     db_session_module.engine = original_engine
 
 
+def _seed_admin(db):
+    """Insert an active admin user into the test DB and return it.
+
+    The API enforces auth at two layers: the global ``auth_middleware`` (validates the
+    JWT) and the ``require_auth``/``require_admin`` dependencies (load the user from the
+    DB). So an authenticated test client needs BOTH a valid token AND a matching user row.
+    """
+    from app.db.models import User, UserRole
+
+    admin = db.query(User).filter(User.username == "test-admin").first()
+    if admin is None:
+        admin = User(
+            username="test-admin",
+            name="Test Admin",
+            password_hash="not-used-by-require_auth",  # require_auth never verifies password
+            role=UserRole.ADMIN,
+            is_active=True,
+        )
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+    return admin
+
+
 @pytest.fixture(scope="function")
 def client(test_db) -> Generator:
-    """Create a test client with database override."""
+    """Authenticated test client (admin) with the SQLite DB override.
+
+    Seeds an admin user and attaches a real ``Authorization: Bearer`` header signed with
+    the same JWT secret the middleware verifies. Public endpoints (health/info) ignore the
+    extra header, so this is safe for every existing test.
+    """
+    from app.api.routes.auth import create_access_token
+
+    admin = _seed_admin(test_db)
+    token = create_access_token(str(admin.id), admin.username, admin.role.value)
+
+    with TestClient(app) as c:
+        c.headers.update({"Authorization": f"Bearer {token}"})
+        yield c
+
+
+@pytest.fixture(scope="function")
+def anon_client(test_db) -> Generator:
+    """Unauthenticated test client — for asserting auth is actually enforced (401)."""
     with TestClient(app) as c:
         yield c
 
