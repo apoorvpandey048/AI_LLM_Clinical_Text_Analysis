@@ -9,7 +9,7 @@
 
 ## Step 1: Clone Repository
 ```bash
-git clone https://github.com/apoorvpandey048/AI_LLM_Clinical_Text_Analysis.git
+git clone https://github.com/<your-org>/AI_LLM_Clinical_Text_Analysis.git
 cd AI_LLM_Clinical_Text_Analysis
 ```
 
