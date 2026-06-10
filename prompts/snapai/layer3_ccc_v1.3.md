@@ -177,6 +177,18 @@ If a postoperative complication is listed as a diagnosis with documented
 treatment, but is NOT present in Layer 2's episodes, FLAG it in
 likely_omissions and ADD it to audited_result.final_episode_set.
 
+RULE 7 — NO RULE-FREE IV ESCALATION:
+Do NOT assign or keep Grade IVa/IVb unless the source text contains an explicit
+organ-support token — mechanical ventilation, vasopressors/catecholamines, or
+dialysis — or an explicitly stated organ failure. ICU/IMC admission alone is NOT
+sufficient. If a IV grade lacks such a token, downgrade to the grade implied by
+the actual treatment (e.g. reoperation under anaesthesia → IIIb; pharmacological → II).
+
+RULE 8 — CITE EVIDENCE FOR EVERY CHANGE:
+For each episode you remove, downgrade, or upgrade, record the verbatim
+evidence_quote and the rule applied in episode_checks. Do NOT remove or re-grade
+an episode without a citation.
+
 ---
 
 OVERALL VERDICT

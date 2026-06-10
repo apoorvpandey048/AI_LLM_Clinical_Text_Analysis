@@ -111,9 +111,9 @@ Failure to perform this check is a grading error.
 CD I: any deviation without drugs; wound care; bedside procedures; catheterisation; physiotherapy. EXCEPTION: Use of antiemetics, analgesics, antipyretics, diuretics and electrolytes STILL classify as CDI. All other pharmacological treatments automatically default to CD II
 CD II: any pharmacological treatment unless listed in CDI; transfusion; TPN; bowel stimulation (=pharmacological treatment of ileus)
 CD IIIa: intervention without general anaesthesia; endoscopic procedures; radiological procedures
-CD IIIb: intervention under general anaesthesia
-CD IVa: Grade IV requires life-threatening organ dysfunction requiring ICU-level care
-CD IVb: multi-organ dysfunction requiring ICU; when two or more organs require ICU, default to 4b and only count once
+CD IIIb: intervention under general anaesthesia (e.g. reoperation / re-laparotomy / re-thoracotomy). Do NOT escalate to Grade IV for the reoperation itself unless organ support (ventilation/vasopressors/dialysis) is independently documented.
+CD IVa: single-organ failure/support — mechanical ventilation (respiratory) OR vasopressors/catecholamines (circulatory) OR dialysis (renal). The ONLY triggers for Grade IV are ventilation, vasopressors, dialysis, or explicitly stated organ failure. ICU/IMC admission, monitoring or fluid management WITHOUT one of these tokens is NOT Grade IV — grade by the actual treatment given.
+CD IVb: multi-organ failure/support — two or more of the IVa organ systems (ventilation, vasopressors, dialysis). When two or more organs require support, default to IVb and count once.
 CD V: death
 
 ---
@@ -245,8 +245,10 @@ If a complication is treated with any of these, it MUST be graded ≥ Grade II:
 • Antipsychotics for delirium: Haloperidol, Quetiapin (Seroquel),
   Risperidon, Olanzapin, Dexmedetomidin (Dexdor)
 • Cordarone (Amiodarone) for cardiac arrhythmias
-• Catecholamines / inotropes: Dobutamin, Noradrenalin, Adrenalin,
-  Vasopressin — for hemodynamic support (→ Grade II or higher)
+• Catecholamines / vasopressors: Dobutamin, Noradrenalin, Adrenalin,
+  Vasopressin. For circulatory FAILURE / organ support → CD IVa (single-organ
+  circulatory support). Only a brief intra-operative bolus NOT given for organ
+  failure may be treated as ≥ Grade II.
 
 If the ONLY treatment is from the CD I exemption list (antiemetics,
 analgesics, antipyretics, diuretics, electrolytes, physiotherapy),

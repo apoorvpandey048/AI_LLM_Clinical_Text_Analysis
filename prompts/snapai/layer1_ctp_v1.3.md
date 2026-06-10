@@ -76,6 +76,7 @@ KEEP if it is postoperative course–relevant, even if structured:
 - lines like "Beginn Pip/Taz …", "Piperacillin/Tazobactam i.v. …", "DK …", "Pradif …"
 - electrolyte substitutions ("Hypokaliämie wurde substituiert")
 - NG tube, drainage, punctures, reoperation, ICU stays (as stated)
+- ICU/IMC organ-support EXACTLY as written — mechanical ventilation/Beatmung, vasopressors/catecholamines (Noradrenalin/Adrenalin/Dobutamin/Vasopressin), dialysis/CVVH, and explicit "organ failure"/"Organversagen". These tokens are required for correct Grade IV/IIIb grading downstream and must never be dropped during cleaning.
 
 ============================================================
 STEP 3 — DE-IDENTIFICATION (MANDATORY)

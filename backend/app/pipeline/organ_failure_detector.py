@@ -186,3 +186,67 @@ def enforce_iv_grade(
         )
 
     return correct_grade
+
+
+def guard_iv_requires_organ_support(
+    episodes: list[dict],
+    full_clinical_text: str = "",
+) -> list[dict]:
+    """
+    Deterministic backstop for Grade IV (enforces layer3 RULE 7).
+
+    For each episode graded IVa/IVb:
+      * if NO organ-support token is found (in the episode's own text OR the full
+        clinical text) → downgrade to IIIb. Grade IV requires explicit organ
+        support (ventilation / vasopressors / dialysis / stated organ failure);
+        an ICU/IMC location alone is not sufficient. IIIb is the conservative
+        floor (the complication may still have warranted an intervention); the
+        prompt rules resolve the finer II-vs-IIIb distinction.
+      * else enforce IVa (1 organ) vs IVb (≥2 organs).
+
+    Mutates the episode dicts in place. Returns a list of guard actions taken.
+
+    Args:
+        episodes: list of episode dicts, each with a "cd_grade" key
+                  (Layer 3 final_episode_set or Layer 2 complications).
+        full_clinical_text: cleaned clinical narrative for organ-token detection.
+
+    Returns:
+        List of {complication, from_grade, to_grade, organs} for each change.
+    """
+    actions: list[dict] = []
+    for ep in episodes:
+        if not isinstance(ep, dict):
+            continue
+        grade = ep.get("cd_grade")
+        if grade not in ("IVa", "IVb"):
+            continue
+
+        treatment = ep.get("treatment", "") or ""
+        complication = ep.get("complication", "") or ""
+        organs = detect_organ_failures(treatment, complication, full_clinical_text)
+
+        if not organs:
+            new_grade = "IIIb"
+        elif len(organs) >= 2:
+            new_grade = "IVb"
+        else:
+            new_grade = "IVa"
+
+        if new_grade != grade:
+            ep["cd_grade"] = new_grade
+            action = {
+                "complication": complication[:80],
+                "from_grade": grade,
+                "to_grade": new_grade,
+                "organs": organs,
+            }
+            actions.append(action)
+            logger.info(
+                "iv_organ_support_guard",
+                complication=complication[:60],
+                from_grade=grade,
+                to_grade=new_grade,
+                organs=organs,
+            )
+    return actions

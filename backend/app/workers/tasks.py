@@ -400,6 +400,15 @@ def _build_pipeline_snapshot() -> list[dict]:
                 "prompt_version": version_label,
             })
 
+        # Provenance: record a content hash of each layer's prompt so any export can
+        # verify exactly which prompt text ran. Combined with the restored 3-layer
+        # pipeline (execution now uses exactly these snapshot layers — no hidden
+        # sub-layers/auditor), this closes the snapshot-vs-execution ambiguity.
+        import hashlib
+        for layer in layers:
+            prompt_text = layer.get("prompt") or ""
+            layer["prompt_sha256"] = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+
         # Sort by display_order for deterministic execution
         layers.sort(key=lambda l: l["display_order"])
         return layers

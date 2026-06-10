@@ -52,6 +52,7 @@ def _build_chain_context(label: str, output: dict) -> str:
     return f"=== {label} ===\n{raw}\n\n"
 
 from app.pipeline.cci_calculator import compute_cci_from_pipeline
+from app.pipeline.organ_failure_detector import guard_iv_requires_organ_support
 from app.pipeline.cd_pre_validator import validate_complications
 from app.pipeline.layer1_validator import validate_layer1
 from app.pipeline.layer2_aggregator import aggregate_layer2
@@ -881,85 +882,17 @@ class PipelineOrchestrator:
                         l2_input = chain_ctx + l2_input
                         logger.info("chained_context_injected", target_layer="layer2_cie", context_chars=len(chain_ctx))
 
-                    l2a_result = None
-                    l2b_result = None
-
-                    # ── L2A: Fact Extraction (no grading) ──
-                    try:
-                        if on_layer_start:
-                            await on_layer_start("layer2_cie:extract")
-
-                        l2a_result = await self.layer2a.execute(
-                            clean_text=l2_input,
-                            on_token=make_token_cb("layer2_cie:extract"),
-                            temperature_override=temperature,
-                            seed_override=seed,
-                        )
-
-                        if on_layer_complete:
-                            await _on_layer_complete_with_error("layer2_cie:extract", l2a_result.success, l2a_result.duration_ms)
-
-                        logger.info("l2a_complete_dynamic", success=l2a_result.success,
-                                    event_count=len(l2a_result.output.get("events", [])) if l2a_result.success else 0)
-
-                    except Exception as l2a_exc:
-                        logger.exception("L2A_CRASH_DYNAMIC", error=str(l2a_exc))
-                        if on_layer_complete:
-                            await _on_layer_complete_with_error("layer2_cie:extract", False, 0, error_message=str(l2a_exc))
-
-                    # ── L2B: CD Grading (treatment-first) ──
-                    if l2a_result and l2a_result.success:
-                        try:
-                            if on_layer_start:
-                                await on_layer_start("layer2_cie:grade")
-
-                            extracted_events = l2a_result.output.get("events", [])
-
-                            l2b_result = await self.layer2b.execute(
-                                events=extracted_events,
-                                on_token=make_token_cb("layer2_cie:grade"),
-                                temperature_override=temperature,
-                                seed_override=seed,
-                            )
-
-                            if on_layer_complete:
-                                await _on_layer_complete_with_error("layer2_cie:grade", l2b_result.success, l2b_result.duration_ms)
-
-                            logger.info("l2b_complete_dynamic", success=l2b_result.success,
-                                        complication_count=len(l2b_result.output.get("complications", [])) if l2b_result.success else 0)
-
-                        except Exception as l2b_exc:
-                            logger.exception("L2B_CRASH_DYNAMIC", error=str(l2b_exc))
-                            if on_layer_complete:
-                                await _on_layer_complete_with_error("layer2_cie:grade", False, 0, error_message=str(l2b_exc))
-
-                    # ── Python L2 Aggregator (FINAL AUTHORITY — ALL 7 RULE ENGINES) ──
-                    # The aggregator handles None inputs gracefully
-                    clean_text_for_l2 = context.get("clean_text", "")
-                    aggregated_l2 = aggregate_layer2(
-                        l2a_output=l2a_result.output if (l2a_result and l2a_result.success) else None,
-                        l2b_output=l2b_result.output if (l2b_result and l2b_result.success) else None,
-                        clean_text=clean_text_for_l2,
-                        raw_text=raw_text,
-                    )
-
-                    # Compute totals from sub-layers
-                    l2_duration = (l2a_result.duration_ms if l2a_result else 0) + (l2b_result.duration_ms if l2b_result else 0)
-                    l2_tok_in = (l2a_result.tokens_input if l2a_result else 0) + (l2b_result.tokens_input if l2b_result else 0)
-                    l2_tok_out = (l2a_result.tokens_output if l2a_result else 0) + (l2b_result.tokens_output if l2b_result else 0)
-
-                    # Build synthetic LayerResult with aggregated output
-                    l2_success = bool(l2a_result and l2a_result.success)
-                    result = LayerResult(
-                        success=l2_success,
-                        output=aggregated_l2,
-                        raw_response=l2b_result.raw_response if l2b_result else (l2a_result.raw_response if l2a_result else ""),
-                        duration_ms=l2_duration,
-                        tokens_input=l2_tok_in,
-                        tokens_output=l2_tok_out,
-                        error=None if l2_success else (l2a_result.error if l2a_result else "L2A did not execute"),
-                        layer_name="layer2_cie",
-                        prompt_version=self.layer2a.settings.prompt_version,
+                    # ── Monolithic Layer 2 (client v1.3 design): ONE rule-complete call ──
+                    # Restores the client's design. The previous decomposed path
+                    # (layer2a extract + layer2b grade + 7-engine aggregate_layer2) is
+                    # retired in favour of the single rule-complete prompt; deterministic
+                    # guards live downstream (cd_pre_validator / layer3).
+                    result = await self.layer2.execute(
+                        clean_text=l2_input,
+                        custom_prompt=prompt,
+                        on_token=make_token_cb(name),
+                        temperature_override=temperature,
+                        seed_override=seed,
                     )
 
                     layer2_result = result
@@ -986,59 +919,11 @@ class PipelineOrchestrator:
                     if result.success and result.output:
                         context["layer3_output"] = result.output
 
-                    # ── POST-L3: Run Final Clinical Auditor (L3D) ──
-                    # This is a hardcoded internal step that runs AFTER L3
-                    # to prune noise and enforce clinical consistency.
-                    l2_complications = context.get("layer2_output", {}).get("complications", [])
-                    if l2_complications:
-                        # Compute preliminary CCI for L3D context
-                        from app.pipeline.cci_calculator import compute_cci, extract_grades_from_complications
-                        prelim_grades = extract_grades_from_complications(l2_complications)
-                        prelim_cci = compute_cci(prelim_grades)
-                        l3d_clean_text = context.get("clean_text", "")
-
-                        logger.info("LAYER_START", layer="layer3d_auditor")
-                        try:
-                            l3d_result = await self.layer3d.execute(
-                                clean_text=l3d_clean_text,
-                                complications=l2_complications,
-                                computed_cci=prelim_cci,
-                                on_token=make_token_cb("layer3d_auditor"),
-                                temperature_override=temperature,
-                                seed_override=seed,
-                            )
-
-                            if l3d_result.success and l3d_result.output:
-                                final_comps = l3d_result.output.get("final_complications", [])
-
-                                # PYTHON HARD RULE: Grade V pass-through
-                                # If L2 had Grade V, ensure L3D didn't drop it
-                                l2_has_v = any(c.get("cd_grade") == "V" for c in l2_complications)
-                                l3d_has_v = any(c.get("cd_grade") == "V" for c in final_comps)
-                                if l2_has_v and not l3d_has_v:
-                                    final_comps.append({
-                                        "complication": "Death (in-hospital mortality)",
-                                        "cd_grade": "V",
-                                    })
-                                    logger.warning("grade_v_restored_by_python", reason="l3d_dropped_grade_v")
-
-                                # Store L3D output for CCI calculation
-                                context["l3d_output"] = l3d_result.output
-                                logger.info(
-                                    "l3d_auditor_complete",
-                                    input_count=len(l2_complications),
-                                    output_count=len(final_comps),
-                                    pruned=len(l2_complications) - len(final_comps),
-                                )
-
-                                total_duration_ms += l3d_result.duration_ms
-                                total_tokens_input += l3d_result.tokens_input
-                                total_tokens_output += l3d_result.tokens_output
-                            else:
-                                logger.warning("l3d_auditor_failed", error=l3d_result.error)
-                        except Exception:
-                            logger.exception("l3d_auditor_crash")
-                        logger.info("LAYER_END", layer="layer3d_auditor")
+                    # NOTE: The rule-free layer3d_auditor post-step has been REMOVED.
+                    # It carried no grading rules and a one-directional "when in doubt, REMOVE"
+                    # posture, which both dropped well-evidenced complications and made unguarded
+                    # grade leaps. layer3_ccc.audited_result.final_episode_set is now the single
+                    # final grade authority (client 3-layer design; fix/restore-3layer-pipeline).
 
                 else:
                     # Custom layer — generic LLM execution
@@ -1107,27 +992,27 @@ class PipelineOrchestrator:
         elif layer3_result and not layer3_result.success:
             final_verdict = "LAYER3_FAILED"
 
-        # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic
-        # Priority: L3D output > L3 output > L2 output
-        if layer2_result and layer2_result.output:
-            l3d_output = context.get("l3d_output")
-            if l3d_output and l3d_output.get("final_complications"):
-                # Use L3D's pruned final list for CCI
-                from app.pipeline.cci_calculator import compute_cci
-                l3d_grades = [c.get("cd_grade", "") for c in l3d_output["final_complications"] if c.get("cd_grade")]
-                final_cci = compute_cci(l3d_grades)
-                logger.info("cci_deterministic", cci=final_cci, source="l3d_auditor", grades=l3d_grades)
+        # ── Deterministic Grade-IV guard (backstop for layer3 RULE 7) ──
+        # Downgrade any IVa/IVb that lacks an organ-support token (ventilation /
+        # vasopressors / dialysis / organ failure); enforce IVa vs IVb otherwise.
+        # Mutates the grade set that drives the CCI, so one bad LLM call cannot
+        # invent a Grade IV from an ICU mention alone.
+        clean_text_for_guard = context.get("clean_text", "")
+        if layer3_result and layer3_result.success and layer3_result.output:
+            audited = layer3_result.output.get("audited_result")
+            if isinstance(audited, dict) and isinstance(audited.get("final_episode_set"), list):
+                guard_iv_requires_organ_support(audited["final_episode_set"], clean_text_for_guard)
+        if layer2_result and layer2_result.output and isinstance(layer2_result.output.get("complications"), list):
+            guard_iv_requires_organ_support(layer2_result.output["complications"], clean_text_for_guard)
 
-                # Also update L3 output's audited_result for downstream consumers
-                if layer3_result and layer3_result.success and layer3_result.output:
-                    layer3_result.output["audited_result"] = layer3_result.output.get("audited_result", {})
-                    layer3_result.output["audited_result"]["final_episode_set"] = l3d_output["final_complications"]
-            else:
-                final_cci = compute_cci_from_pipeline(
-                    layer2_output=layer2_result.output,
-                    layer3_output=layer3_result.output if (layer3_result and layer3_result.success) else None,
-                )
-                logger.info("cci_deterministic", cci=final_cci, source="python_calculator")
+        # Deterministic CCI: compute in Python from CD grades, not LLM arithmetic.
+        # Authority: Layer 3's audited final_episode_set (falls back to Layer 2 complications).
+        if layer2_result and layer2_result.output:
+            final_cci = compute_cci_from_pipeline(
+                layer2_output=layer2_result.output,
+                layer3_output=layer3_result.output if (layer3_result and layer3_result.success) else None,
+            )
+            logger.info("cci_deterministic", cci=final_cci, source="layer3_ccc_audited")
 
         # Pipeline is successful if at least L1+L2 succeeded
         success = True
